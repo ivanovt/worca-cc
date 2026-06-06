@@ -2408,21 +2408,27 @@ function _templateActionDialogTemplate(state) {
         <label class="settings-label" for="dlg-export-mode">Bundle contents</label>
         <sl-radio-group
           id="dlg-export-mode"
+          class="export-mode-group"
           .value=${exportMode}
           @sl-change=${(e) => _updateActionDialog({ exportMode: e.target.value })}
         >
           <sl-radio value="standalone">
-            Standalone (self-contained)
-            <span class="settings-field-hint">
-              Config materialised over the built-in defaults and prompts resolved
-              into a complete set. Behaves identically wherever it's imported.
+            <span class="export-mode-option">
+              <span class="export-mode-title">Standalone (self-contained)</span>
+              <span class="export-mode-hint">
+                Config materialised over the built-in defaults and prompts
+                resolved into a complete set. Behaves identically wherever it's
+                imported.
+              </span>
             </span>
           </sl-radio>
           <sl-radio value="delta">
-            Delta (overrides only)
-            <span class="settings-field-hint">
-              Just this template's changes. Re-merges over the destination's
-              defaults at run launch — smaller, but version-dependent.
+            <span class="export-mode-option">
+              <span class="export-mode-title">Delta (overrides only)</span>
+              <span class="export-mode-hint">
+                Just this template's changes. Re-merges over the destination's
+                defaults at run launch — smaller, but version-dependent.
+              </span>
             </span>
           </sl-radio>
         </sl-radio-group>
