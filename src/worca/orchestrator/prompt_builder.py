@@ -237,7 +237,20 @@ class PromptBuilder:
             # changelog. Prefer the plan content threaded from the last PLAN
             # completion; otherwise read the current (latest) plan file.
             ctx["current_plan"] = ctx.get("plan_file_content") or self._read_master_plan()
-            ctx["has_review_comments"] = bool(ctx.get("review_comments"))
+            has_review_comments = bool(ctx.get("review_comments"))
+            ctx["has_review_comments"] = has_review_comments
+
+            # W-069: resolve effective bead cap; PR-revision runs suppress the cap
+            # so comment-to-bead decomposition is unconstrained.
+            if has_review_comments:
+                effective_cap = 0
+            else:
+                override = ctx.get("max_beads_override")
+                config_cap = ctx.get("max_beads_config", 0) or 0
+                effective_cap = override if override is not None else config_cap
+            ctx["max_beads"] = effective_cap
+            ctx["bead_cap_single"] = effective_cap == 1
+            ctx["bead_cap_multi"] = effective_cap > 1
 
             unresolved = ctx.get("unresolved_plan_issues")
             if unresolved:

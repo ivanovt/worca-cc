@@ -924,6 +924,7 @@ export function createProjectScopedRoutes({
       planFile,
       msize,
       mloops,
+      maxBeads,
       branch,
       template,
     } = body;
@@ -1013,6 +1014,10 @@ export function createProjectScopedRoutes({
       mloops != null
         ? Math.max(1, Math.min(10, Math.round(Number(mloops))))
         : 1;
+    const maxBeadsVal =
+      maxBeads != null
+        ? Math.max(0, Math.min(50, Math.round(Number(maxBeads))))
+        : undefined;
 
     // Atomically check global cap and start pipeline under lock
     await launchLock.withLock(async () => {
@@ -1040,6 +1045,7 @@ export function createProjectScopedRoutes({
           prompt: hasPrompt ? prompt : undefined,
           msize: msizeVal,
           mloops: mloopsVal,
+          maxBeads: maxBeadsVal,
           planFile: hasPlan ? planFile.trim() : undefined,
           branch: branch || undefined,
           template: template || undefined,

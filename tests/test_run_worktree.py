@@ -840,3 +840,45 @@ class TestGithubPrSource:
         assert rc == 0
         kwargs = mock_reg.call_args[1]
         assert kwargs["branch"] == "feature/my-fix"
+
+
+# ---------------------------------------------------------------------------
+# W-069: --max-beads passthrough
+# ---------------------------------------------------------------------------
+
+
+class TestMaxBeadsPassthrough:
+    """--max-beads is accepted by create_parser and forwarded by _build_pipeline_cmd."""
+
+    def _parse(self, argv):
+        from worca.scripts.run_worktree import create_parser
+        return create_parser().parse_args(argv)
+
+    def test_max_beads_flag_default_none(self):
+        args = self._parse(["--prompt", "x"])
+        assert args.max_beads is None
+
+    def test_max_beads_flag_parsed(self):
+        args = self._parse(["--prompt", "x", "--max-beads", "5"])
+        assert args.max_beads == 5
+
+    def test_max_beads_zero_accepted(self):
+        args = self._parse(["--prompt", "x", "--max-beads", "0"])
+        assert args.max_beads == 0
+
+    def test_build_pipeline_cmd_includes_max_beads_when_set(self):
+        from worca.scripts.run_worktree import _build_pipeline_cmd
+        cmd = _build_pipeline_cmd(self._parse(["--prompt", "x", "--max-beads", "3"]))
+        idx = cmd.index("--max-beads")
+        assert cmd[idx + 1] == "3"
+
+    def test_build_pipeline_cmd_omits_max_beads_when_none(self):
+        from worca.scripts.run_worktree import _build_pipeline_cmd
+        cmd = _build_pipeline_cmd(self._parse(["--prompt", "x"]))
+        assert "--max-beads" not in cmd
+
+    def test_build_pipeline_cmd_includes_max_beads_zero(self):
+        from worca.scripts.run_worktree import _build_pipeline_cmd
+        cmd = _build_pipeline_cmd(self._parse(["--prompt", "x", "--max-beads", "0"]))
+        idx = cmd.index("--max-beads")
+        assert cmd[idx + 1] == "0"

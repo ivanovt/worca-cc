@@ -420,3 +420,40 @@ describe('formBufferToConfig — per-stage unknown keys survive round-trip', () 
     expect(out.stages.pr).not.toHaveProperty('defer');
   });
 });
+
+// --- coordinator max_beads round-trip ---
+
+describe('buildFormBuffer / formBufferToConfig — coordinator max_beads', () => {
+  it('seeds coordinator max_beads from config (non-zero)', () => {
+    const config = { agents: { coordinator: { max_beads: 3 } } };
+    const form = buildFormBuffer(config, { worca: {} });
+    expect(form.agents.coordinator.max_beads).toBe(3);
+  });
+
+  it('seeds coordinator max_beads as 0 when absent', () => {
+    const config = {};
+    const form = buildFormBuffer(config, { worca: {} });
+    expect(form.agents.coordinator.max_beads).toBe(0);
+  });
+
+  it('round-trips a non-zero max_beads value', () => {
+    const config = { agents: { coordinator: { max_beads: 5 } } };
+    const form = buildFormBuffer(config, { worca: {} });
+    const out = formBufferToConfig(form);
+    expect(out.agents.coordinator.max_beads).toBe(5);
+  });
+
+  it('omits max_beads from output when value is 0 (Auto)', () => {
+    const config = { agents: { coordinator: { max_beads: 0 } } };
+    const form = buildFormBuffer(config, { worca: {} });
+    const out = formBufferToConfig(form);
+    expect(out.agents.coordinator).not.toHaveProperty('max_beads');
+  });
+
+  it('omits max_beads when config has no coordinator agent block', () => {
+    const config = {};
+    const form = buildFormBuffer(config, { worca: {} });
+    const out = formBufferToConfig(form);
+    expect(out.agents.coordinator).not.toHaveProperty('max_beads');
+  });
+});

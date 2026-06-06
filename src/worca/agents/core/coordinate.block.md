@@ -28,6 +28,20 @@ _A code knowledge graph is preloaded — **orient with `graphify query "<questio
 _A code-review-graph MCP server is attached — **use its tools to orient (structure, context, impact) before Glob/Grep or file reads** (see the Code graph section of your role)._
 
 {{/if}}
+{{#if bead_cap_single}}
+## Single bead
+
+Create one bead covering the entire approved plan. One implementer will execute the
+whole plan in a single session, so capture the full scope in that bead's description.
+{{/if}}
+{{#if bead_cap_multi}}
+## Decomposition budget
+
+Create at most {{max_beads}} beads total. Treat this as a budget, not a quota —
+prefer fewer, well-scoped beads. If the plan naturally exceeds it, group related
+work into composite beads whose descriptions enumerate the sub-steps so the total
+stays in budget.
+{{/if}}
 {{#if current_plan}}
 <approved_plan>
 {{current_plan}}

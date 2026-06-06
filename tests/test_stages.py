@@ -391,6 +391,34 @@ class TestGetStageConfigWithStages:
         assert config["agent"] == "coordinator"
 
 
+class TestGetStageConfigMaxBeads:
+    """Tests for max_beads key in get_stage_config return value."""
+
+    def test_max_beads_present_with_default_zero(self, tmp_path):
+        missing = str(tmp_path / "nonexistent.json")
+        config = get_stage_config(Stage.COORDINATE, settings_path=missing)
+        assert "max_beads" in config
+        assert config["max_beads"] == 0
+
+    def test_max_beads_reads_from_coordinator_config(self, tmp_path):
+        settings = {
+            "worca": {
+                "agents": {
+                    "coordinator": {"model": "opus", "max_turns": 300, "max_beads": 3}
+                }
+            }
+        }
+        settings_file = tmp_path / "settings.json"
+        settings_file.write_text(json.dumps(settings))
+        config = get_stage_config(Stage.COORDINATE, settings_path=str(settings_file))
+        assert config["max_beads"] == 3
+
+    def test_max_beads_absent_for_non_coordinator_stage(self, tmp_path):
+        missing = str(tmp_path / "nonexistent.json")
+        config = get_stage_config(Stage.PLAN, settings_path=missing)
+        assert config.get("max_beads") == 0
+
+
 class TestGetEnabledStages:
     """Tests for get_enabled_stages filtering and ordering."""
 

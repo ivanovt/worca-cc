@@ -1127,3 +1127,60 @@ class TestErrorHandling:
         _write_workspace_json(tmp_path, _minimal_doc())
         exit_code = main([str(tmp_path)])
         assert exit_code != 0
+
+
+# ---- W-069: --max-beads passthrough -----------------------------------------
+
+class TestMaxBeadsWorkspace:
+    """--max-beads is parsed and forwarded to dag_executor._build_child_cmd."""
+
+    def _parse(self, argv):
+        from worca.scripts.run_workspace import create_parser
+        return create_parser().parse_args(argv)
+
+    def test_max_beads_default_none(self, tmp_path):
+        args = self._parse([str(tmp_path), "--prompt", "x"])
+        assert args.max_beads is None
+
+    def test_max_beads_parsed(self, tmp_path):
+        args = self._parse([str(tmp_path), "--prompt", "x", "--max-beads", "5"])
+        assert args.max_beads == 5
+
+    def test_max_beads_zero_accepted(self, tmp_path):
+        args = self._parse([str(tmp_path), "--prompt", "x", "--max-beads", "0"])
+        assert args.max_beads == 0
+
+    def test_build_child_cmd_includes_max_beads_when_set(self):
+        from worca.workspace.dag_executor import _build_child_cmd
+        cmd = _build_child_cmd(
+            workspace_id="w-001",
+            prompt="x",
+            guide_paths=[],
+            plan_path=None,
+            max_beads=4,
+        )
+        idx = cmd.index("--max-beads")
+        assert cmd[idx + 1] == "4"
+
+    def test_build_child_cmd_omits_max_beads_when_none(self):
+        from worca.workspace.dag_executor import _build_child_cmd
+        cmd = _build_child_cmd(
+            workspace_id="w-001",
+            prompt="x",
+            guide_paths=[],
+            plan_path=None,
+            max_beads=None,
+        )
+        assert "--max-beads" not in cmd
+
+    def test_build_child_cmd_includes_max_beads_zero(self):
+        from worca.workspace.dag_executor import _build_child_cmd
+        cmd = _build_child_cmd(
+            workspace_id="w-001",
+            prompt="x",
+            guide_paths=[],
+            plan_path=None,
+            max_beads=0,
+        )
+        idx = cmd.index("--max-beads")
+        assert cmd[idx + 1] == "0"

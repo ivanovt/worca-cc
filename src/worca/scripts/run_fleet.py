@@ -200,6 +200,7 @@ def build_child_cmd(
     base: str | None = None,
     guide: list | None = None,
     plan: str | None = None,
+    max_beads: int | None = None,
 ) -> list:
     """Build the run_worktree.py command for a single fleet child.
 
@@ -224,6 +225,9 @@ def build_child_cmd(
 
     if plan:
         cmd.extend(["--plan", plan])
+
+    if max_beads is not None:
+        cmd.extend(["--max-beads", str(max_beads)])
 
     return cmd
 
@@ -252,6 +256,7 @@ def run_plan_first(
     base: str | None,
     guide: list,
     fleet_runs_base: str | None = None,
+    max_beads: int | None = None,
 ) -> str | None:
     """Run the reference child (blocking) and wait for its Planner to produce a plan.
 
@@ -272,6 +277,7 @@ def run_plan_first(
         base=base,
         guide=guide,
         plan=None,  # reference child generates the plan
+        max_beads=max_beads,
     )
 
     proc = subprocess.run(
@@ -361,6 +367,7 @@ def dispatch_fleet(
     plan: str | None,
     max_parallel: int,
     fleet_failure_threshold: float,
+    max_beads: int | None = None,
 ) -> dict:
     """Run fleet children in parallel with a semaphore-gated dispatch loop.
 
@@ -408,6 +415,7 @@ def dispatch_fleet(
                 base=base,
                 guide=guide,
                 plan=plan,
+                max_beads=max_beads,
             )
             # Capture stdout so we can read the child's run_id (run_worktree.py
             # prints `<run_id>\n<worktree_path>\n` then exits). Knowing the
@@ -741,6 +749,13 @@ def create_parser() -> argparse.ArgumentParser:
         metavar="ID",
         help="Use this pre-generated fleet id instead of generating one (UI integration)",
     )
+    parser.add_argument(
+        "--max-beads",
+        type=int,
+        default=None,
+        metavar="N",
+        help="Override coordinator decomposition cap for every child (0 = auto)",
+    )
 
     return parser
 
@@ -946,6 +961,7 @@ def main(argv=None) -> int:
                 source=args.source,
                 base=args.base,
                 guide=guide_abs_ref,
+                max_beads=args.max_beads,
             )
             if shared_plan is None:
                 print(
@@ -988,6 +1004,7 @@ def main(argv=None) -> int:
             plan=dispatch_plan,
             max_parallel=args.max_parallel,
             fleet_failure_threshold=args.fleet_failure_threshold,
+            max_beads=args.max_beads,
         )
 
         # Fire fleet.launched once dispatch returns — children may still be

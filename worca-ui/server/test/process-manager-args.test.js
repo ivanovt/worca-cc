@@ -201,6 +201,59 @@ describe('startPipeline arg building', () => {
 
   // --- Other options ---
 
+  it('passes --max-beads 0 when maxBeads=0 (Auto override)', async () => {
+    startPipeline(worcaDir, {
+      sourceType: 'none',
+      prompt: 'test',
+      maxBeads: 0,
+      projectRoot: tmpDir,
+    });
+    await vi.waitFor(() => expect(spawnCalls.length).toBe(1), { timeout: 100 });
+
+    const args = getArgs();
+    expect(args).toContain('--max-beads');
+    expect(args[args.indexOf('--max-beads') + 1]).toBe('0');
+  });
+
+  it('passes --max-beads when maxBeads > 0', async () => {
+    startPipeline(worcaDir, {
+      sourceType: 'none',
+      prompt: 'test',
+      maxBeads: 3,
+      projectRoot: tmpDir,
+    });
+    await vi.waitFor(() => expect(spawnCalls.length).toBe(1), { timeout: 100 });
+
+    const args = getArgs();
+    expect(args).toContain('--max-beads');
+    expect(args[args.indexOf('--max-beads') + 1]).toBe('3');
+  });
+
+  it('omits --max-beads when maxBeads is null', async () => {
+    startPipeline(worcaDir, {
+      sourceType: 'none',
+      prompt: 'test',
+      maxBeads: null,
+      projectRoot: tmpDir,
+    });
+    await vi.waitFor(() => expect(spawnCalls.length).toBe(1), { timeout: 100 });
+
+    const args = getArgs();
+    expect(args).not.toContain('--max-beads');
+  });
+
+  it('omits --max-beads when maxBeads is absent', async () => {
+    startPipeline(worcaDir, {
+      sourceType: 'none',
+      prompt: 'test',
+      projectRoot: tmpDir,
+    });
+    await vi.waitFor(() => expect(spawnCalls.length).toBe(1), { timeout: 100 });
+
+    const args = getArgs();
+    expect(args).not.toContain('--max-beads');
+  });
+
   it('includes --msize and --mloops when > 1', async () => {
     startPipeline(worcaDir, {
       sourceType: 'none',

@@ -23,6 +23,7 @@ export let prBaseBranch = '';
 export let prBaseBranchError = '';
 export let selectedProject = null; // project picked in All Projects mode
 export let projectEditable = false; // Change link toggles read-only → editable
+export let maxBeads = 0; // 0 = Auto (no cap)
 
 // Dismissable worktree info banner — persisted via localStorage
 export let bannerDismissed = (() => {
@@ -60,6 +61,12 @@ export function resetNewRunState(overrides = {}) {
   if ('planDropdownOpen' in overrides)
     planDropdownOpen = overrides.planDropdownOpen;
   if ('branches' in overrides) branches = overrides.branches;
+  maxBeads = overrides.maxBeads ?? 0;
+}
+
+export function seedMaxBeadsFromTemplate(templateId) {
+  const tmpl = (templates || []).find((t) => t.id === templateId);
+  maxBeads = tmpl?.config?.agents?.coordinator?.max_beads ?? 0;
 }
 
 function sourceLabel(type) {
@@ -162,6 +169,9 @@ function fetchTemplates(projectId) {
             selectedTemplate = defaultTemplateId;
           }
         }
+
+        // Seed maxBeads from the currently selected template's config
+        seedMaxBeadsFromTemplate(selectedTemplate);
       }
       return templates || [];
     })
@@ -293,8 +303,12 @@ export async function submitNewRun({
     return;
   }
 
+  const maxBeadsEl = document.getElementById('new-run-max-beads');
   const msize = msizeEl ? parseInt(msizeEl.value, 10) || 1 : 1;
   const mloops = mloopsEl ? parseInt(mloopsEl.value, 10) || 1 : 1;
+  const maxBeadsValue = maxBeadsEl
+    ? parseInt(maxBeadsEl.value, 10) || 0
+    : maxBeads;
 
   const PR_BRANCH_RE = /^[a-zA-Z0-9._/-]+$/;
   if (prBaseBranch && !PR_BRANCH_RE.test(prBaseBranch)) {
@@ -313,6 +327,7 @@ export async function submitNewRun({
       sourceType,
       msize: Math.max(1, Math.min(10, msize)),
       mloops: Math.max(1, Math.min(10, mloops)),
+      maxBeads: maxBeadsValue,
     };
     if (hasSource) body.sourceValue = sourceValue;
     if (hasPrompt) body.prompt = promptValue;
@@ -435,6 +450,7 @@ export function newRunView(_state, { rerender }) {
 
   function handleTemplateChange(e) {
     selectedTemplate = e.target.value;
+    seedMaxBeadsFromTemplate(selectedTemplate);
     rerender();
   }
 
@@ -747,6 +763,17 @@ export function newRunView(_state, { rerender }) {
                 <label class="settings-label">Loop Multiplier (mloops)</label>
                 <sl-input id="new-run-mloops" type="number" min="1" max="10" value="${getDefaults().mloops}"></sl-input>
                 <span class="settings-field-hint">Scales max loop iterations (1-10)</span>
+              </div>
+
+              <div class="settings-field">
+                <label class="settings-label">Max Beads</label>
+                <sl-select id="new-run-max-beads" value=${String(maxBeads)}>
+                  <sl-option value="0">Auto</sl-option>
+                  ${[1, 2, 3, 4, 5, 6, 7, 8, 9, 10].map(
+                    (n) => html`<sl-option value=${String(n)}>${n}</sl-option>`,
+                  )}
+                </sl-select>
+                <span class="settings-field-hint">Cap on coordinator beads (0 = no cap)</span>
               </div>
             </div>
 

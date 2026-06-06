@@ -58,7 +58,8 @@
       "coordinator": {
         "model": "opus",
         "max_turns": 50,
-        "effort": "low"
+        "effort": "low",
+        "max_beads": 1
       },
       "implementer": {
         "model": "sonnet",
