@@ -315,6 +315,8 @@ class PromptBuilder:
                 ctx["files_changed_formatted"] = "\n".join(f"- {f}" for f in files_changed)
             else:
                 ctx["files_changed_formatted"] = ""
+            # Inject review_base for proper diff scoping (pre-inherited code exclusion)
+            ctx["review_base"] = self._context.get("review_base", "")
 
         elif stage == "learn":
             full_status = ctx.get("full_status") or {}

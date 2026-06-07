@@ -18,6 +18,18 @@
       }
     },
     "iteration_count": { "type": "integer", "minimum": 1 },
+    "observations": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "properties": {
+          "file": { "type": "string" },
+          "line": { "type": "integer" },
+          "severity": { "type": "string", "enum": ["critical", "major", "minor", "suggestion"] },
+          "description": { "type": "string" }
+        }
+      }
+    },
     "guide_conflicts": {
       "type": "array",
       "items": {

@@ -2246,6 +2246,43 @@ def effective_bead_cap_status(
     }
 
 
+def _persist_observations(
+    status: dict,
+    loop_counters: dict[str, int],
+    result: dict,
+    prompt_builder: PromptBuilder,
+    run_id: str,
+) -> None:
+    """Persist observations to observations-bottle.md.
+
+    This is non-blocking (per D8) — errors are logged but do not stop the pipeline.
+    Observations are NOT accumulated into prompt context (per D7).
+    """
+    new_observations = result.get("observations", [])
+    if not new_observations:
+        return
+
+    run_dir = status.get("run_dir")
+    if not run_dir:
+        return
+
+    iteration_num = loop_counters.get("pr_changes", 0) + 1
+    obs_path = os.path.join(run_dir, "observations-bottle.md")
+
+    try:
+        os.makedirs(run_dir, exist_ok=True)
+        with open(obs_path, "a", encoding="utf-8") as f:
+            f.write(f"\n## Review Iteration {iteration_num}\n\n")
+            for obs in new_observations:
+                sev = obs.get("severity", "?")
+                file = obs.get("file", "?")
+                line = obs.get("line", "?")
+                desc = obs.get("description", "")
+                f.write(f"- [{sev}] `{file}:{line}` {desc}\n")
+    except (IOError, OSError, PermissionError) as e:
+        _log(f"[{run_id}] Failed to write observations file: {obs_path}: {e}", "warn")
+
+
 def run_pipeline(
     work_request: WorkRequest,
     plan_file: Optional[str] = None,
@@ -2723,6 +2760,8 @@ def run_pipeline(
         if status.get("plan_file"):
             prompt_builder.update_context("plan_file", status["plan_file"])
         prompt_builder.update_context("run_id", status.get("run_id", ""))
+        # Load git_head from status for review stage scoping
+        prompt_builder.update_context("review_base", status.get("git_head", ""))
         prompt_builder.update_context("branch", branch_name)
         prompt_builder.update_context("title", work_request.title)
         if work_request.review_comments:
@@ -4242,6 +4281,8 @@ def run_pipeline(
                 outcome = result.get("outcome", "approve")
                 _log(f"Review outcome: {outcome}")
                 _emit_guide_conflicts(ctx, "review", result)
+                # Persist observations across iterations (non-blocking, best-effort)
+                _persist_observations(status, loop_counters, result, prompt_builder, run_id)
                 next_stage, status = handle_pr_review(outcome, status)
                 _all_issues = result.get("issues", [])
                 _critical_count = sum(
