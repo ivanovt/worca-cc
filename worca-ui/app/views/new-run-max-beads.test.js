@@ -453,7 +453,7 @@ describe('new-run — maxBeads seeding from template', () => {
     expect(newMod.maxBeads).toBeNull();
   });
 
-  it('reseeds maxBeads when template is switched', async () => {
+  it('leaves maxBeads null after fetchTemplates (passthrough preserved until user acts)', async () => {
     const templates = [
       {
         id: 'tmpl-a',
@@ -487,13 +487,11 @@ describe('new-run — maxBeads seeding from template', () => {
     newRunView({ currentProjectId: 'proj-abc' }, { rerender: vi.fn() });
     await new Promise((r) => setTimeout(r, 100));
 
+    // fetchTemplates must NOT seed maxBeads — passthrough stays null
     let newMod = await import('./new-run.js');
-    expect(newMod.maxBeads).toBe(4);
+    expect(newMod.maxBeads).toBeNull();
 
-    // Switch template — simulate sl-change event on the select
-    const rerender = vi.fn();
-    newRunView({ currentProjectId: 'proj-abc' }, { rerender });
-    // Directly call seedMaxBeadsFromTemplate for the new template
+    // Explicit user template switch via seedMaxBeadsFromTemplate does seed it
     newMod = await import('./new-run.js');
     newMod.seedMaxBeadsFromTemplate('tmpl-b');
 

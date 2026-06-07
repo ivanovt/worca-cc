@@ -232,9 +232,6 @@ function fetchTemplates(projectId) {
             selectedTemplate = defaultTemplateId;
           }
         }
-
-        // Seed maxBeads from the currently selected template's config
-        seedMaxBeadsFromTemplate(selectedTemplate);
       }
       return templates || [];
     })
