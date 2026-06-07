@@ -867,6 +867,21 @@ W-065: Deferrable PR creation with manual promote-from-UI.
 
 - **No breaking changes.** Agent prompt refinements (execution-stage scope bounding, reviewer notes/observations schema alignment, role-bounding guardrails on investigate/guardian), env hygiene (subprocess env now strips stale `WORCA_*` / `CLAUDECODE` for nested invocations — #307), reviewer diff scoping fix (diff now scoped to pipeline-start git_head — #305), and worca-ui Max Beads dropdown passthrough sentinel (#304). No `worca init --upgrade` required; settings and runtime layout unchanged.
 
+### 0.51.0 → 0.52.0
+
+PR #308: template bundle layout v3, two-phase import with collision dialog.
+
+- **New bundle layout v3 (zip + `models.json` member).** Standalone exports now bundle `worca.models` aliases and pricing in a new top-level `models.json` zip member alongside the template + overlays. Fixes the silent drop where overlay-bearing templates produced bundles that referenced custom model aliases the bundle didn't actually carry. Output bundle version is `v3` when models are present, `v2` otherwise. **Importer still accepts v1 (JSON-only), v2, and v3 bundles** — no flag day, existing bundles keep working. (`SUPPORTED_BUNDLE_MAJOR = 3` in `src/worca/orchestrator/bundle.py`.)
+- **Two-phase import — preview then commit (additive).** A new `GET /templates/import/preview` endpoint and matching CLI preview pass surface every collision (template ids and model aliases) before any write. Commit honors per-row resolutions from the preview. Direct one-shot imports still work for back-compat.
+- **New collision-resolution CLI flags (defaults preserve old strict behavior).** Two dimensions resolved independently:
+  - `--on-template-conflict={abort,skip,replace}` (default `abort`)
+  - `--on-model-conflict={abort,skip,overwrite,rename}` (default `abort`)
+  Defaulting to `abort` means old scripts that previously errored on a collision still error in the same place — no silent data loss. To restore the old "fail loud" behavior explicitly, omit the flags. Rename uses a zero-padded `-NN` suffix and transactionally rewrites every `config.agents.*.model` reference across imported templates.
+- **Model aliases always land in user-global `~/.worca/settings.json`, regardless of `--scope`.** This is a behavior change: previously a `--scope project` import could leave model aliases in the committed `.claude/settings.json`. Now bundle model aliases always write to `~/.worca/settings.json` so committed settings stay free of per-developer env scaffolds and secret placeholders. Template payloads themselves still honor `--scope`. The CLI's prior "no user-level settings.json" framing for `--scope user` was incorrect — that file has always existed via `load_global_settings()`; the writer just didn't target it.
+- **New `/api/projects/:projectId/effective-settings` endpoint (worca-ui).** Layers `userGlobal → userLocal → project → projectLocal` the same way Python's `resolve_model` does, so the per-agent Model dropdown surfaces user-global aliases across every template without a project-level redefinition. Pure addition — existing endpoints unchanged.
+- **Editor cache invalidation on import.** Imported template ids are evicted from the worca-ui editor cache so the next view picks up the imported config without a manual refresh. No user action required.
+- **No settings.json migration required.** `worca init --upgrade` refreshes the runtime copy but does not rewrite settings for this release. Settings and runtime layout are unchanged.
+
 ## Getting help
 
 - Issues: https://github.com/SinishaDjukic/worca-cc/issues
