@@ -1191,3 +1191,90 @@ class TestCrgMutationGuard:
         )
         code, _ = check_guard("Bash", {"command": "code-review-graph build ."})
         assert code == 0
+
+
+# --- /dev/null redirection handling (W-064) ---
+# The regex (?<!\|)\s*>\s*[^\s|&;] incorrectly matches 2>/dev/null,
+# >/dev/null, and cmd 2>&1 >/dev/null as file writes. These are false
+# positives—/dev/null is a null sink, not a source file write.
+
+
+class TestDevNullRedirection:
+    """Commands redirecting to /dev/null must not be flagged as file writes.
+
+    /dev/null is a null sink; writing to it does not bypass Write/Edit guards.
+    """
+
+    def test_allows_stderr_to_devnull(self):
+        """2>/dev/null suppresses stderr—no file write."""
+        os.environ["WORCA_AGENT"] = "coordinator"
+        try:
+            code, _ = check_guard("Bash", {"command": "some-command 2>/dev/null"})
+            assert code == 0
+        finally:
+            del os.environ["WORCA_AGENT"]
+
+    def test_allows_stdout_to_devnull(self):
+        """>/dev/null suppresses stdout—no file write."""
+        os.environ["WORCA_AGENT"] = "tester"
+        try:
+            code, _ = check_guard("Bash", {"command": "some-command >/dev/null"})
+            assert code == 0
+        finally:
+            del os.environ["WORCA_AGENT"]
+
+    def test_allows_stderr_stdout_to_devnull(self):
+        """2>&1 >/dev/null suppresses all output—no file write."""
+        os.environ["WORCA_AGENT"] = "reviewer"
+        try:
+            code, _ = check_guard("Bash", {"command": "some-command 2>&1 >/dev/null"})
+            assert code == 0
+        finally:
+            del os.environ["WORCA_AGENT"]
+
+    def test_allows_with_spaces(self):
+        """> /dev/null (with space) must also be allowed."""
+        os.environ["WORCA_AGENT"] = "coordinator"
+        try:
+            code, _ = check_guard("Bash", {"command": "some-command > /dev/null"})
+            assert code == 0
+        finally:
+            del os.environ["WORCA_AGENT"]
+
+    def test_allows_append_to_devnull(self):
+        """2>> /dev/null is also just output suppression—allow."""
+        os.environ["WORCA_AGENT"] = "tester"
+        try:
+            code, _ = check_guard("Bash", {"command": "some-command 2>> /dev/null"})
+            assert code == 0
+        finally:
+            del os.environ["WORCA_AGENT"]
+
+    def test_blocks_devnullx_regression_test(self):
+        """> /dev/nullx should still be blocked (not /dev/null)."""
+        os.environ["WORCA_AGENT"] = "coordinator"
+        try:
+            code, _ = check_guard("Bash", {"command": "some-command > /dev/nullx"})
+            assert code == 2
+        finally:
+            del os.environ["WORCA_AGENT"]
+
+    def test_blocks_mixed_devnull_and_file_write(self):
+        """cmd 2>/dev/null > file.txt stderr to /dev/null but stdout to file—block."""
+        os.environ["WORCA_AGENT"] = "coordinator"
+        try:
+            code, _ = check_guard("Bash", {
+                "command": "some-command 2>/dev/null > file.txt"
+            })
+            assert code == 2
+        finally:
+            del os.environ["WORCA_AGENT"]
+
+    def test_blocks_normal_file_write(self):
+        """Normal file writes without /dev/null must still be blocked."""
+        os.environ["WORCA_AGENT"] = "coordinator"
+        try:
+            code, _ = check_guard("Bash", {"command": "echo 'data' > /project/file.txt"})
+            assert code == 2
+        finally:
+            del os.environ["WORCA_AGENT"]
