@@ -580,8 +580,14 @@ def run_agent(
     agent_env = get_env(WORCA_AGENT=agent_name, **safe_env)
     if stage is not None:
         agent_env["WORCA_STAGE"] = stage
+    else:
+        # Explicitly remove to avoid inheriting from os.environ.copy()
+        agent_env.pop("WORCA_STAGE", None)
     if iteration is not None:
         agent_env["WORCA_ITERATION"] = str(iteration)
+    else:
+        # Explicitly remove to avoid inheriting from os.environ.copy()
+        agent_env.pop("WORCA_ITERATION", None)
     if bead_id is not None:
         agent_env["WORCA_BEAD_ID"] = bead_id
     if graphify_out:

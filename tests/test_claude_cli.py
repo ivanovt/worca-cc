@@ -421,6 +421,31 @@ def test_run_agent_omits_stage_and_iteration_when_not_provided():
     assert "WORCA_ITERATION" not in env
 
 
+def test_run_agent_strips_stale_stage_and_iteration_from_parent_env(monkeypatch):
+    """When the parent process already has WORCA_STAGE / WORCA_ITERATION set
+    (nested invocation, leftover from an earlier stage in the same pipeline,
+    or operator shell), they must NOT leak through to a child invoked with
+    ``stage=None`` / ``iteration=None``.
+
+    get_env() returns ``os.environ.copy()``, so without explicit removal the
+    parent's values silently win and the file-access hook records the child's
+    activity under the wrong stage/iteration column in the Access Map.
+    """
+    monkeypatch.setenv("WORCA_STAGE", "plan")
+    monkeypatch.setenv("WORCA_ITERATION", "5")
+    result_event = {"ok": True}
+    mock_proc = _make_mock_popen(result_event)
+    with patch("worca.utils.claude_cli.subprocess.Popen", return_value=mock_proc) as mock_popen:
+        run_agent(
+            "prompt", agent="planner",
+            stage=None, iteration=None,
+            settings={},
+        )
+    env = mock_popen.call_args[1]["env"]
+    assert "WORCA_STAGE" not in env
+    assert "WORCA_ITERATION" not in env
+
+
 def test_run_agent_sets_worca_agent_always():
     """WORCA_AGENT is always set, regardless of stage/iteration."""
     result_event = {"ok": True}
