@@ -23,7 +23,8 @@ export let prBaseBranch = '';
 export let prBaseBranchError = '';
 export let selectedProject = null; // project picked in All Projects mode
 export let projectEditable = false; // Change link toggles read-only → editable
-export let maxBeads = 0; // 0 = Auto (no cap)
+export let maxBeads = null; // null = passthrough (use template/project default), 0 = Auto, N = explicit cap
+export let projectLevelMaxBeads = null; // cached from /settings endpoint
 
 // Dismissable worktree info banner — persisted via localStorage
 export let bannerDismissed = (() => {
@@ -40,6 +41,48 @@ export let bannerDismissed = (() => {
 export function invalidateTemplateCache() {
   templates = null;
   defaultTemplateId = '';
+  projectLevelMaxBeads = null;
+  maxBeads = null;
+}
+
+/**
+ * exposed for testing
+ */
+export function fetchDefaultTemplate(projectId) {
+  const url = projectId
+    ? `/api/projects/${projectId}/settings`
+    : '/api/settings';
+  return fetch(url)
+    .then((r) => r.json())
+    .then((data) => {
+      // Accept both forms: legacy bare-string `"bugfix"` and the
+      // new structured `{tier: "project", id: "bugfix"}` shape.
+      const raw = data?.worca?.default_template;
+      defaultTemplateId =
+        typeof raw === 'string'
+          ? raw
+          : raw && typeof raw === 'object'
+            ? raw.id || ''
+            : '';
+
+      // Cache project-level max_beads for the default option label
+      projectLevelMaxBeads =
+        data?.worca?.agents?.coordinator?.max_beads ?? null;
+
+      // Auto-select the default template if it's present in the templates list
+      if (defaultTemplateId && templates) {
+        const found = templates.find((t) => t.id === defaultTemplateId);
+        if (found && selectedTemplate === 'default') {
+          selectedTemplate = defaultTemplateId;
+        }
+      }
+
+      return defaultTemplateId;
+    })
+    .catch(() => {
+      defaultTemplateId = '';
+      return '';
+    });
 }
 
 export function resetNewRunState(overrides = {}) {
@@ -61,12 +104,32 @@ export function resetNewRunState(overrides = {}) {
   if ('planDropdownOpen' in overrides)
     planDropdownOpen = overrides.planDropdownOpen;
   if ('branches' in overrides) branches = overrides.branches;
-  maxBeads = overrides.maxBeads ?? 0;
+  maxBeads = 'maxBeads' in overrides ? overrides.maxBeads : null;
+  projectLevelMaxBeads =
+    'projectLevelMaxBeads' in overrides ? overrides.projectLevelMaxBeads : null;
+}
+
+/**
+ * Resolve effective max beads for display labels.
+ * Precedence: selected template → project settings → null.
+ */
+export function resolveEffectiveMaxBeads() {
+  // If an explicit template is selected, use its config
+  if (selectedTemplate && selectedTemplate !== 'default') {
+    const tmpl = (templates || []).find((t) => t.id === selectedTemplate);
+    const tmplMaxBeads = tmpl?.config?.agents?.coordinator?.max_beads;
+    if (tmplMaxBeads !== undefined && tmplMaxBeads !== null)
+      return tmplMaxBeads;
+  }
+  // Fall back to project-level setting
+  return projectLevelMaxBeads;
 }
 
 export function seedMaxBeadsFromTemplate(templateId) {
   const tmpl = (templates || []).find((t) => t.id === templateId);
-  maxBeads = tmpl?.config?.agents?.coordinator?.max_beads ?? 0;
+  const tmplMaxBeads = tmpl?.config?.agents?.coordinator?.max_beads;
+  maxBeads =
+    tmplMaxBeads !== undefined && tmplMaxBeads !== null ? tmplMaxBeads : null; // passthrough when template has no config
 }
 
 function sourceLabel(type) {
@@ -181,42 +244,6 @@ function fetchTemplates(projectId) {
     });
 }
 
-// Phase 1: fetch the project's worca.default_template so the "default" option
-// in the dropdown can name what will actually run when no explicit template
-// is picked at launch.
-function fetchDefaultTemplate(projectId) {
-  const url = projectId
-    ? `/api/projects/${projectId}/settings`
-    : '/api/settings';
-  return fetch(url)
-    .then((r) => r.json())
-    .then((data) => {
-      // Accept both forms: legacy bare-string `"bugfix"` and the
-      // new structured `{tier: "project", id: "bugfix"}` shape.
-      const raw = data?.worca?.default_template;
-      defaultTemplateId =
-        typeof raw === 'string'
-          ? raw
-          : raw && typeof raw === 'object'
-            ? raw.id || ''
-            : '';
-
-      // Auto-select the default template if it's present in the templates list
-      if (defaultTemplateId && templates) {
-        const found = templates.find((t) => t.id === defaultTemplateId);
-        if (found && selectedTemplate === 'default') {
-          selectedTemplate = defaultTemplateId;
-        }
-      }
-
-      return defaultTemplateId;
-    })
-    .catch(() => {
-      defaultTemplateId = '';
-      return '';
-    });
-}
-
 // Build the label for the "default" dropdown option. With Phase 1 in play,
 // picking this option does not always mean "raw settings.json" — if
 // worca.default_template is set, the runtime resolves it and applies that
@@ -306,9 +333,19 @@ export async function submitNewRun({
   const maxBeadsEl = document.getElementById('new-run-max-beads');
   const msize = msizeEl ? parseInt(msizeEl.value, 10) || 1 : 1;
   const mloops = mloopsEl ? parseInt(mloopsEl.value, 10) || 1 : 1;
-  const maxBeadsValue = maxBeadsEl
-    ? parseInt(maxBeadsEl.value, 10) || 0
-    : maxBeads;
+
+  // Parse maxBeads: empty string → null (passthrough), "0" → 0 (explicit Auto), numeric → cap
+  let maxBeadsValue = maxBeads;
+  if (maxBeadsEl) {
+    const val = maxBeadsEl.value;
+    if (val === '') {
+      // Empty string from dropdown means passthrough
+      maxBeadsValue = null;
+    } else {
+      // Parse as number
+      maxBeadsValue = parseInt(val, 10) || 0;
+    }
+  }
 
   const PR_BRANCH_RE = /^[a-zA-Z0-9._/-]+$/;
   if (prBaseBranch && !PR_BRANCH_RE.test(prBaseBranch)) {
@@ -333,8 +370,11 @@ export async function submitNewRun({
       sourceType: wireSourceType,
       msize: Math.max(1, Math.min(10, msize)),
       mloops: Math.max(1, Math.min(10, mloops)),
-      maxBeads: maxBeadsValue,
     };
+    // Conditionally include maxBeads only when explicitly set (not null/passthrough)
+    if (maxBeadsValue !== null) {
+      body.maxBeads = maxBeadsValue;
+    }
     if (hasSource) body.sourceValue = sourceValue;
     if (hasPrompt) body.prompt = promptValue;
     if (hasPlan) body.planFile = selectedPlan;
@@ -422,6 +462,8 @@ export function newRunView(_state, { rerender }) {
     templates = null;
     defaultTemplateId = '';
     planFiles = null;
+    projectLevelMaxBeads = null;
+    maxBeads = null;
     const newId = selectedProject;
     if (newId) {
       fetchBranches(newId).then(() => rerender());
@@ -441,6 +483,8 @@ export function newRunView(_state, { rerender }) {
   // Reset caches when effective project changes (before fetchBranches updates _lastProjectId)
   if (_lastProjectId !== effectiveId) {
     templates = null;
+    projectLevelMaxBeads = null;
+    maxBeads = null;
   }
 
   // Fetch branches once (null = not yet fetched, or project changed)
@@ -469,7 +513,14 @@ export function newRunView(_state, { rerender }) {
     // Persist the choice to module state so a rerender (async branch/template
     // fetch resolving before submit) doesn't snap the select back to the
     // template-seeded value via the `value=${String(maxBeads)}` binding.
-    maxBeads = parseInt(e.target.value, 10) || 0;
+    const val = e.target.value;
+    if (val === '') {
+      // Empty string means passthrough (use template/project default)
+      maxBeads = null;
+    } else {
+      // Parse as number
+      maxBeads = parseInt(val, 10) || 0;
+    }
     rerender();
   }
 
@@ -781,13 +832,39 @@ export function newRunView(_state, { rerender }) {
 
               <div class="settings-field">
                 <label class="settings-label">Max Beads</label>
-                <sl-select id="new-run-max-beads" value=${String(maxBeads)} @sl-change=${handleMaxBeadsChange}>
-                  <sl-option value="0">Auto</sl-option>
-                  ${[1, 2, 3, 4, 5, 6, 7, 8, 9, 10].map(
-                    (n) => html`<sl-option value=${String(n)}>${n}</sl-option>`,
+                <sl-select id="new-run-max-beads" value=${maxBeads === null ? '' : String(maxBeads)} @sl-change=${handleMaxBeadsChange}>
+                  ${(() => {
+                    const effective = resolveEffectiveMaxBeads();
+                    const defaultLabel =
+                      effective !== null
+                        ? `Template/project default (${effective})`
+                        : 'Template/project default (Auto)';
+                    return html`<sl-option value="">${defaultLabel}</sl-option>`;
+                  })()}
+                  <sl-option value="0">Auto (force even if template/project has a cap)</sl-option>
+                  ${[1, 2, 3, 5, 10].map(
+                    (n) =>
+                      html`<sl-option value=${String(n)}>${n} beads</sl-option>`,
                   )}
                 </sl-select>
-                <span class="settings-field-hint">Cap on coordinator beads (0 = no cap)</span>
+                ${(() => {
+                  const effective = resolveEffectiveMaxBeads();
+                  let hintText = 'Cap on coordinator beads.';
+                  if (maxBeads === null) {
+                    if (effective !== null) {
+                      hintText = `Using template/project default (${effective}). Explicit selection overrides this.`;
+                    } else {
+                      hintText =
+                        'Using template/project default (Auto). Explicit selection overrides this.';
+                    }
+                  } else if (maxBeads === 0) {
+                    hintText =
+                      'Explicitly set to Auto (no cap), overrides template/project default.';
+                  } else {
+                    hintText = `Explicitly set to ${maxBeads} bead${maxBeads === 1 ? '' : 's'}, overrides template/project default.`;
+                  }
+                  return html`<span class="settings-field-hint">${hintText}</span>`;
+                })()}
               </div>
             </div>
 
