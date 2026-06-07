@@ -627,6 +627,38 @@ let _editorTemplatesFetching = false; // single in-flight templates fetch for in
 let _editorModule = null;
 let getEditorState = null;
 
+/**
+ * If the user is currently viewing one of the just-imported templates in the
+ * editor, the cached `editorState.template` is stale (the on-disk file changed
+ * but the editor only reloads on (tier,id) change). Force a fresh
+ * `loadTemplate` so the editor reflects the imported contents without needing
+ * a browser refresh.
+ *
+ * @param {Array<{id: string, tier: string}>} imported
+ */
+function _invalidateEditorCacheIfImported(imported) {
+  if (!Array.isArray(imported) || imported.length === 0) return;
+  if (!_editorModule || typeof getEditorState !== 'function') return;
+  let st;
+  try {
+    st = getEditorState();
+  } catch {
+    return;
+  }
+  if (!st?.templateId || !st?.tier) return;
+  const hit = imported.find(
+    (e) => e && e.id === st.templateId && e.tier === st.tier,
+  );
+  if (!hit) return;
+  const route = store.getState().currentRoute || {};
+  _editorModule
+    .loadTemplate(st.tier, st.templateId, route.projectId || null)
+    .then(() => rerender())
+    .catch(() => {
+      /* best-effort */
+    });
+}
+
 // ── Integrations state ──────────────────────────────────────────────────
 let integrationsStatus = null;
 let integrationsConfig = null;
@@ -2053,6 +2085,50 @@ function _dismissTemplateActionDialog() {
   rerender();
 }
 
+function _onCollisionActionChange(alias, action, suggested) {
+  if (!_templateActionDialog) return;
+  const prev = _templateActionDialog.resolutions?.[alias] || {};
+  const next = { action };
+  if (action === 'rename') {
+    next.new_name = prev.new_name || suggested || `${alias}-01`;
+  }
+  _templateActionDialog = {
+    ..._templateActionDialog,
+    resolutions: {
+      ...(_templateActionDialog.resolutions || {}),
+      [alias]: next,
+    },
+  };
+  rerender();
+}
+
+function _onCollisionRenameInput(alias, newName) {
+  if (!_templateActionDialog) return;
+  const prev = _templateActionDialog.resolutions?.[alias] || {
+    action: 'rename',
+  };
+  _templateActionDialog = {
+    ..._templateActionDialog,
+    resolutions: {
+      ...(_templateActionDialog.resolutions || {}),
+      [alias]: { ...prev, action: 'rename', new_name: newName },
+    },
+  };
+  rerender();
+}
+
+function _onTemplateCollisionChange(tid, action) {
+  if (!_templateActionDialog) return;
+  _templateActionDialog = {
+    ..._templateActionDialog,
+    templateResolutions: {
+      ...(_templateActionDialog.templateResolutions || {}),
+      [tid]: { action },
+    },
+  };
+  rerender();
+}
+
 const _TEMPLATE_ID_RE = /^[a-z0-9_-]{1,64}$/;
 
 /**
@@ -2383,6 +2459,119 @@ function _templateActionDialogTemplate(state) {
           `
           : ''
       }
+      ${
+        Array.isArray(dlg.templateCollisions) &&
+        dlg.templateCollisions.length > 0
+          ? html`
+            <div class="settings-field dialog-collisions">
+              <div class="dialog-collisions-header">
+                <sl-badge variant="warning">Template collisions</sl-badge>
+              </div>
+              <p class="settings-field-hint">
+                The bundle contains template ids that already exist in the
+                selected target storage. Pick whether to replace the existing
+                template or keep it.
+              </p>
+              <ul class="dialog-collision-list">
+                ${dlg.templateCollisions.map((t) => {
+                  const r = dlg.templateResolutions?.[t.id] || {
+                    action: 'replace',
+                  };
+                  return html`
+                    <li class="dialog-collision-row" data-rename="false">
+                      <div class="dialog-collision-alias">
+                        <code>${t.id}</code>
+                      </div>
+                      <sl-select
+                        size="small"
+                        hoist
+                        class="collision-action-select"
+                        data-template=${t.id}
+                        .value=${r.action}
+                        @sl-change=${(e) => _onTemplateCollisionChange(t.id, e.target.value)}
+                      >
+                        <sl-option value="skip">Skip (keep existing)</sl-option>
+                        <sl-option value="replace">Replace</sl-option>
+                      </sl-select>
+                    </li>
+                  `;
+                })}
+            </ul>
+            </div>
+          `
+          : ''
+      }
+      ${
+        Array.isArray(dlg.collisions) && dlg.collisions.length > 0
+          ? html`
+            <div class="settings-field dialog-collisions">
+              <div class="dialog-collisions-header">
+                <sl-badge variant="warning">Model alias collisions</sl-badge>
+              </div>
+              <p class="settings-field-hint">
+                The bundle includes model aliases that already exist in your
+                user-global settings (<code>~/.worca/settings.json</code>). Pick
+                a resolution per alias. Renames rewrite the template's
+                <code>config.agents.*.model</code> references so the imported
+                template keeps working.
+              </p>
+              <ul class="dialog-collision-list">
+                ${dlg.collisions.map((c) => {
+                  const r = dlg.resolutions?.[c.alias] || {
+                    action: 'rename',
+                    new_name: c.suggested_rename,
+                  };
+                  const isRename = r.action === 'rename';
+                  return html`
+                    <li class="dialog-collision-row" data-rename=${isRename ? 'true' : 'false'}>
+                      <div class="dialog-collision-alias">
+                        <code>${c.alias}</code>
+                      </div>
+                      <sl-select
+                        size="small"
+                        hoist
+                        class="collision-action-select"
+                        data-alias=${c.alias}
+                        .value=${r.action}
+                        @sl-change=${(e) => _onCollisionActionChange(c.alias, e.target.value, c.suggested_rename)}
+                      >
+                        <sl-option value="skip">Skip</sl-option>
+                        <sl-option value="overwrite">Overwrite</sl-option>
+                        <sl-option value="rename">Rename</sl-option>
+                      </sl-select>
+                      ${
+                        isRename
+                          ? html`
+                            <sl-input
+                              size="small"
+                              class="collision-rename-input"
+                              data-alias=${c.alias}
+                              placeholder="new alias name"
+                              .value=${r.new_name || c.suggested_rename || ''}
+                              @sl-input=${(e) => _onCollisionRenameInput(c.alias, e.target.value)}
+                            ></sl-input>
+                          `
+                          : ''
+                      }
+                    </li>
+                  `;
+                })}
+              </ul>
+              ${
+                dlg.newAliases && dlg.newAliases.length > 0
+                  ? html`
+                    <p class="settings-field-hint dialog-new-aliases-hint">
+                      ${dlg.newAliases.length} new alias${dlg.newAliases.length === 1 ? '' : 'es'}
+                      will land cleanly:
+                      ${dlg.newAliases.map((a) => html`<code>${a}</code> `)}
+                    </p>
+                  `
+                  : ''
+              }
+            </div>
+          `
+          : ''
+      }
       <div class="settings-field">
         <label class="settings-label" for="dlg-tier">Target storage</label>
         <sl-select
@@ -2629,58 +2818,93 @@ async function _confirmTemplateActionDialog() {
         return;
       }
 
-      if (dlg.parsed._kind === 'zip') {
-        // Binary POST: raw zip bytes + dst_tier as query param.
-        const importUrl = `${projectUrl('/templates/import')}?dst_tier=${encodeURIComponent(dlg.tier || 'project')}`;
-        const res = await fetch(importUrl, {
-          method: 'POST',
-          headers: { 'Content-Type': 'application/zip' },
-          body: dlg.file,
-        });
-        const data = await res.json();
-        if (!res.ok || !data.ok) {
+      const tier = dlg.tier || 'project';
+      const isZip = dlg.parsed._kind === 'zip';
+
+      // Phase 1: preview surfaces alias collisions BEFORE any write. If
+      // collisions exist and the user hasn't resolved them yet, swap the
+      // dialog body to the collision resolver. On the next click (with
+      // resolutions in hand) we drop through to the commit POST.
+      if (!dlg.previewSeen) {
+        const previewUrl = `${projectUrl('/templates/import/preview')}?dst_tier=${encodeURIComponent(tier)}`;
+        const previewInit = isZip
+          ? {
+              method: 'POST',
+              headers: { 'Content-Type': 'application/zip' },
+              body: dlg.file,
+            }
+          : {
+              method: 'POST',
+              headers: { 'Content-Type': 'application/json' },
+              body: JSON.stringify({ bundle: dlg.parsed }),
+            };
+        const previewRes = await fetch(previewUrl, previewInit);
+        const previewData = await previewRes.json();
+        if (!previewRes.ok || !previewData.ok) {
           _templateActionDialog = {
             ...dlg,
-            error: data.error || 'Failed to import',
+            error: previewData.error || 'Failed to preview import',
           };
           _templateActionBusy = false;
           rerender();
           return;
         }
-        // Fetch overlays for each imported template to show in the result view.
-        const overlaysByTemplate = {};
-        for (const { id, tier } of data.imported || []) {
-          try {
-            const oRes = await fetch(
-              projectUrl(`/templates/${tier}/${id}/overlays`),
-            );
-            const oData = await oRes.json();
-            if (oData.ok && oData.overlays) {
-              overlaysByTemplate[id] = Object.keys(oData.overlays);
-            }
-          } catch {
-            // best-effort; missing overlays don't fail the import
+        const collisions = previewData.collisions || [];
+        const templateCollisions = previewData.template_collisions || [];
+        if (collisions.length > 0 || templateCollisions.length > 0) {
+          const initialModels = {};
+          for (const c of collisions) {
+            initialModels[c.alias] = {
+              action: 'rename',
+              new_name: c.suggested_rename || `${c.alias}-01`,
+            };
           }
+          const initialTemplates = {};
+          for (const t of templateCollisions) {
+            initialTemplates[t.id] = { action: 'replace' };
+          }
+          _templateActionDialog = {
+            ...dlg,
+            previewSeen: true,
+            collisions,
+            templateCollisions,
+            newAliases: previewData.new_aliases || [],
+            modelsScope: previewData.models_scope || 'user',
+            resolutions: initialModels,
+            templateResolutions: initialTemplates,
+          };
+          _templateActionBusy = false;
+          rerender();
+          return;
         }
-        const templates = await fetchTemplates(route.projectId || null);
-        store.setState({
-          templates,
-          defaultTemplate: templates.defaultTemplate,
-        });
-        _templateActionDialog = {
-          ...dlg,
-          importResult: { imported: data.imported || [], overlaysByTemplate },
-        };
-        _templateActionBusy = false;
-        rerender();
-        return;
       }
 
-      const res = await fetch(projectUrl('/templates/import'), {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ bundle: dlg.parsed, dst_tier: dlg.tier }),
-      });
+      const bodyResolutions = {
+        models: dlg.resolutions || {},
+        templates: dlg.templateResolutions || {},
+      };
+      let res;
+      if (isZip) {
+        const importUrl = `${projectUrl('/templates/import')}?dst_tier=${encodeURIComponent(tier)}`;
+        res = await fetch(importUrl, {
+          method: 'POST',
+          headers: {
+            'Content-Type': 'application/zip',
+            'x-resolutions': JSON.stringify(bodyResolutions),
+          },
+          body: dlg.file,
+        });
+      } else {
+        res = await fetch(projectUrl('/templates/import'), {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({
+            bundle: dlg.parsed,
+            dst_tier: tier,
+            resolutions: bodyResolutions,
+          }),
+        });
+      }
       const data = await res.json();
       if (!res.ok || !data.ok) {
         _templateActionDialog = {
@@ -2691,10 +2915,42 @@ async function _confirmTemplateActionDialog() {
         rerender();
         return;
       }
+
+      if (isZip) {
+        const overlaysByTemplate = {};
+        for (const { id, tier: t } of data.imported || []) {
+          try {
+            const oRes = await fetch(
+              projectUrl(`/templates/${t}/${id}/overlays`),
+            );
+            const oData = await oRes.json();
+            if (oData.ok && oData.overlays) {
+              overlaysByTemplate[id] = Object.keys(oData.overlays);
+            }
+          } catch {
+            /* best-effort */
+          }
+        }
+        const templates = await fetchTemplates(route.projectId || null);
+        store.setState({
+          templates,
+          defaultTemplate: templates.defaultTemplate,
+        });
+        _invalidateEditorCacheIfImported(data.imported || []);
+        _templateActionDialog = {
+          ...dlg,
+          importResult: { imported: data.imported || [], overlaysByTemplate },
+        };
+        _templateActionBusy = false;
+        rerender();
+        return;
+      }
+
       _templateActionDialog = null;
       _templateActionBusy = false;
       const templates = await fetchTemplates(route.projectId || null);
       store.setState({ templates, defaultTemplate: templates.defaultTemplate });
+      _invalidateEditorCacheIfImported(data.imported || []);
       return;
     }
 

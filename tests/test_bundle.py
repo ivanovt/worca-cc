@@ -406,8 +406,8 @@ class TestNonSecretPreservation:
 class TestValidateBundle:
 
     def test_rejects_unknown_major_version(self):
-        # v3 is still unsupported; v2 is now accepted (zip bundles).
-        manifest = _minimal_manifest(worca_bundle_version=3)
+        # v4 is still unsupported; v3 is now accepted (zip + models.json).
+        manifest = _minimal_manifest(worca_bundle_version=4)
         errors, _ = validate_bundle(manifest)
         assert len(errors) == 1
         assert errors[0]["field"] == "worca_bundle_version"
@@ -418,8 +418,14 @@ class TestValidateBundle:
         errors, _ = validate_bundle(manifest)
         assert not errors
 
-    def test_rejects_string_major_three(self):
-        manifest = _minimal_manifest(worca_bundle_version="3.0")
+    def test_accepts_version_three(self):
+        # v3 = zip with optional models.json carrying alias+pricing.
+        manifest = _minimal_manifest(worca_bundle_version=3)
+        errors, _ = validate_bundle(manifest)
+        assert not errors
+
+    def test_rejects_string_major_four(self):
+        manifest = _minimal_manifest(worca_bundle_version="4.0")
         errors, _ = validate_bundle(manifest)
         assert any(e["field"] == "worca_bundle_version" for e in errors)
 
@@ -958,3 +964,64 @@ class TestRedactBundleOverlays:
         redacted, paths = redact_bundle(manifest)
         assert redacted["templates"][0]["_overlays"]["planner.md"] == "# Normal prompt\nNo secrets here."
         assert paths == []
+
+
+# ---------------------------------------------------------------------------
+# v3 zip layout: models.json carries alias map + pricing
+# ---------------------------------------------------------------------------
+
+class TestBundleV3ModelsJson:
+    """Roundtrip a v3 zip carrying models.json through _write_zip → fetch_bundle."""
+
+    def test_write_zip_with_models_carries_models_json(self, tmp_path):
+        from worca.orchestrator.bundle import _write_zip
+        dest = tmp_path / "out.zip"
+        _write_zip(
+            {"id": "t", "name": "T", "description": "", "tags": [], "config": {}},
+            str(dest),
+            export_mode="standalone",
+            models={"glm-ds": {"id": "opus", "env": {"ANTHROPIC_BASE_URL": "https://example.com"}}},
+            pricing={"models": {"glm-ds": {"input_per_mtok": 1.5}}},
+        )
+        with zipfile.ZipFile(dest) as zf:
+            names = zf.namelist()
+            assert "template.json" in names
+            assert "models.json" in names
+            payload = json.loads(zf.read("models.json"))
+            assert payload["models"]["glm-ds"]["id"] == "opus"
+            assert payload["pricing"]["models"]["glm-ds"]["input_per_mtok"] == 1.5
+
+    def test_fetch_bundle_lifts_models_json_to_manifest(self, tmp_path):
+        from worca.orchestrator.bundle import _write_zip
+        dest = tmp_path / "out.zip"
+        _write_zip(
+            {"id": "t", "name": "T", "description": "", "tags": [], "config": {}},
+            str(dest),
+            export_mode="standalone",
+            models={"glm-ds": {"id": "opus"}},
+            pricing={"models": {"glm-ds": {"input_per_mtok": 1.5}}},
+        )
+        manifest = fetch_bundle(str(dest))
+        assert manifest["worca_bundle_version"] == 3
+        assert manifest["models"]["glm-ds"]["id"] == "opus"
+        assert manifest["pricing"]["models"]["glm-ds"]["input_per_mtok"] == 1.5
+        assert manifest["export_mode"] == "standalone"
+
+    def test_zip_without_models_json_synthesizes_v2(self, tmp_path):
+        from worca.orchestrator.bundle import _write_zip
+        dest = tmp_path / "out.zip"
+        _write_zip(
+            {"id": "t", "name": "T", "description": "", "tags": [], "config": {}},
+            str(dest),
+            export_mode="standalone",
+        )
+        manifest = fetch_bundle(str(dest))
+        assert manifest["worca_bundle_version"] == 2
+        assert "models" not in manifest
+        assert "pricing" not in manifest
+
+    def test_invalid_models_json_raises(self):
+        from worca.orchestrator.bundle import _manifest_from_zip
+        bad = _make_zip_bytes([("models.json", "not json {")])
+        with pytest.raises(BundleLayoutError, match="invalid JSON"):
+            _manifest_from_zip(bad)

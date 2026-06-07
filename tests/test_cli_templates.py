@@ -1287,7 +1287,10 @@ class TestTemplatesImport:
             "worca.cli.templates._find_settings_path",
             return_value=str(tmp_path / ".claude" / "settings.json"),
         ):
-            main(["templates", "import", "--from", str(bundle_file), "--non-interactive"])
+            main([
+                "templates", "import", "--from", str(bundle_file),
+                "--non-interactive", "--on-template-conflict", "skip",
+            ])
 
         out = capsys.readouterr()
         assert "skip" in out.out.lower() or "skipped" in out.err.lower() or "0 template" in out.out.lower()
@@ -1845,7 +1848,10 @@ class TestImportMixedCollision:
             "worca.cli.templates._find_settings_path",
             return_value=str(tmp_path / ".claude" / "settings.json"),
         ):
-            main(["templates", "import", "--from", str(bundle_file), "--non-interactive"])
+            main([
+                "templates", "import", "--from", str(bundle_file),
+                "--non-interactive", "--on-template-conflict", "skip",
+            ])
 
         # Colliding one: still original
         collides_data = json.loads((project_dir / "collides" / "template.json").read_text())
@@ -2279,27 +2285,28 @@ class TestImportAliasCollision:
         err = capsys.readouterr().err
         assert "would overwrite" not in err
 
-    def test_different_value_non_interactive_keeps_local(self, capsys, tmp_path):
+    def test_different_value_non_interactive_aborts_by_default(self, capsys, tmp_path):
         """Bundle's opus differs from local's — non-interactive defaults to
-        skip (preserve target), bundle value dropped."""
-        written = self._run(
-            tmp_path,
-            current_models={"opus": "claude-opus-4-7"},  # newer locally
-            bundle_models={"opus": "claude-opus-4-6"},   # older in bundle
-        )
-        assert written["worca"]["models"]["opus"] == "claude-opus-4-7"
-        err = capsys.readouterr().err
-        assert "would overwrite" in err
-        assert "kept target's existing values" in err
-
-    def test_different_value_interactive_replace(self, capsys, tmp_path):
+        abort (refuse to proceed). The _run helper swallows the SystemExit; we
+        assert the local value was preserved (no write happened)."""
         written = self._run(
             tmp_path,
             current_models={"opus": "claude-opus-4-7"},
             bundle_models={"opus": "claude-opus-4-6"},
-            interactive_input="r",
         )
-        # Replace: bundle wins.
+        assert written["worca"]["models"]["opus"] == "claude-opus-4-7"
+        err = capsys.readouterr().err
+        assert "collides with existing aliases" in err
+        assert "--on-model-conflict=abort" in err
+
+    def test_different_value_interactive_overwrite(self, capsys, tmp_path):
+        written = self._run(
+            tmp_path,
+            current_models={"opus": "claude-opus-4-7"},
+            bundle_models={"opus": "claude-opus-4-6"},
+            interactive_input="o",
+        )
+        # Overwrite: bundle wins.
         assert written["worca"]["models"]["opus"] == "claude-opus-4-6"
 
     def test_different_value_interactive_skip(self, capsys, tmp_path):
@@ -2782,3 +2789,306 @@ class TestValidateMergesProjectModels:
 
         monkeypatch.setenv("WORCA_HOME", str(tmp_path / "worca-home"))
         assert _resolve_project_models(str(tmp_path)) == {}
+
+
+# ---------------------------------------------------------------------------
+# Rename collision resolver: --on-model-conflict=rename + --resolutions
+# ---------------------------------------------------------------------------
+
+class TestImportAliasRename:
+    """Rename action assigns -01 suffix and rewrites template.config.agents.*.model
+    references atomically with the alias map write."""
+
+    def _run(self, tmp_path, *, current_models, bundle_models, on_conflict=None,
+             resolutions=None, interactive_input=None):
+        builtin_dir = tmp_path / "builtin"
+        builtin_dir.mkdir()
+        project_dir = tmp_path / "project"
+        user_dir = tmp_path / "user"
+        settings_dir = tmp_path / ".claude"
+        settings_dir.mkdir()
+        settings_path = settings_dir / "settings.json"
+        settings_path.write_text(json.dumps({"worca": {"models": current_models}}))
+
+        bundle = _make_bundle(
+            templates=[{
+                "id": "uses-alias",
+                "name": "Uses Alias",
+                "description": "",
+                "tags": [],
+                "config": {"agents": {"planner": {"model": "glm-ds"}}},
+            }],
+            models=bundle_models,
+        )
+        bundle_file = tmp_path / "bundle.json"
+        bundle_file.write_text(json.dumps(bundle))
+
+        patches = [
+            patch("worca.cli.templates._resolve_dirs",
+                  return_value=(builtin_dir, project_dir, user_dir)),
+            patch("worca.cli.templates._find_settings_path",
+                  return_value=str(settings_path)),
+        ]
+        args = ["templates", "import", "--from", str(bundle_file)]
+        if resolutions is not None:
+            rpath = tmp_path / "resolutions.json"
+            rpath.write_text(json.dumps(resolutions))
+            args.extend(["--resolutions", str(rpath)])
+        if on_conflict:
+            args.extend(["--on-model-conflict", on_conflict])
+        if interactive_input is None:
+            args.append("--non-interactive")
+        else:
+            patches.append(patch("builtins.input", return_value=interactive_input))
+
+        for p in patches:
+            p.__enter__()
+        try:
+            try:
+                main(args)
+            except SystemExit:
+                pass
+        finally:
+            for p in reversed(patches):
+                p.__exit__(None, None, None)
+
+        written = json.loads(settings_path.read_text())
+        landed_template = None
+        tpath = project_dir / "uses-alias" / "template.json"
+        if tpath.exists():
+            landed_template = json.loads(tpath.read_text())
+        return written, landed_template
+
+    def test_rename_policy_assigns_zero_padded_suffix(self, tmp_path):
+        written, landed = self._run(
+            tmp_path,
+            current_models={"glm-ds": {"id": "claude-opus-4-6"}},
+            bundle_models={"glm-ds": {"id": "claude-opus-4-7"}},
+            on_conflict="rename",
+        )
+        assert "glm-ds" in written["worca"]["models"]
+        assert "glm-ds-01" in written["worca"]["models"]
+        assert written["worca"]["models"]["glm-ds-01"] == {"id": "claude-opus-4-7"}
+        # Template ref rewritten transactionally
+        assert landed["config"]["agents"]["planner"]["model"] == "glm-ds-01"
+
+    def test_rename_probes_next_available_suffix(self, tmp_path):
+        written, landed = self._run(
+            tmp_path,
+            current_models={
+                "glm-ds": {"id": "claude-opus-4-6"},
+                "glm-ds-01": {"id": "other"},
+            },
+            bundle_models={"glm-ds": {"id": "claude-opus-4-7"}},
+            on_conflict="rename",
+        )
+        assert "glm-ds-02" in written["worca"]["models"]
+        assert landed["config"]["agents"]["planner"]["model"] == "glm-ds-02"
+
+    def test_resolutions_file_per_alias_overwrite(self, tmp_path):
+        written, landed = self._run(
+            tmp_path,
+            current_models={"glm-ds": {"id": "claude-opus-4-6"}},
+            bundle_models={"glm-ds": {"id": "claude-opus-4-7"}},
+            resolutions={"glm-ds": {"action": "overwrite"}},
+        )
+        assert written["worca"]["models"]["glm-ds"] == {"id": "claude-opus-4-7"}
+        assert landed["config"]["agents"]["planner"]["model"] == "glm-ds"
+
+    def test_resolutions_file_per_alias_skip_keeps_local(self, tmp_path):
+        written, landed = self._run(
+            tmp_path,
+            current_models={"glm-ds": {"id": "claude-opus-4-6"}},
+            bundle_models={"glm-ds": {"id": "claude-opus-4-7"}},
+            resolutions={"glm-ds": {"action": "skip"}},
+        )
+        assert written["worca"]["models"]["glm-ds"] == {"id": "claude-opus-4-6"}
+        assert landed["config"]["agents"]["planner"]["model"] == "glm-ds"
+
+    def test_resolutions_file_explicit_new_name(self, tmp_path):
+        written, landed = self._run(
+            tmp_path,
+            current_models={"glm-ds": {"id": "claude-opus-4-6"}},
+            bundle_models={"glm-ds": {"id": "claude-opus-4-7"}},
+            resolutions={"glm-ds": {"action": "rename", "new_name": "glm-ds-private"}},
+        )
+        assert "glm-ds-private" in written["worca"]["models"]
+        assert landed["config"]["agents"]["planner"]["model"] == "glm-ds-private"
+
+    def test_skip_policy_drops_alias_and_leaves_template_pointing_at_existing(self, tmp_path):
+        written, landed = self._run(
+            tmp_path,
+            current_models={"glm-ds": {"id": "claude-opus-4-6"}},
+            bundle_models={"glm-ds": {"id": "claude-opus-4-7"}},
+            on_conflict="skip",
+        )
+        assert written["worca"]["models"]["glm-ds"] == {"id": "claude-opus-4-6"}
+        assert landed["config"]["agents"]["planner"]["model"] == "glm-ds"
+
+
+class TestImportPreview:
+    """--preview prints JSON collisions and exits without writing."""
+
+    def test_preview_emits_collisions_and_exits_without_writing(self, tmp_path, capsys):
+        builtin_dir = tmp_path / "builtin"
+        builtin_dir.mkdir()
+        project_dir = tmp_path / "project"
+        user_dir = tmp_path / "user"
+        settings_dir = tmp_path / ".claude"
+        settings_dir.mkdir()
+        settings_path = settings_dir / "settings.json"
+        settings_path.write_text(json.dumps({
+            "worca": {"models": {"glm-ds": {"id": "claude-opus-4-6"}}}
+        }))
+
+        bundle = _make_bundle(
+            templates=[{
+                "id": "uses-alias",
+                "name": "Uses Alias",
+                "description": "",
+                "tags": [],
+                "config": {"agents": {"planner": {"model": "glm-ds"}}},
+            }],
+            models={"glm-ds": {"id": "claude-opus-4-7"}, "fresh": {"id": "claude-sonnet"}},
+        )
+        bundle["templates"][0]["config"]["agents"]["tester"] = {"model": "fresh"}
+        bundle_file = tmp_path / "bundle.json"
+        bundle_file.write_text(json.dumps(bundle))
+
+        with patch(
+            "worca.cli.templates._resolve_dirs",
+            return_value=(builtin_dir, project_dir, user_dir),
+        ), patch(
+            "worca.cli.templates._find_settings_path",
+            return_value=str(settings_path),
+        ):
+            main(["templates", "import", "--from", str(bundle_file), "--preview"])
+
+        out = capsys.readouterr().out
+        payload = json.loads(out)
+        aliases = {c["alias"] for c in payload["collisions"]}
+        assert "glm-ds" in aliases
+        assert "fresh" in payload["new_aliases"]
+        assert payload["models_scope"] == "user"
+        # Template was not written
+        assert not (project_dir / "uses-alias").exists()
+
+
+# ---------------------------------------------------------------------------
+# Template collisions: --on-template-conflict + structured --resolutions
+# ---------------------------------------------------------------------------
+
+class TestImportTemplateConflict:
+    """Per-template skip/replace/abort decisions via the new flags and via the
+    structured `--resolutions` payload."""
+
+    def _setup(self, tmp_path, existing_name="Original", incoming_name="FromBundle"):
+        builtin_dir = tmp_path / "builtin"
+        builtin_dir.mkdir()
+        project_dir = tmp_path / "project"
+        user_dir = tmp_path / "user"
+        _write_template(
+            project_dir / "tmpl",
+            _minimal("tmpl", tier="project", name=existing_name),
+        )
+        bundle = _make_bundle(templates=[{
+            "id": "tmpl",
+            "name": incoming_name,
+            "description": "d",
+            "tags": [],
+            "config": {},
+        }])
+        bundle_file = tmp_path / "bundle.json"
+        bundle_file.write_text(json.dumps(bundle))
+        return builtin_dir, project_dir, user_dir, bundle_file
+
+    def test_default_abort_refuses_template_collision(self, tmp_path, capsys):
+        builtin_dir, project_dir, user_dir, bundle_file = self._setup(tmp_path)
+        with patch(
+            "worca.cli.templates._resolve_dirs",
+            return_value=(builtin_dir, project_dir, user_dir),
+        ), patch(
+            "worca.cli.templates._find_settings_path",
+            return_value=str(tmp_path / ".claude" / "settings.json"),
+        ):
+            try:
+                main(["templates", "import", "--from", str(bundle_file), "--non-interactive"])
+            except SystemExit:
+                pass
+
+        landed = json.loads((project_dir / "tmpl" / "template.json").read_text())
+        assert landed["name"] == "Original"  # untouched
+        assert "on-template-conflict=abort" in capsys.readouterr().err
+
+    def test_replace_policy_overwrites_existing_template(self, tmp_path):
+        builtin_dir, project_dir, user_dir, bundle_file = self._setup(tmp_path)
+        with patch(
+            "worca.cli.templates._resolve_dirs",
+            return_value=(builtin_dir, project_dir, user_dir),
+        ), patch(
+            "worca.cli.templates._find_settings_path",
+            return_value=str(tmp_path / ".claude" / "settings.json"),
+        ):
+            main([
+                "templates", "import", "--from", str(bundle_file),
+                "--non-interactive", "--on-template-conflict", "replace",
+            ])
+
+        landed = json.loads((project_dir / "tmpl" / "template.json").read_text())
+        assert landed["name"] == "FromBundle"
+
+    def test_skip_policy_keeps_existing(self, tmp_path):
+        builtin_dir, project_dir, user_dir, bundle_file = self._setup(tmp_path)
+        with patch(
+            "worca.cli.templates._resolve_dirs",
+            return_value=(builtin_dir, project_dir, user_dir),
+        ), patch(
+            "worca.cli.templates._find_settings_path",
+            return_value=str(tmp_path / ".claude" / "settings.json"),
+        ):
+            main([
+                "templates", "import", "--from", str(bundle_file),
+                "--non-interactive", "--on-template-conflict", "skip",
+            ])
+
+        landed = json.loads((project_dir / "tmpl" / "template.json").read_text())
+        assert landed["name"] == "Original"
+
+    def test_structured_resolutions_per_template_replace(self, tmp_path):
+        builtin_dir, project_dir, user_dir, bundle_file = self._setup(tmp_path)
+        resolutions = tmp_path / "res.json"
+        resolutions.write_text(json.dumps({
+            "models": {},
+            "templates": {"tmpl": {"action": "replace"}},
+        }))
+        with patch(
+            "worca.cli.templates._resolve_dirs",
+            return_value=(builtin_dir, project_dir, user_dir),
+        ), patch(
+            "worca.cli.templates._find_settings_path",
+            return_value=str(tmp_path / ".claude" / "settings.json"),
+        ):
+            main([
+                "templates", "import", "--from", str(bundle_file),
+                "--non-interactive", "--resolutions", str(resolutions),
+            ])
+
+        landed = json.loads((project_dir / "tmpl" / "template.json").read_text())
+        assert landed["name"] == "FromBundle"
+
+    def test_preview_includes_template_collisions(self, tmp_path, capsys):
+        builtin_dir, project_dir, user_dir, bundle_file = self._setup(tmp_path)
+        with patch(
+            "worca.cli.templates._resolve_dirs",
+            return_value=(builtin_dir, project_dir, user_dir),
+        ), patch(
+            "worca.cli.templates._find_settings_path",
+            return_value=str(tmp_path / ".claude" / "settings.json"),
+        ):
+            main(["templates", "import", "--from", str(bundle_file), "--preview"])
+
+        payload = json.loads(capsys.readouterr().out)
+        assert any(c["id"] == "tmpl" for c in payload.get("template_collisions", []))
+        # Template is untouched even though preview ran
+        landed = json.loads((project_dir / "tmpl" / "template.json").read_text())
+        assert landed["name"] == "Original"

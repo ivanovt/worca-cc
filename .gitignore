@@ -61,3 +61,10 @@ htmlcov/
 worca-ui/app/utils/status-constants.js
 .playwright-mcp/
 watch-page-live.png
+
+# Local screenshots from Playwright debugging
+collision-dialog.png
+collision-dialog-fixed.png
+dual-collision-dialog.png
+import-complete.png
+legacy-settings-picker-with-aliases.png
