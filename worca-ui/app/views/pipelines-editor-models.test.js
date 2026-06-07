@@ -51,10 +51,13 @@ describe('pipelines-editor — project worca.models loading', () => {
     vi.restoreAllMocks();
   });
 
-  it('loads project worca.models into editorState.settings on loadTemplate', async () => {
+  it('loads effective worca.models into editorState.settings on loadTemplate', async () => {
     mockFetchByUrl({
-      // settings endpoint — checked before the template URL fragment below
-      '/settings': { worca: { models: { 'glm-ds': { id: 'opus' } } } },
+      // effective-settings endpoint layers user-global ~/.worca/settings.json
+      // over project settings.json so user-scope aliases land in the picker too
+      '/effective-settings': {
+        worca: { models: { 'glm-ds': { id: 'opus' } } },
+      },
       '/templates/project/feature-glm-ds': TEMPLATE_BODY,
     });
 
@@ -65,16 +68,16 @@ describe('pipelines-editor — project worca.models loading', () => {
     expect(st.settings.worca.models['glm-ds']).toEqual({ id: 'opus' });
   });
 
-  it('requests the project settings endpoint for the active project', async () => {
+  it('requests the effective-settings endpoint for the active project', async () => {
     mockFetchByUrl({
-      '/settings': { worca: { models: {} } },
+      '/effective-settings': { worca: { models: {} } },
       '/templates/project/feature-glm-ds': TEMPLATE_BODY,
     });
 
     await loadTemplate('project', 'feature-glm-ds', 'test-proj');
 
     const calledSettings = globalThis.fetch.mock.calls.some(([url]) =>
-      String(url).includes('/api/projects/test-proj/settings'),
+      String(url).includes('/api/projects/test-proj/effective-settings'),
     );
     expect(calledSettings).toBe(true);
   });

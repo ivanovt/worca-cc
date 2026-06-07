@@ -29,7 +29,7 @@ import { getDefaultBranch } from './git-helpers.js';
 import { extractAndStripGlobalKeys } from './global-keys.js';
 import { LaunchLock } from './launch-lock.js';
 import { createModelEnvRouter } from './model-env-routes.js';
-import { preferencesPath } from './paths.js';
+import { globalSettingsPath, preferencesPath } from './paths.js';
 import { readPreferences } from './preferences.js';
 import { ProcessManager } from './process-manager.js';
 import { countRunningPipelinesAcrossProjects } from './process-registry.js';
@@ -45,6 +45,7 @@ import {
 import {
   deepMerge,
   localPathFor,
+  readEffectiveSettings,
   readLocalSettings,
   readMergedSettings,
 } from './settings-merge.js';
@@ -477,6 +478,28 @@ export function createProjectScopedRoutes({
     }
     try {
       const merged = readMergedSettings(settingsPath);
+      res.json({
+        worca: merged.worca || {},
+        permissions: merged.permissions || {},
+      });
+    } catch (err) {
+      res
+        .status(500)
+        .json({ error: { code: 'read_error', message: err.message } });
+    }
+  });
+
+  // GET /api/projects/:projectId/effective-settings
+  //
+  // Returns the fully-layered settings the Python runtime sees: user-global
+  // base → user-global .local → project base → project .local. Used by UI
+  // surfaces that must mirror runtime alias resolution (e.g. the per-agent
+  // model dropdown in the template editor — without this, aliases that live
+  // only in user-global ~/.worca/settings.json are invisible to projects).
+  router.get('/effective-settings', (req, res) => {
+    const { settingsPath } = req.project;
+    try {
+      const merged = readEffectiveSettings(settingsPath, globalSettingsPath());
       res.json({
         worca: merged.worca || {},
         permissions: merged.permissions || {},

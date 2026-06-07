@@ -311,6 +311,55 @@ def register_subcommand(sub):
         default=False,
         help="Skip collision prompts; auto-skip all collisions",
     )
+    import_parser.add_argument(
+        "--on-model-conflict",
+        dest="on_model_conflict",
+        choices=["abort", "skip", "overwrite", "rename"],
+        default="abort",
+        help=(
+            "Non-interactive policy when an incoming model alias collides with an "
+            "existing one in user-global settings. abort: refuse the import; "
+            "skip: drop the incoming alias and let the template reference the "
+            "existing one; overwrite: replace the existing definition; "
+            "rename: append a zero-padded -NN suffix and rewrite template refs."
+        ),
+    )
+    import_parser.add_argument(
+        "--on-template-conflict",
+        dest="on_template_conflict",
+        choices=["abort", "skip", "replace"],
+        default="abort",
+        help=(
+            "Non-interactive policy when an incoming template id already exists "
+            "in the target scope. abort: refuse the import; skip: keep the "
+            "existing template (drop the incoming one); replace: overwrite the "
+            "existing template with the incoming one."
+        ),
+    )
+    import_parser.add_argument(
+        "--resolutions",
+        dest="resolutions",
+        default=None,
+        help=(
+            "Path to a JSON file describing per-collision resolution actions. "
+            "Structured shape: {\"models\": {\"<alias>\": {\"action\": "
+            "\"skip|overwrite|rename\", \"new_name\": \"<optional>\"}}, "
+            "\"templates\": {\"<tid>\": {\"action\": \"skip|replace\"}}}. "
+            "A flat root-level mapping is treated as the models block for "
+            "backwards compatibility within this PR. Used by the worca-ui "
+            "import flow."
+        ),
+    )
+    import_parser.add_argument(
+        "--preview",
+        dest="preview",
+        action="store_true",
+        default=False,
+        help=(
+            "Print a JSON collision preview to stdout and exit without writing "
+            "anything. Used by the worca-ui import flow."
+        ),
+    )
 
     # validate
     validate_parser = templates_sub.add_parser(
@@ -755,12 +804,13 @@ def cmd_templates_export(args):
     for entry in template_entries:
         has_overlays = bool(entry.get("_overlays"))
 
-        # Build and redact a per-template manifest so redaction paths reference
-        # the single-template index (templates[0].*) consistently.
+        # Always carry models+pricing through the manifest so redaction sees
+        # any secret values. The zip layout (v3) ships them in models.json;
+        # the json layout keeps them at manifest top level.
         per_manifest = build_export_manifest(
             [entry],
-            models=models if not has_overlays else None,
-            pricing=pricing if not has_overlays else None,
+            models=models,
+            pricing=pricing,
             export_mode=export_mode,
         )
         redacted_manifest, redacted_paths = redact_bundle(per_manifest)
@@ -769,6 +819,8 @@ def cmd_templates_export(args):
                 print(f"info: redacted {rp}", file=sys.stderr)
 
         redacted_entry = redacted_manifest["templates"][0]
+        redacted_models = redacted_manifest.get("models")
+        redacted_pricing = redacted_manifest.get("pricing")
 
         if multi:
             ext = ".zip" if has_overlays else ".json"
@@ -777,7 +829,13 @@ def cmd_templates_export(args):
             out_path = dest
 
         if has_overlays:
-            _write_zip(redacted_entry, out_path, export_mode=export_mode)
+            _write_zip(
+                redacted_entry,
+                out_path,
+                export_mode=export_mode,
+                models=redacted_models,
+                pricing=redacted_pricing,
+            )
         else:
             Path(out_path).write_text(
                 json.dumps(redacted_manifest, indent=2), encoding="utf-8"
@@ -792,10 +850,45 @@ def cmd_templates_export(args):
 
 
 def cmd_templates_import(args):
-    """worca templates import --from <source> — import templates from a bundle."""
+    """worca templates import --from <source> — import templates from a bundle.
+
+    Model aliases (``worca.models``) and pricing (``worca.pricing.models``) in
+    the bundle always land in user-global settings (``~/.worca/settings.json``)
+    regardless of ``--scope``. Templates themselves still honor ``--scope``.
+    The split keeps repo-committed settings.json free of per-developer env /
+    secret scaffolding while letting the project template reference the alias.
+    """
     source = args.from_source
     scope = args.scope
     non_interactive = args.non_interactive
+    on_model_conflict = getattr(args, "on_model_conflict", "abort")
+    on_template_conflict = getattr(args, "on_template_conflict", "abort")
+    preview_only = getattr(args, "preview", False)
+    resolutions_path = getattr(args, "resolutions", None)
+
+    user_resolutions_raw: dict = {}
+    if resolutions_path:
+        try:
+            user_resolutions_raw = json.loads(Path(resolutions_path).read_text(encoding="utf-8"))
+        except (json.JSONDecodeError, OSError) as e:
+            print(f"error: --resolutions: {e}", file=sys.stderr)
+            raise SystemExit(1)
+        if not isinstance(user_resolutions_raw, dict):
+            print("error: --resolutions JSON root must be an object", file=sys.stderr)
+            raise SystemExit(1)
+
+    # Two accepted shapes for --resolutions:
+    #   structured: {"models": {alias: {...}}, "templates": {tid: {...}}}
+    #   legacy:     {alias: {...}}  (treated as the models block)
+    if (
+        "models" in user_resolutions_raw
+        or "templates" in user_resolutions_raw
+    ):
+        model_resolutions = user_resolutions_raw.get("models") or {}
+        template_resolutions = user_resolutions_raw.get("templates") or {}
+    else:
+        model_resolutions = user_resolutions_raw
+        template_resolutions = {}
 
     try:
         manifest = fetch_bundle(source)
@@ -833,8 +926,26 @@ def cmd_templates_import(args):
         print("error: not in a git repository — cannot determine project template directory", file=sys.stderr)
         raise SystemExit(1)
 
-    to_import = {}
-    skipped_ids = []
+    # First pass: detect template-id collisions in the target scope so they can
+    # be surfaced by --preview alongside model collisions before any prompt.
+    template_collisions_meta: list[dict] = []
+    for tmpl in bundle_templates:
+        tid = tmpl["id"]
+        existing = resolver.get(tid)
+        has_collision = existing is not None and (
+            (scope == "project" and existing.tier == "project")
+            or (scope == "user" and existing.tier == "user")
+        )
+        if has_collision:
+            template_collisions_meta.append({
+                "id": tid,
+                "existing_tier": existing.tier,
+                "existing_name": existing.name,
+                "incoming_name": tmpl.get("name", tid),
+            })
+
+    to_import: dict = {}
+    skipped_ids: list[str] = []
     for tmpl in bundle_templates:
         tid = tmpl["id"]
         existing = resolver.get(tid)
@@ -849,12 +960,40 @@ def cmd_templates_import(args):
                 f"info: shadowing builtin template '{tid}' with {scope}-scope import",
                 file=sys.stderr,
             )
-        if has_collision:
-            if non_interactive:
-                skipped_ids.append(tid)
-                continue
-            # Re-prompt on unrecognized input — the operation isn't reversible,
-            # don't silently fall through to "skip".
+        if not has_collision:
+            to_import[tid] = tmpl
+            continue
+
+        # --preview is passive: never prompt, never abort, just record the
+        # template as skipped so the loop is consistent and the preview branch
+        # below returns the full collision metadata to the caller.
+        if preview_only:
+            skipped_ids.append(tid)
+            continue
+
+        # Collision-resolution precedence:
+        #   1. Per-template entry in user_resolutions_raw["templates"]
+        #   2. --on-template-conflict policy (in non-interactive mode)
+        #   3. Interactive prompt (skip/replace/abort)
+        spec = template_resolutions.get(tid) if isinstance(template_resolutions, dict) else None
+        action = None
+        if isinstance(spec, dict) and isinstance(spec.get("action"), str):
+            action = spec["action"]
+            if action not in ("skip", "replace"):
+                print(f"error: unknown template action {action!r} for {tid!r}", file=sys.stderr)
+                raise SystemExit(1)
+        elif non_interactive:
+            policy = on_template_conflict
+            if policy == "abort":
+                print(
+                    f"error: template '{tid}' already exists in {scope} scope "
+                    f"with --on-template-conflict=abort",
+                    file=sys.stderr,
+                )
+                raise SystemExit(1)
+            action = policy
+
+        if action is None:
             decided = False
             while not decided:
                 try:
@@ -863,7 +1002,6 @@ def cmd_templates_import(args):
                         f"[r]eplace / [s]kip / [a]bort? "
                     )
                 except EOFError:
-                    # No stdin available (CI, piped run) — treat as skip and stop.
                     skipped_ids.append(tid)
                     decided = True
                     break
@@ -872,31 +1010,41 @@ def cmd_templates_import(args):
                     print("aborted", file=sys.stderr)
                     raise SystemExit(1)
                 if choice.startswith("r"):
-                    to_import[tid] = tmpl
+                    action = "replace"
                     decided = True
                 elif choice.startswith("s"):
-                    skipped_ids.append(tid)
+                    action = "skip"
                     decided = True
                 else:
                     print(
                         f"  unrecognized choice {answer!r} — enter r, s, or a",
                         file=sys.stderr,
                     )
-        else:
+
+        if action == "replace":
             to_import[tid] = tmpl
+        else:
+            skipped_ids.append(tid)
 
     settings_patch: dict = {}
-    settings_path = _find_settings_path(scope)
+    template_settings_path = _find_settings_path(scope)
+    # Model aliases always land user-global so the project's committed
+    # settings.json stays free of per-developer env/secret scaffolds.
+    models_settings_path = _find_settings_path("user")
 
-    # Filter bundle's models/pricing to aliases actually referenced by templates
-    # that will land. Anything else is over-inclusion — it would silently
-    # inject entries the user didn't ask for and may overwrite their existing
-    # aliases. Mirror of the same filter on export.
+    # Filter bundle's models/pricing to aliases actually referenced by
+    # templates. For preview mode we consider the FULL bundle so the dialog
+    # can surface collisions even when the destination already has the
+    # template (which non-interactive skips). For commit mode we restrict to
+    # `to_import` so we don't carry aliases for skipped templates.
     if bundle_models or bundle_pricing:
-        imported_templates_list = list(to_import.values())
+        if preview_only:
+            referenced_source = list(bundle_templates)
+        else:
+            referenced_source = list(to_import.values())
         all_bundle_models = bundle_models or {}
         referenced = collect_referenced_model_aliases(
-            imported_templates_list, all_bundle_models
+            referenced_source, all_bundle_models
         )
         if bundle_models:
             bundle_models, _ = _filter_models_by_aliases(
@@ -925,13 +1073,31 @@ def cmd_templates_import(args):
             cleaned_models[model_key] = model_entry
         bundle_models = cleaned_models
 
-    # Detect per-alias collisions against the target's current settings and
-    # let the user decide (or default to skip in non-interactive mode). This
-    # mirrors the per-template collision UX rather than silently letting the
-    # bundle overwrite local model/pricing definitions via deep_merge.
-    bundle_models, bundle_pricing = _resolve_settings_alias_collisions(
-        bundle_models, bundle_pricing, settings_path, non_interactive
+    # --preview: print collisions JSON and exit without writing. Used by the
+    # worca-ui import flow to drive the collision dialog before commit.
+    if preview_only:
+        preview = _build_collision_preview(bundle_models, bundle_pricing, models_settings_path)
+        preview["template_ids"] = [t.get("id") for t in bundle_templates]
+        preview["template_collisions"] = template_collisions_meta
+        preview["models_scope"] = "user"
+        preview["template_scope"] = scope
+        preview["template_settings_path"] = template_settings_path
+        print(json.dumps(preview, indent=2))
+        return
+
+    bundle_models, bundle_pricing, rename_map = _resolve_settings_alias_collisions(
+        bundle_models,
+        bundle_pricing,
+        models_settings_path,
+        non_interactive,
+        on_conflict=on_model_conflict,
+        resolutions=model_resolutions,
     )
+
+    # Apply the rename map to templates BEFORE _atomic_import so the on-disk
+    # template never references a stale alias name. Transactional with the
+    # rename in the settings patch.
+    _rewrite_template_model_refs(to_import, rename_map)
 
     if bundle_models:
         settings_patch["models"] = bundle_models
@@ -946,11 +1112,23 @@ def cmd_templates_import(args):
             print("nothing to import")
         return
 
+    # Single atomic transaction: templates land in `target_dir` (per --scope),
+    # model aliases / pricing land in user-global settings.json. _atomic_import
+    # already handles cross-FS staging + rollback for both surfaces.
     try:
-        _atomic_import(to_import, settings_patch, target_dir, settings_path)
+        _atomic_import(to_import, settings_patch, target_dir, models_settings_path)
     except Exception as e:
         print(f"error: import failed: {e}", file=sys.stderr)
         raise SystemExit(1)
+
+    if to_import and settings_patch:
+        print(
+            f"info: templates landed in {scope} scope ({target_dir}); "
+            f"model aliases landed in user-global ({models_settings_path}). "
+            "Collaborators sharing the project must import this bundle on "
+            "their own machines to get the aliases.",
+            file=sys.stderr,
+        )
 
     # Surface any placeholder values that landed — the importer needs to fill
     # them in locally before the pipeline can use them.
@@ -1046,35 +1224,142 @@ def _filter_pricing_by_aliases(
     return result, dropped
 
 
+def _find_next_alias_name(base: str, taken: set[str], cap: int = 99) -> str | None:
+    """Probe ``base-01`` … ``base-{cap:02d}`` and return the first unused name.
+
+    Zero-padded so reimport ordering stays predictable. Returns ``None`` when
+    the cap is exhausted; caller treats that as a hard failure.
+    """
+    for n in range(1, cap + 1):
+        candidate = f"{base}-{n:02d}"
+        if candidate not in taken:
+            return candidate
+    return None
+
+
+def _rewrite_template_model_refs(
+    templates: dict, rename_map: dict[str, str]
+) -> None:
+    """Rewrite every ``config.agents.*.model`` reference in *templates* that
+    points at a renamed alias. Mutates in place; called transactionally with
+    the rename map AFTER collision resolution and BEFORE _atomic_import so the
+    on-disk template never references a stale alias.
+    """
+    if not rename_map:
+        return
+    for tmpl in templates.values():
+        config = tmpl.get("config")
+        if not isinstance(config, dict):
+            continue
+        agents = config.get("agents")
+        if not isinstance(agents, dict):
+            continue
+        for agent_cfg in agents.values():
+            if isinstance(agent_cfg, dict):
+                model = agent_cfg.get("model")
+                if isinstance(model, str) and model in rename_map:
+                    agent_cfg["model"] = rename_map[model]
+
+
+def _build_collision_preview(
+    bundle_models: dict | None,
+    bundle_pricing: dict | None,
+    settings_path: str | None,
+) -> dict:
+    """Return a JSON-serializable preview of incoming alias collisions.
+
+    Shape::
+        {
+          "collisions": [
+            {"alias": "glm-ds", "scope": "models",
+             "incoming": {...}, "existing": {...},
+             "suggested_rename": "glm-ds-01"},
+            ...
+          ],
+          "new_aliases": ["claude-private", ...],
+          "settings_path": "/Users/.../.worca/settings.json"
+        }
+
+    Used by the worca-ui preview endpoint so the dialog can render
+    per-alias resolution rows without re-running the import.
+    """
+    current_models, _ = _read_current_models_and_pricing(settings_path)
+    collisions: list[dict] = []
+    new_aliases: list[str] = []
+    taken = set(current_models.keys()) | set((bundle_models or {}).keys())
+    for alias, incoming in (bundle_models or {}).items():
+        if alias in current_models:
+            existing = current_models[alias]
+            if existing == incoming:
+                continue
+            suggested = _find_next_alias_name(alias, taken)
+            if suggested:
+                taken.add(suggested)
+            collisions.append({
+                "alias": alias,
+                "scope": "models",
+                "incoming": incoming,
+                "existing": existing,
+                "suggested_rename": suggested,
+            })
+        else:
+            new_aliases.append(alias)
+    return {
+        "collisions": collisions,
+        "new_aliases": sorted(new_aliases),
+        "settings_path": settings_path,
+    }
+
+
+def _read_current_models_and_pricing(settings_path: str | None) -> tuple[dict, dict]:
+    """Read the target settings.json and return its (models, pricing.models)."""
+    if not settings_path:
+        return {}, {}
+    sp = Path(settings_path)
+    if not sp.exists():
+        return {}, {}
+    try:
+        current_settings = json.loads(sp.read_text(encoding="utf-8"))
+    except (json.JSONDecodeError, OSError):
+        return {}, {}
+    if not isinstance(current_settings, dict):
+        return {}, {}
+    worca_cfg = current_settings.get("worca") or {}
+    if not isinstance(worca_cfg, dict):
+        return {}, {}
+    return (
+        worca_cfg.get("models") or {},
+        (worca_cfg.get("pricing") or {}).get("models") or {},
+    )
+
+
 def _resolve_settings_alias_collisions(
     bundle_models: dict | None,
     bundle_pricing: dict | None,
     settings_path: str | None,
     non_interactive: bool,
-) -> tuple[dict | None, dict | None]:
-    """For each alias the bundle would merge into `settings.worca.models` or
-    `settings.worca.pricing.models`, compare against the target's current
-    value. Surface collisions (different values for the same key) and either
-    skip them (non-interactive / EOF) or prompt for replace/skip/abort.
+    on_conflict: str = "abort",
+    resolutions: dict | None = None,
+) -> tuple[dict | None, dict | None, dict[str, str]]:
+    """Resolve per-alias collisions for incoming model and pricing entries.
 
-    No prompt is shown when collisions are absent. The reason this exists at
-    all is that the underlying `deep_merge` lets bundle values silently
-    overwrite local aliases — which is fine for additive merges but a real
-    footgun when the bundle ships e.g. `opus: claude-opus-4-6` over a local
-    `opus: claude-opus-4-7`.
+    Three resolution actions per colliding alias:
+      - ``skip``: drop the incoming entry; existing value retained.
+      - ``overwrite``: replace the existing value with the incoming one,
+        secrets included. Caller responsibility — the user explicitly chose it.
+      - ``rename``: assign a zero-padded ``-NN`` suffix and rewrite every
+        template ``config.agents.*.model`` reference to point at the new name.
+
+    Returns ``(bundle_models, bundle_pricing, rename_map)``. The caller MUST
+    apply ``rename_map`` to the templates BEFORE they are written via
+    ``_rewrite_template_model_refs``.
+
+    Resolution source-of-truth precedence:
+      1. ``resolutions`` dict (per-alias UI/CLI overrides) takes precedence.
+      2. ``on_conflict`` policy (CLI flag default) covers anything unresolved.
+      3. Interactive prompt only when no resolutions AND ``not non_interactive``.
     """
-    current_models: dict = {}
-    current_pricing_models: dict = {}
-    if settings_path:
-        sp = Path(settings_path)
-        if sp.exists():
-            try:
-                current_settings = json.loads(sp.read_text(encoding="utf-8"))
-            except (json.JSONDecodeError, OSError):
-                current_settings = {}
-            worca_cfg = (current_settings.get("worca") or {}) if isinstance(current_settings, dict) else {}
-            current_models = worca_cfg.get("models") or {}
-            current_pricing_models = (worca_cfg.get("pricing") or {}).get("models") or {}
+    current_models, current_pricing_models = _read_current_models_and_pricing(settings_path)
 
     model_collisions = sorted(
         k for k, v in (bundle_models or {}).items()
@@ -1086,8 +1371,10 @@ def _resolve_settings_alias_collisions(
         if k in current_pricing_models and current_pricing_models[k] != v
     )
 
+    rename_map: dict[str, str] = {}
+
     if not model_collisions and not pricing_collisions:
-        return bundle_models, bundle_pricing
+        return bundle_models, bundle_pricing, rename_map
 
     summary_parts = []
     if model_collisions:
@@ -1095,48 +1382,125 @@ def _resolve_settings_alias_collisions(
     if pricing_collisions:
         summary_parts.append(f"pricing.models: {', '.join(pricing_collisions)}")
     print(
-        f"warning: bundle would overwrite existing values for {'; '.join(summary_parts)}",
+        f"warning: bundle collides with existing aliases — {'; '.join(summary_parts)}",
         file=sys.stderr,
     )
 
-    def _drop_collisions(bm, bp):
-        if bm is not None:
-            bm = {k: v for k, v in bm.items() if k not in model_collisions}
-            if not bm:
-                bm = None
-        if bp is not None and isinstance(bp.get("models"), dict):
-            new_pm = {k: v for k, v in bp["models"].items() if k not in pricing_collisions}
-            bp = {**bp, "models": new_pm}
-        return bm, bp
+    resolutions = resolutions or {}
+    taken = set(current_models.keys()) | set((bundle_models or {}).keys())
 
-    if non_interactive:
-        print(
-            "  non-interactive: kept target's existing values, skipped bundle's overwrites",
-            file=sys.stderr,
-        )
-        return _drop_collisions(bundle_models, bundle_pricing)
+    def _resolve_one(alias: str) -> tuple[str, str | None]:
+        """Return (action, new_name). action ∈ {skip, overwrite, rename}."""
+        spec = resolutions.get(alias)
+        if isinstance(spec, dict) and isinstance(spec.get("action"), str):
+            action = spec["action"]
+            new_name = spec.get("new_name")
+            if action == "rename":
+                if not isinstance(new_name, str) or not new_name:
+                    new_name = _find_next_alias_name(alias, taken)
+                if not new_name:
+                    raise SystemExit(
+                        f"error: rename for alias {alias!r} exhausted -01..-99 probe"
+                    )
+                if new_name in taken:
+                    raise SystemExit(
+                        f"error: rename target {new_name!r} for alias {alias!r} is already taken"
+                    )
+                taken.add(new_name)
+                return "rename", new_name
+            if action in ("skip", "overwrite"):
+                return action, None
+            raise SystemExit(f"error: unknown action {action!r} for alias {alias!r}")
 
-    while True:
-        try:
-            answer = input("[r]eplace all / [s]kip collided / [a]bort? ")
-        except EOFError:
+        if non_interactive:
+            policy = on_conflict
+            if policy == "abort":
+                print(
+                    f"error: model alias collision on {alias!r} with --on-model-conflict=abort",
+                    file=sys.stderr,
+                )
+                raise SystemExit(1)
+            if policy == "rename":
+                new_name = _find_next_alias_name(alias, taken)
+                if not new_name:
+                    raise SystemExit(
+                        f"error: rename for alias {alias!r} exhausted -01..-99 probe"
+                    )
+                taken.add(new_name)
+                return "rename", new_name
+            return policy, None
+
+        while True:
+            try:
+                answer = input(
+                    f"alias {alias!r} collides — [s]kip / [o]verwrite / [r]ename / [a]bort? "
+                )
+            except EOFError:
+                print(
+                    f"  no stdin: defaulting to {on_conflict!r} for alias {alias!r}",
+                    file=sys.stderr,
+                )
+                if on_conflict == "abort":
+                    raise SystemExit(1)
+                if on_conflict == "rename":
+                    new_name = _find_next_alias_name(alias, taken)
+                    if not new_name:
+                        raise SystemExit(1)
+                    taken.add(new_name)
+                    return "rename", new_name
+                return on_conflict, None
+            choice = answer.strip().lower()
+            if choice.startswith("a"):
+                print("aborted", file=sys.stderr)
+                raise SystemExit(1)
+            if choice.startswith("s"):
+                return "skip", None
+            if choice.startswith("o"):
+                return "overwrite", None
+            if choice.startswith("r"):
+                new_name = _find_next_alias_name(alias, taken)
+                if not new_name:
+                    print(
+                        f"  rename for {alias!r} exhausted -01..-99 probe",
+                        file=sys.stderr,
+                    )
+                    continue
+                taken.add(new_name)
+                return "rename", new_name
             print(
-                "  no stdin: kept target's existing values, skipped bundle's overwrites",
+                f"  unrecognized choice {answer!r} — enter s, o, r, or a",
                 file=sys.stderr,
             )
-            return _drop_collisions(bundle_models, bundle_pricing)
-        choice = answer.strip().lower()
-        if choice.startswith("a"):
-            print("aborted", file=sys.stderr)
-            raise SystemExit(1)
-        if choice.startswith("r"):
-            return bundle_models, bundle_pricing
-        if choice.startswith("s"):
-            return _drop_collisions(bundle_models, bundle_pricing)
-        print(
-            f"  unrecognized choice {answer!r} — enter r, s, or a",
-            file=sys.stderr,
-        )
+
+    all_collisions = sorted(set(model_collisions) | set(pricing_collisions))
+    decisions: dict[str, tuple[str, str | None]] = {}
+    for alias in all_collisions:
+        decisions[alias] = _resolve_one(alias)
+
+    new_models = dict(bundle_models or {})
+    new_pricing_models = dict(pricing_models_block)
+    for alias, (action, new_name) in decisions.items():
+        if action == "skip":
+            new_models.pop(alias, None)
+            new_pricing_models.pop(alias, None)
+        elif action == "overwrite":
+            pass  # entry stays under its original key, will overwrite on merge
+        elif action == "rename":
+            rename_map[alias] = new_name
+            if alias in new_models:
+                new_models[new_name] = new_models.pop(alias)
+            if alias in new_pricing_models:
+                new_pricing_models[new_name] = new_pricing_models.pop(alias)
+            print(
+                f"  renamed alias {alias!r} -> {new_name!r}",
+                file=sys.stderr,
+            )
+
+    out_models: dict | None = new_models if new_models else None
+    out_pricing = bundle_pricing
+    if out_pricing is not None:
+        out_pricing = {**out_pricing, "models": new_pricing_models}
+    return out_models, out_pricing, rename_map
 
 
 def _collect_placeholder_paths(obj, path: str, out: list[str]) -> None:
@@ -1152,6 +1516,25 @@ def _collect_placeholder_paths(obj, path: str, out: list[str]) -> None:
     if isinstance(obj, list):
         for i, item in enumerate(obj):
             _collect_placeholder_paths(item, f"{path}[{i}]", out)
+
+
+def _write_models_to_user_settings(path: str | None, settings_patch: dict) -> None:
+    """Deep-merge ``{worca: settings_patch}`` into the user-global settings.json
+    atomically. Creates ``~/.worca/`` if missing. No-op when ``path`` is None.
+    """
+    if not path or not settings_patch:
+        return
+    sp = Path(path)
+    sp.parent.mkdir(parents=True, exist_ok=True)
+    if sp.exists():
+        try:
+            current = json.loads(sp.read_text(encoding="utf-8"))
+        except json.JSONDecodeError:
+            current = {}
+    else:
+        current = {}
+    patched = deep_merge(current, {"worca": settings_patch})
+    _atomic_write_json(str(sp), patched)
 
 
 def _atomic_write_json(path: str, data: dict) -> None:

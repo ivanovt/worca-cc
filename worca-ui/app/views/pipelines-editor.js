@@ -636,9 +636,15 @@ export function slugifyId(name) {
  */
 async function _loadProjectSettings(projectId) {
   try {
+    // Read the EFFECTIVE settings stack (user-global → project base → project
+    // .local), not just the project's own file. Aliases registered in
+    // ~/.worca/settings.json must surface in the picker because that's what
+    // the Python runtime sees when it resolves `agents.*.model`. Without this
+    // layer the dropdown silently hides user-global aliases imported via
+    // template bundles.
     const url = projectId
-      ? `/api/projects/${projectId}/settings`
-      : '/api/settings';
+      ? `/api/projects/${projectId}/effective-settings`
+      : '/api/effective-settings';
     const res = await fetch(url);
     if (!res.ok) return;
     const data = await res.json();

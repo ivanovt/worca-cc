@@ -254,6 +254,11 @@ _MAX_ZIP_RATIO = 100                            # max expansion ratio (zip bomb 
 # Allowed overlay filenames: e.g. planner.md, plan.block.md, plan_reviewer.md
 _OVERLAY_NAME_RE = re.compile(r"^[a-z0-9._-]{1,64}\.(md|block\.md)$")
 
+# v3 zip layout adds a top-level `models.json` carrying both the models alias
+# map and the pricing map. Older v2 readers will reject it as unexpected_entry,
+# which is why this is a major bump and not additive.
+_MODELS_JSON_MEMBER = "models.json"
+
 
 class BundleError(ValueError):
     """Base class for bundle processing errors."""
@@ -345,6 +350,7 @@ def _parse_zip_bundle(raw_bytes: bytes, staging: Path) -> dict:
 
         seen: set[str] = set()
         template_info: zipfile.ZipInfo | None = None
+        models_info: zipfile.ZipInfo | None = None
         overlay_infos: dict[str, zipfile.ZipInfo] = {}
         total_uncompressed = 0
 
@@ -396,6 +402,8 @@ def _parse_zip_bundle(raw_bytes: bytes, staging: Path) -> dict:
 
             if name == "template.json":
                 template_info = info
+            elif name == _MODELS_JSON_MEMBER:
+                models_info = info
             else:
                 p = PurePosixPath(name)
                 parts = p.parts
@@ -445,32 +453,70 @@ def _parse_zip_bundle(raw_bytes: bytes, staging: Path) -> dict:
         # template.json stays clean.
         export_mode = tmpl_data.pop("export_mode", None)
 
+        bundle_models: dict | None = None
+        bundle_pricing: dict | None = None
+        bundle_version = 2
+        if models_info is not None:
+            with zf.open(models_info) as fh:
+                raw = fh.read(_MAX_ZIP_FILE_SIZE + 1)
+                if len(raw) > _MAX_ZIP_FILE_SIZE:
+                    raise BundleLayoutError(
+                        f"file exceeds 256 KiB: {_MODELS_JSON_MEMBER}",
+                        details={"member": _MODELS_JSON_MEMBER, "rule": "oversized_single"},
+                    )
+                try:
+                    models_data = json.loads(raw)
+                except json.JSONDecodeError as exc:
+                    raise BundleLayoutError(
+                        f"invalid JSON in {_MODELS_JSON_MEMBER}: {exc}",
+                        details={"member": _MODELS_JSON_MEMBER, "rule": "bad_json"},
+                    ) from exc
+            if isinstance(models_data, dict):
+                m = models_data.get("models")
+                p = models_data.get("pricing")
+                if isinstance(m, dict) and m:
+                    bundle_models = m
+                if isinstance(p, dict) and p:
+                    bundle_pricing = p
+            bundle_version = 3
+
         manifest: dict = {
-            "worca_bundle_version": 2,
+            "worca_bundle_version": bundle_version,
             "exported_at": datetime.now(timezone.utc).isoformat(),
             "templates": [tmpl_data],
         }
         if export_mode is not None:
             manifest["export_mode"] = export_mode
+        if bundle_models is not None:
+            manifest["models"] = bundle_models
+        if bundle_pricing is not None:
+            manifest["pricing"] = bundle_pricing
         return manifest
 
 
-def _write_zip(tmpl_entry: dict, dest: str, export_mode: str | None = None) -> None:
+def _write_zip(
+    tmpl_entry: dict,
+    dest: str,
+    export_mode: str | None = None,
+    models: dict | None = None,
+    pricing: dict | None = None,
+) -> None:
     """Write a single-template zip bundle to *dest*.
 
     *tmpl_entry* is a (redacted) template dict that may carry
     ``_overlays: {filename: content}``.  The zip layout is::
 
         template.json        — template data (without _overlays key)
+        models.json          — {"models": {...}, "pricing": {...}} (v3, optional)
         agents/<fname>       — one file per entry in _overlays
 
-    This mirrors the layout expected by ``_parse_zip_bundle`` so a zip
-    produced here can be round-tripped through ``fetch_bundle``.
+    ``models.json`` lifts back to the synthesized manifest's top-level
+    ``models`` / ``pricing`` keys via ``_parse_zip_bundle``. When either is
+    written the synthesized bundle version becomes v3.
 
     ``export_mode`` is a manifest-level concept, but the strict zip layout
     carries no manifest wrapper — so it rides inside ``template.json`` and is
-    lifted back to the synthesized manifest by ``_parse_zip_bundle`` (and
-    popped off the entry there, so it never lands in the on-disk template.json).
+    lifted back to the synthesized manifest by ``_parse_zip_bundle``.
     """
     buf = io.BytesIO()
     with zipfile.ZipFile(buf, "w", compression=zipfile.ZIP_DEFLATED) as zf:
@@ -478,6 +524,13 @@ def _write_zip(tmpl_entry: dict, dest: str, export_mode: str | None = None) -> N
         if export_mode is not None:
             json_entry["export_mode"] = export_mode
         zf.writestr("template.json", json.dumps(json_entry, indent=2))
+        if models or pricing:
+            models_payload: dict = {}
+            if models:
+                models_payload["models"] = models
+            if pricing:
+                models_payload["pricing"] = pricing
+            zf.writestr(_MODELS_JSON_MEMBER, json.dumps(models_payload, indent=2))
         for fname, content in (tmpl_entry.get("_overlays") or {}).items():
             zf.writestr(f"agents/{fname}", content)
     Path(dest).write_bytes(buf.getvalue())
@@ -640,9 +693,9 @@ def _parse_bundle_version(v: object) -> tuple[int, int] | None:
 
 
 # Major versions this code understands.
-# v1 = JSON-only bundles; v2 = zip-sourced bundles with optional _overlays.
-SUPPORTED_BUNDLE_MAJOR = 2
-_SUPPORTED_BUNDLE_MAJORS = frozenset({1, 2})
+# v1 = JSON-only bundles; v2 = zip with template+overlays; v3 = v2 + models.json.
+SUPPORTED_BUNDLE_MAJOR = 3
+_SUPPORTED_BUNDLE_MAJORS = frozenset({1, 2, 3})
 
 
 def validate_bundle(manifest: dict) -> tuple[list[dict], list[str]]:

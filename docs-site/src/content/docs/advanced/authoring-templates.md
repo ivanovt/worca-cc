@@ -65,10 +65,14 @@ When you ask to import or load a bundle, the skill walks you through three steps
 
    Before fetching, the skill reminds you that bundles are config-as-data and warns about the [trust boundary](#trust-boundary).
 
-2. **Target scope.** Either **project** (writes to `.claude/templates/`, merges models/pricing into `settings.json`) or **user** (writes to `~/.worca/templates/`; models and pricing are skipped because there's no user-level `settings.json`).
+2. **Target scope.** Either **project** (writes templates to `.claude/templates/`) or **user** (writes templates to `~/.worca/templates/`). **Model aliases and pricing always land in user-global `~/.worca/settings.json` regardless of the template scope** — this keeps the project's committed settings free of per-developer env scaffolds and secret placeholders. If you share the bundle with a teammate via the repo, each collaborator runs the import on their machine to pick up the alias definitions.
 
-3. **Run the import, handle collisions, and follow up on placeholders.** For each template ID that already exists in the target scope, the skill asks **replace / skip / abort** — unrecognized input re-prompts, never silently skips. After the import:
-   - If any `<YOUR-SECRET-HERE>` placeholder values landed, it lists every path needing a real secret and points you at [Secrets](/configuration/secrets/) for where to put them.
+3. **Run the import, handle collisions, and follow up on placeholders.** Imports run in two phases: a passive **preview** that detects every collision before any write, then a **commit** that respects the resolutions you picked. The skill prompts:
+   - For each template id that already exists in the target scope, **replace / skip / abort** — unrecognized input re-prompts, never silently skips.
+   - For each model alias whose incoming definition differs from the existing one in user-global, **rename / overwrite / skip / abort**. The default for rename is a zero-padded `-NN` suffix (e.g. `glm-ds` → `glm-ds-01`, probing `-01..-99` for the first free slot). When you rename, the imported template's `config.agents.*.model` references are rewritten to point at the new alias name transactionally with the alias write, so the template never lands referencing a missing alias.
+
+   After the import:
+   - If any `<YOUR-SECRET-HERE>` placeholder values landed, the skill lists every path needing a real secret and points you at [Secrets](/configuration/secrets/) for where to put them.
    - If the import landed templates that shadow built-ins, you get an `info:` line per shadow so it's visible, not silent.
    - On any failure, the rollback restores every replaced template and `settings.json` from the snapshots taken before mutation; nothing partial is ever committed.
 
@@ -98,12 +102,17 @@ A single-template zip bundle has this structure:
 ```
 <id>-bundle.zip
   template.json         # required — the template config (same schema as the on-disk file)
+  models.json           # optional (v3) — { "models": {...}, "pricing": {...} }
   agents/               # optional — present only when overlays exist
     planner.md
     coordinator.md
     plan.block.md
     …any other *.md or *.block.md files
 ```
+
+`models.json` carries any `worca.models` alias definition that the template references, alongside its pricing entry. The importer lifts both back to the manifest top-level `models` and `pricing` keys at parse time, so they participate in the same redaction and collision flow as JSON bundles.
+
+When a zip bundle includes `models.json` the synthesized `worca_bundle_version` is `3`; otherwise it stays at `2`. The importer accepts versions `1`, `2`, and `3`.
 
 One template per zip. There is no multi-template zip — if you export multiple templates, only those with overlays become `.zip`; the rest stay `.json`.
 
@@ -194,7 +203,7 @@ Flags:
 # From a local JSON bundle:
 worca templates import --from ./team-bundle.json
 
-# From a local zip bundle (carries config + overlays):
+# From a local zip bundle (carries config + overlays + optional models.json):
 worca templates import --from ./bugfix-bundle.zip
 
 # From an HTTPS URL (JSON or zip — hardened, see Trust boundary below):
@@ -206,8 +215,17 @@ worca templates import --from https://gist.github.com/alice/abc123def456...
 # Into the user scope instead of project:
 worca templates import --from ./bundle.json --scope user
 
-# CI / non-interactive: skip all collisions instead of prompting:
-worca templates import --from ./bundle.json --non-interactive
+# Non-interactive policies for the two collision dimensions:
+worca templates import --from ./bundle.json --non-interactive \
+  --on-template-conflict replace \
+  --on-model-conflict rename
+
+# Preview-only: print collisions JSON and exit without writing anything.
+worca templates import --from ./bundle.json --preview
+
+# Drive resolutions programmatically (used by the worca-ui import dialog):
+worca templates import --from ./bundle.json --non-interactive \
+  --resolutions ./resolutions.json
 ```
 
 Flags:
@@ -215,10 +233,14 @@ Flags:
 | Flag | Effect |
 |---|---|
 | `--from <src>` | Source: file path, HTTPS URL, or gist URL/ID. Required. |
-| `--scope project\|user` | Where to install. Default `project`. User scope skips models/pricing (no user-level `settings.json`). |
-| `--non-interactive` | Auto-skip every collision; never prompt. |
+| `--scope project\|user` | Where templates land. Default `project`. **Model aliases always land in user-global `~/.worca/settings.json` regardless of `--scope`.** |
+| `--non-interactive` | Don't prompt; honor the `--on-*-conflict` policies and `--resolutions` instead. |
+| `--on-template-conflict abort\|skip\|replace` | Non-interactive policy when a template id already exists in the target scope. Default `abort`. |
+| `--on-model-conflict abort\|skip\|overwrite\|rename` | Non-interactive policy when a model alias collides with one in user-global settings. Default `abort`. `rename` appends a zero-padded `-NN` suffix and rewrites the template's `config.agents.*.model` references. |
+| `--preview` | Print a JSON collision report to stdout and exit; no files are written. Used by the worca-ui dialog. |
+| `--resolutions <path>` | JSON file mapping each collision to an explicit action. Structured shape: `{"models": {"<alias>": {"action": "skip\|overwrite\|rename", "new_name": "<optional>"}}, "templates": {"<tid>": {"action": "skip\|replace"}}}`. A flat root-level object is treated as the `models` block for back-compat. |
 
-Collisions prompt interactively (`[r]eplace / [s]kip / [a]bort`); unrecognized input re-prompts. Imports are atomic with rollback (see [Rollback](#rollback-and-atomicity) below).
+In interactive mode, template collisions prompt `[r]eplace / [s]kip / [a]bort` and model alias collisions prompt `[s]kip / [o]verwrite / [r]ename / [a]bort`. Unrecognized input re-prompts. Imports are atomic with rollback (see [Rollback](#rollback-and-atomicity) below).
 
 ## What's in a bundle (the safety model)
 
@@ -296,7 +318,13 @@ Imports are atomic with full rollback. Before any mutation, every existing templ
 
 ### Schema forward compatibility
 
-Bundles carry `worca_bundle_version`. The importer accepts the current major (`1`, `"1"`, `"1.0"`) and any forward-compat minor (`"1.1"`, `"1.5"`, …) — minor mismatches log a warning but proceed; unknown additive fields are preserved. A different major version is rejected outright.
+Bundles carry `worca_bundle_version`. The importer accepts:
+
+- `1` (or string forms `"1"`, `"1.0"`) — original JSON bundle layout.
+- `2` (`"2"`, `"2.0"`) — zip bundle with `template.json` and `agents/*.md` overlays.
+- `3` (`"3"`, `"3.0"`) — zip bundle that also carries a top-level `models.json` for alias and pricing definitions.
+
+Forward-compat minor mismatches (`"1.1"`, `"2.3"`, `"3.1"`, …) log a warning but proceed; unknown additive fields are preserved. Major versions outside the supported set are rejected outright with a clear error so an older importer never silently drops content from a newer bundle.
 
 ## Where templates fit
 

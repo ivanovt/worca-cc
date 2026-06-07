@@ -378,6 +378,50 @@ function exportGist(projectRoot, id) {
   return match ? match[0] : null;
 }
 
+function _parseResolutionsHeader(req) {
+  const raw = req.headers['x-resolutions'];
+  if (!raw) return null;
+  try {
+    const parsed = JSON.parse(raw);
+    if (parsed && typeof parsed === 'object' && !Array.isArray(parsed)) {
+      return parsed;
+    }
+  } catch {
+    /* fall through */
+  }
+  return null;
+}
+
+function _writeResolutionsFile(dir, resolutions) {
+  if (!resolutions || Object.keys(resolutions).length === 0) return null;
+  const path = join(dir, 'resolutions.json');
+  writeFileSync(path, JSON.stringify(resolutions), 'utf8');
+  return path;
+}
+
+function _baseImportArgs(
+  bundlePath,
+  dstTier,
+  resolutionsPath,
+  onModelConflict,
+) {
+  const args = [
+    'import',
+    '--from',
+    bundlePath,
+    '--scope',
+    dstTier,
+    '--non-interactive',
+  ];
+  if (resolutionsPath) {
+    args.push('--resolutions', resolutionsPath);
+  }
+  if (onModelConflict) {
+    args.push('--on-model-conflict', onModelConflict);
+  }
+  return args;
+}
+
 function handleZipImport(req, res) {
   const dstTier = req.query.dst_tier;
   if (!isValidTier(dstTier)) {
@@ -389,18 +433,18 @@ function handleZipImport(req, res) {
   if (rejectBuiltinWrite(res, dstTier, 'import to')) return;
 
   const zipBuffer = req.body;
-  const tmpPath = join(
-    tmpdir(),
-    `worca-import-${Math.random().toString(36).slice(2)}.zip`,
-  );
+  const resolutions = _parseResolutionsHeader(req);
+  const onModelConflict = req.query.on_model_conflict || null;
+  const dir = mkdtempSync(join(tmpdir(), 'worca-import-'));
+  const tmpPath = join(dir, 'bundle.zip');
   try {
     writeFileSync(tmpPath, zipBuffer);
+    const resolutionsPath = _writeResolutionsFile(dir, resolutions);
     const stdout = runWorcaTemplates(
       req.project.projectRoot,
-      ['import', '--from', tmpPath, '--scope', dstTier, '--non-interactive'],
+      _baseImportArgs(tmpPath, dstTier, resolutionsPath, onModelConflict),
       { timeout: 60000 },
     );
-    // Best-effort summary: the CLI may print imported template ids to stdout
     const imported = [];
     for (const line of (stdout || '').split('\n')) {
       const m = line.match(/imported[:\s]+([a-z0-9_-]+)/i);
@@ -412,16 +456,76 @@ function handleZipImport(req, res) {
       .status(statusForCliCode(err.cliCode))
       .json({ ok: false, error: err.message, code: err.cliCode });
   } finally {
-    try {
-      rmSync(tmpPath, { force: true });
-    } catch {
-      /* ignore cleanup errors */
+    cleanupTemp(dir);
+  }
+}
+
+function handleImportPreview(req, res) {
+  const dstTier = req.query.dst_tier;
+  if (!isValidTier(dstTier)) {
+    return res.status(400).json({
+      ok: false,
+      error: `dst_tier must be one of: ${TIERS.join(', ')}`,
+    });
+  }
+  if (rejectBuiltinWrite(res, dstTier, 'import to')) return;
+
+  const ctype = req.headers['content-type'] || '';
+  const dir = mkdtempSync(join(tmpdir(), 'worca-import-preview-'));
+  try {
+    let bundlePath;
+    if (ctype.startsWith('application/zip')) {
+      bundlePath = join(dir, 'bundle.zip');
+      writeFileSync(bundlePath, req.body);
+    } else {
+      const { bundle } = req.body || {};
+      if (!bundle || typeof bundle !== 'object') {
+        return res
+          .status(400)
+          .json({ ok: false, error: 'bundle must be a JSON object' });
+      }
+      bundlePath = join(dir, 'bundle.json');
+      writeFileSync(bundlePath, JSON.stringify(bundle), 'utf8');
     }
+    const stdout = runWorcaTemplates(
+      req.project.projectRoot,
+      [
+        'import',
+        '--from',
+        bundlePath,
+        '--scope',
+        dstTier,
+        '--non-interactive',
+        '--preview',
+      ],
+      { timeout: 30000 },
+    );
+    try {
+      const payload = JSON.parse(stdout);
+      res.json({ ok: true, ...payload });
+    } catch {
+      res.status(500).json({
+        ok: false,
+        error: 'CLI preview output was not valid JSON',
+        raw: stdout,
+      });
+    }
+  } catch (err) {
+    res
+      .status(statusForCliCode(err.cliCode))
+      .json({ ok: false, error: err.message, code: err.cliCode });
+  } finally {
+    cleanupTemp(dir);
   }
 }
 
 function handleJsonImport(req, res) {
-  const { bundle, dst_tier: dstTier } = req.body || {};
+  const {
+    bundle,
+    dst_tier: dstTier,
+    resolutions,
+    on_model_conflict: onModelConflict,
+  } = req.body || {};
   if (!bundle || typeof bundle !== 'object') {
     return res
       .status(400)
@@ -435,7 +539,10 @@ function handleJsonImport(req, res) {
   }
   if (rejectBuiltinWrite(res, dstTier, 'import to')) return;
   try {
-    const result = importBundle(req.project.projectRoot, bundle, dstTier);
+    const result = importBundle(req.project.projectRoot, bundle, dstTier, {
+      resolutions,
+      onModelConflict,
+    });
     res.json({ ok: true, ...result });
   } catch (err) {
     res
@@ -444,17 +551,19 @@ function handleJsonImport(req, res) {
   }
 }
 
-function importBundle(projectRoot, bundle, tier) {
+function importBundle(projectRoot, bundle, tier, opts = {}) {
   if (!bundle || !Array.isArray(bundle.templates)) {
     throw new Error('Bundle must contain a "templates" array');
   }
+  const { resolutions, onModelConflict } = opts;
   const dir = mkdtempSync(join(tmpdir(), 'worca-import-'));
   const bundlePath = join(dir, 'bundle.json');
   try {
     writeFileSync(bundlePath, JSON.stringify(bundle), 'utf8');
+    const resolutionsPath = _writeResolutionsFile(dir, resolutions);
     runWorcaTemplates(
       projectRoot,
-      ['import', '--from', bundlePath, '--scope', tier, '--non-interactive'],
+      _baseImportArgs(bundlePath, tier, resolutionsPath, onModelConflict),
       { timeout: 60000 },
     );
     const targetDir = dirForTier(projectRoot, tier);
@@ -591,6 +700,12 @@ export function createTemplatesRoutes() {
       }
       return handleJsonImport(req, res);
     },
+  );
+
+  router.post(
+    '/templates/import/preview',
+    expressRaw({ type: 'application/zip', limit: '1mb' }),
+    (req, res) => handleImportPreview(req, res),
   );
 
   /**

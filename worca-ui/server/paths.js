@@ -24,6 +24,17 @@ export function worcaHome() {
 }
 
 /**
+ * @returns {string} Absolute path to the user-global settings.json
+ * (`~/.worca/settings.json` by default, $WORCA_HOME-aware). The Python
+ * runtime reads this layer first and deep-merges project settings on top,
+ * so any UI surface that needs to mirror runtime resolution (e.g. model
+ * alias dropdowns) must layer this in.
+ */
+export function globalSettingsPath() {
+  return join(worcaHome(), 'settings.json');
+}
+
+/**
  * @param {string=} override Caller-supplied path that wins over $WORCA_HOME.
  * @returns {string} Absolute path to the fleet-runs directory.
  */

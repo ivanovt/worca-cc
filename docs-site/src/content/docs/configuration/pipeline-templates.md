@@ -110,7 +110,11 @@ Once a default template is in play, project settings for `agents`, `stages`, `lo
 ## Exporting and importing
 
 - **Export** — click **Export** on any card (or inside the editor). The format is chosen automatically: `.zip` when the template has prompt overlay files (`agents/*.md`), `.json` for config-only templates. Secrets are redacted in either format, safe to share or commit. Export works on every tier, including built-ins.
-- **Import** — click **Import** in the list view to upload a `.json` or `.zip` bundle file. Zip bundles carry the template config and all overlay files; the post-import dialog lists the overlays that landed. If the imported id collides with an existing template in the target scope, the editor surfaces the same inline collision warning and prompts you to rename before saving.
+- **Import** — click **Import** in the list view to upload a `.json` or `.zip` bundle file. The UI runs a **preview pass** first and, if any collisions are detected, opens a dialog with two sections so you can decide what to do:
+  - **Template collisions** — for each template id that already exists in the target scope, pick **Replace** (overwrite) or **Skip** (keep the existing).
+  - **Model alias collisions** — for each model alias in the bundle that already exists in your user-global settings (`~/.worca/settings.json`), pick **Rename** (zero-padded `-NN` suffix; the imported template's `config.agents.*.model` references are rewritten transactionally), **Overwrite** (replace the existing definition), or **Skip** (keep the existing).
+
+  Click **Import** in the dialog footer to commit. The post-import view lists the templates that landed and any overlay files that came in.
 
 :::note[Gist sharing — JSON bundles only]
 The "Copy gist URL" action is available only on templates without prompt overlays. Templates with overlays must be shared as a downloaded `.zip` file attachment.
