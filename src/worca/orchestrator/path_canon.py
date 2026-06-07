@@ -25,13 +25,22 @@ def canonicalize(raw: str, root: str) -> Optional[str]:
     - relpath() + '..' check (repo containment test)
     - PurePath.as_posix() (normalize separators, preserve case)
 
+    Tolerant recovery: when the path resolves outside ``root`` but the
+    basename of ``root`` appears as a segment in the path, take the tail
+    after that segment as the recovered repo-relative form. This catches
+    the common case where an agent supplies an absolute path that points
+    at a sibling clone (e.g. the main repo's tree) of the same project
+    rather than the worktree it is executing in, so file-access telemetry
+    still groups the path under the right tree instead of being dropped.
+
     Args:
         raw: raw path (relative or absolute)
         root: repo root directory
 
     Returns:
         Canonicalized repo-relative path (forward slashes, posix normalized),
-        or None if path is outside repo / different drive (Windows).
+        or None if path is outside repo / different drive (Windows) and the
+        basename-tail recovery also fails to find a match.
     """
     try:
         canonical_root = os.path.realpath(root)
@@ -44,16 +53,72 @@ def canonicalize(raw: str, root: str) -> Optional[str]:
         # Compute relative path
         rel = os.path.relpath(abs_path, canonical_root)
 
-        # Check for repo escape
-        if rel == "." or rel.startswith(".."):
-            return None
-
-        # Normalize to posix format
-        return PurePath(rel).as_posix()
+        # Repo containment check — if inside the worktree, we're done.
+        if rel != "." and not rel.startswith(".."):
+            return PurePath(rel).as_posix()
     except (ValueError, OSError):
         # ValueError: Windows drive mismatch
         # OSError: path resolution failure
+        # Fall through to tolerant recovery below.
+        pass
+
+    # Tolerant recovery: scan the raw path for the repo basename and adopt
+    # the tail after it. Only kicks in when the strict containment check
+    # above did not yield a repo-relative path.
+    return _recover_basename_tail(raw, root)
+
+
+def _recover_basename_tail(raw: str, root: str) -> Optional[str]:
+    """Recover repo-relative tail when the raw path falls outside ``root``.
+
+    Specifically targets the worktree case: when ``root`` is a worktree
+    under ``<project>/.worktrees/<id>`` and ``raw`` is an absolute path
+    pointing at a sibling clone of the same project (e.g. the main
+    checkout), take the tail of ``raw`` after the project's basename so
+    the entry groups under the project tree instead of being dropped.
+
+    Pure string math — no realpath, no git — so it stays cheap on cold
+    paths and works with paths whose file doesn't yet exist on disk
+    (e.g. live telemetry for in-progress iterations).
+
+    Returns ``None`` when ``root`` is not a worktree-style path, or the
+    project basename cannot be located in ``raw``, or the tail would be
+    empty ("just the basename").
+    """
+    if not raw or not root:
         return None
+    try:
+        # Normalize separators so we don't double-count on Windows mixed forms.
+        raw_posix = PurePath(raw).as_posix()
+        root_posix = PurePath(root).as_posix()
+    except (ValueError, TypeError):
+        return None
+
+    # Worktree heuristic: detect ``<project>/.worktrees/<id>`` in root and
+    # take the segment before ``.worktrees`` as the project basename. Only
+    # then look for that basename in ``raw`` — this avoids firing on random
+    # outside paths in non-worktree runs (where strict containment is the
+    # right answer and a basename match would silently absorb sibling files).
+    root_parts = root_posix.split("/")
+    try:
+        wt_idx = root_parts.index(".worktrees")
+    except ValueError:
+        return None
+    if wt_idx == 0:
+        return None
+    project_basename = root_parts[wt_idx - 1]
+    if not project_basename:
+        return None
+
+    raw_parts = raw_posix.split("/")
+    # Scan from the right — the tail closest to the leaf is the most likely
+    # intended target when the basename appears more than once (e.g. a
+    # nested checkout under ``<project>/.worktrees/<id>/``).
+    for i in range(len(raw_parts) - 1, -1, -1):
+        if raw_parts[i] == project_basename:
+            tail = "/".join(raw_parts[i + 1 :])
+            return tail if tail else None
+    return None
 
 
 class GitPathOracle:

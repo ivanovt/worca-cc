@@ -131,6 +131,93 @@ class TestCanonicalize:
         assert "\\" not in result
 
 
+class TestCanonicalizeWorktreeRecovery:
+    """Tolerant recovery for worktree-rooted aggregation.
+
+    When the worktree at ``<project>/.worktrees/<id>`` is the canonical root
+    and the raw path points at a sibling clone of ``<project>`` (e.g. the
+    main checkout), strict containment fails — recovery should adopt the
+    tail after the project basename so telemetry still groups correctly.
+    """
+
+    def test_recovers_tail_when_path_points_at_sibling_clone(self, tmp_path):
+        project = tmp_path / "worca-cc"
+        wt = project / ".worktrees" / "pipeline-abc"
+        wt.mkdir(parents=True)
+        # Sibling clone (the path the agent actually opened) — outside the worktree.
+        sibling_file = project / "worca-ui" / "app" / "views" / "new-run.js"
+        sibling_file.parent.mkdir(parents=True)
+        sibling_file.touch()
+
+        result = canonicalize(str(sibling_file), str(wt))
+        assert result == "worca-ui/app/views/new-run.js"
+
+    def test_recovers_tail_for_nonexistent_path(self, tmp_path):
+        """Heuristic is pure string math — should not require the file to exist."""
+        project = tmp_path / "myproj"
+        wt = project / ".worktrees" / "wt-1"
+        wt.mkdir(parents=True)
+
+        result = canonicalize(
+            str(project / "src" / "missing.py"), str(wt)
+        )
+        assert result == "src/missing.py"
+
+    def test_does_not_recover_when_basename_absent(self, tmp_path):
+        """If the project basename isn't a segment of the raw path, give up."""
+        project = tmp_path / "myproj"
+        wt = project / ".worktrees" / "wt-1"
+        wt.mkdir(parents=True)
+
+        # Path lives somewhere completely unrelated.
+        result = canonicalize("/etc/passwd", str(wt))
+        assert result is None
+
+    def test_does_not_recover_for_non_worktree_root(self, tmp_path):
+        """Heuristic must NOT fire when root is a plain repo with no .worktrees.
+
+        Otherwise random outside paths sharing a leading directory name would
+        silently land in the tree.
+        """
+        root = tmp_path / "repo"
+        root.mkdir()
+        # Sibling file outside the repo whose path happens to include "repo".
+        outside = tmp_path / "repo-sibling" / "file.py"
+        outside.parent.mkdir()
+        outside.touch()
+
+        # The strict check correctly rejects this; the heuristic should NOT
+        # silently absorb it on the basis of "repo" appearing as a substring.
+        result = canonicalize(str(outside), str(root))
+        assert result is None
+
+    def test_recovers_tail_picks_rightmost_basename_match(self, tmp_path):
+        """If the project basename appears multiple times, adopt the tail
+        closest to the leaf (the most likely intended target)."""
+        project = tmp_path / "worca-cc"
+        wt = project / ".worktrees" / "pipeline-x"
+        wt.mkdir(parents=True)
+
+        # Pathological raw path: /tmp/.../worca-cc/.worktrees/wt-other/worca-cc/foo.py
+        # The tail should be "foo.py", not "worca-cc/foo.py".
+        nested = project / ".worktrees" / "wt-other" / "worca-cc" / "foo.py"
+        nested.parent.mkdir(parents=True)
+        nested.touch()
+
+        result = canonicalize(str(nested), str(wt))
+        assert result == "foo.py"
+
+    def test_returns_none_when_tail_is_empty(self, tmp_path):
+        """A raw path whose only segment is the project basename has no tail."""
+        project = tmp_path / "worca-cc"
+        wt = project / ".worktrees" / "pipeline-x"
+        wt.mkdir(parents=True)
+
+        # Raw path points at the project directory itself, not a file inside it.
+        result = canonicalize(str(project), str(wt))
+        assert result is None
+
+
 class TestGitPathOracle:
     """Test the Layer 2 GitPathOracle class."""
 

@@ -361,6 +361,14 @@ function fragmentRecordsToFileAccess(records, repoRoot) {
  * Relativise an absolute fragment path against the repo root (a live stand-in
  * for the Python GitPathOracle respelling). Paths already relative, or outside
  * the repo, are returned unchanged; the repo root itself maps to null.
+ *
+ * Tolerant recovery: when ``repoRoot`` is a worktree under
+ * ``<project>/.worktrees/<id>`` and ``rawPath`` is an absolute path pointing
+ * at a sibling clone of the same project (e.g. the main checkout), strip the
+ * prefix up to and including the project basename so the entry groups under
+ * the project tree instead of rendering the full absolute path. Mirrors the
+ * Python ``_recover_basename_tail`` in ``path_canon.py`` so live and
+ * completion-time views agree.
  */
 function canonicalizePath(rawPath, repoRoot) {
   if (!rawPath) return null;
@@ -368,7 +376,31 @@ function canonicalizePath(rawPath, repoRoot) {
     return rawPath.slice(repoRoot.length + 1);
   }
   if (rawPath === repoRoot) return null;
-  return rawPath;
+  return recoverWorktreeBasenameTail(rawPath, repoRoot) ?? rawPath;
+}
+
+/**
+ * Recover repo-relative tail from a raw absolute path that fell outside a
+ * worktree root. Returns null when the heuristic doesn't apply so the caller
+ * can fall back to the raw path unchanged.
+ */
+function recoverWorktreeBasenameTail(rawPath, repoRoot) {
+  if (!rawPath || !repoRoot) return null;
+  const rootParts = repoRoot.split('/');
+  const wtIdx = rootParts.indexOf('.worktrees');
+  if (wtIdx <= 0) return null;
+  const projectBasename = rootParts[wtIdx - 1];
+  if (!projectBasename) return null;
+  const rawParts = rawPath.split('/');
+  // Scan from the right — the tail closest to the leaf is the most likely
+  // intended target when the basename appears more than once.
+  for (let i = rawParts.length - 1; i >= 0; i--) {
+    if (rawParts[i] === projectBasename) {
+      const tail = rawParts.slice(i + 1).join('/');
+      return tail || null;
+    }
+  }
+  return null;
 }
 
 function ensureFile(fileData, path) {
@@ -451,7 +483,47 @@ function buildTree(fileData) {
 
   // Rollup dir totals and cells bottom-up, then serialise to arrays.
   rollupDir(root);
-  return [...root.children.values()].map(serializeNode);
+  return collapseSingleChildDirs(
+    [...root.children.values()].map(serializeNode),
+  );
+}
+
+/**
+ * Collapse chains of single-child intermediate directories into one synthetic
+ * node. Without this, a stray absolute path (e.g. /Volumes/Apps/dev/.../foo.js)
+ * renders as a six-deep chain of single-row dirs that buries the filename.
+ *
+ * Rule: walk bottom-up, then while a dir's only child is also a dir, merge:
+ * adopt the child's children/cells/totals (which equal the parent's, since
+ * the parent rolled up from the single child) and visually concatenate the
+ * names so the collapsed segments stay visible without burning rows.
+ *
+ * The collapsed node keeps the deeper child's ``path`` so per-file drawer
+ * lookups (which key on the file's full path) continue to work.
+ */
+function collapseSingleChildDirs(nodes) {
+  return nodes.map(collapseNode);
+}
+
+function collapseNode(node) {
+  if (node.type !== 'dir') return node;
+  // Recurse first so the rule applies bottom-up.
+  let current = { ...node, children: node.children.map(collapseNode) };
+  while (current.children.length === 1 && current.children[0].type === 'dir') {
+    const child = current.children[0];
+    current = {
+      ...current,
+      path: child.path,
+      name: `${current.name}/${child.name}`,
+      children: child.children,
+      // cells/totals of a parent with a single dir child equal the child's
+      // (rollup invariant), so adopting the child's keeps the row identical
+      // to what it would have rendered before the collapse.
+      cells: child.cells,
+      totals: child.totals,
+    };
+  }
+  return current;
 }
 
 function rollupDir(node) {

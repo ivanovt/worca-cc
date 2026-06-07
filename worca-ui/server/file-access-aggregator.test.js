@@ -891,6 +891,121 @@ describe('buildFileAccessModel — live fragment folding', () => {
     expect(m.summary.distinct_write).toBe(1);
   });
 
+  it('recovers repo-relative tail for absolute paths from a sibling clone (worktree)', () => {
+    // Build a worktree-style layout: <project>/.worktrees/<id>/.worca/runs/<run>
+    // The fragment records absolute paths under the project itself — outside
+    // the worktree root — to mimic the case where an agent uses absolute paths
+    // pointing at the main checkout rather than its worktree.
+    const project = join(
+      tmpdir(),
+      `worca-fake-proj-${Date.now()}-${Math.random().toString(36).slice(2)}`,
+    );
+    const wt = join(project, '.worktrees', 'pipeline-x');
+    const runDir = join(wt, '.worca', 'runs', 'live');
+    mkdirSync(join(runDir, 'access'), { recursive: true });
+
+    const eventsPath = join(runDir, 'events.jsonl');
+    writeJsonl(eventsPath, [
+      { event_type: 'pipeline.run.started', payload: {} },
+    ]);
+    writeFragment(runDir, 'plan-1.jsonl', [
+      // Note: the path lives under <project>/worca-ui/..., NOT under <wt>/...
+      {
+        ts: 't1',
+        tool: 'Read',
+        op: 'read',
+        path: `${project}/worca-ui/app/views/new-run.js`,
+      },
+      { ts: 't2', tool: 'Write', op: 'write', path: `${project}/src/foo.py` },
+    ]);
+
+    const m = buildFileAccessModel(eventsPath, runDir);
+    expect(m.enabled).toBe(true);
+    expect(m.summary.distinct_read).toBe(1);
+    expect(m.summary.distinct_write).toBe(1);
+
+    // The tree must contain the repo-relative tails, not the absolute prefix.
+    const flat = JSON.stringify(m.tree);
+    expect(flat).toContain('worca-ui/app/views');
+    expect(flat).toContain('new-run.js');
+    expect(flat).toContain('foo.py');
+    // The absolute prefix (everything up to and including the project basename)
+    // must be stripped out.
+    expect(flat).not.toContain(project);
+
+    rmSync(project, { recursive: true, force: true });
+  });
+
+  it('collapses single-child directory chains into one synthetic node', () => {
+    // Single file deep under a chain of single-child dirs. Without the
+    // collapse this would render as 4 nested dir rows hiding the file name.
+    const runDir = makeRunDir('collapse-run');
+    const eventsPath = join(runDir, 'events.jsonl');
+    writeJsonl(eventsPath, [
+      makeAccessEvent('implement', 1, null, {
+        reads: { 'a/b/c/d/leaf.py': 1 },
+        writes: {},
+        searches: [],
+        totals: {},
+        capture: defaultCapture(),
+      }),
+    ]);
+
+    const { tree } = buildFileAccessModel(eventsPath);
+    // The top level should be a single dir whose name joins the collapsed
+    // chain ("a/b/c/d"); its only child is the leaf file.
+    expect(tree).toHaveLength(1);
+    const top = tree[0];
+    expect(top.type).toBe('dir');
+    expect(top.name).toBe('a/b/c/d');
+    expect(top.path).toBe('a/b/c/d');
+    expect(top.children).toHaveLength(1);
+    expect(top.children[0].type).toBe('file');
+    expect(top.children[0].name).toBe('leaf.py');
+  });
+
+  it('does NOT collapse when a dir has more than one child', () => {
+    const runDir = makeRunDir('nocollapse-run');
+    const eventsPath = join(runDir, 'events.jsonl');
+    writeJsonl(eventsPath, [
+      makeAccessEvent('implement', 1, null, {
+        reads: { 'src/a.py': 1, 'src/b.py': 1 },
+        writes: {},
+        searches: [],
+        totals: {},
+        capture: defaultCapture(),
+      }),
+    ]);
+
+    const { tree } = buildFileAccessModel(eventsPath);
+    expect(tree).toHaveLength(1);
+    const src = tree[0];
+    expect(src.name).toBe('src');
+    expect(src.path).toBe('src');
+    expect(src.children).toHaveLength(2);
+  });
+
+  it('preserves leaf file paths through a collapse (drawer lookups still work)', () => {
+    // The collapsed dir's `path` must be the deepest dir's path so that the
+    // file's `path` field (e.g. `a/b/c/d/leaf.py`) still resolves under it,
+    // and the per-file drawer keyed on the file path keeps working.
+    const runDir = makeRunDir('collapse-paths');
+    const eventsPath = join(runDir, 'events.jsonl');
+    writeJsonl(eventsPath, [
+      makeAccessEvent('implement', 1, null, {
+        reads: { 'a/b/leaf.py': 1 },
+        writes: {},
+        searches: [],
+        totals: {},
+        capture: defaultCapture(),
+      }),
+    ]);
+
+    const { tree } = buildFileAccessModel(eventsPath);
+    expect(tree[0].path).toBe('a/b');
+    expect(tree[0].children[0].path).toBe('a/b/leaf.py');
+  });
+
   it('is unchanged (event-only) when runDir is omitted', () => {
     const runDir = makeRunDir('noarg-run');
     const eventsPath = join(runDir, 'events.jsonl');
