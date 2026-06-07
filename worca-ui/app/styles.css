@@ -9241,7 +9241,10 @@ body.help-mode-active sl-tab {
   border-right: none;
 }
 
-/* File column header — sticky left, wider than data cells */
+/* File column header — sticky left, wider than data cells.
+   ``position: relative`` so the drag handle (.access-col-file-resizer)
+   can pin to the right edge with position:absolute. ``sticky`` already
+   establishes a containing block for absolute children. */
 .access-col-file-header {
   position: sticky;
   left: 0;
@@ -9252,6 +9255,37 @@ body.help-mode-active sl-tab {
   color: var(--fg, #0f172a);
   justify-content: flex-start;
   border-right: 2px solid var(--border, #e2e8f0);
+}
+
+/* Drag handle for resizing the file column. Pinned to the right edge of
+   the header; on pointerdown it captures the pointer and rewrites the
+   shared --fa-file-col-width CSS var on the .run-file-access root, which
+   the grid template + sticky cells both read so they move in lockstep. */
+.access-col-file-resizer {
+  position: absolute;
+  top: 0;
+  right: -3px;
+  width: 7px;
+  height: 100%;
+  cursor: col-resize;
+  user-select: none;
+  touch-action: none;
+  z-index: 5;
+  background: transparent;
+}
+
+.access-col-file-resizer:hover,
+.access-col-file-resizer--active {
+  background: rgba(59, 130, 246, 0.35);
+}
+
+/* Body-level cursor lock during a drag (set via JS) — keeps the cursor as
+   col-resize even when the pointer leaves the handle's 7px hit area, which
+   is otherwise easy to do at faster drag speeds. */
+.access-col-file-resizing,
+.access-col-file-resizing * {
+  cursor: col-resize !important;
+  user-select: none !important;
 }
 
 .access-col-header--collapsed {
@@ -9338,10 +9372,12 @@ body.help-mode-active sl-tab {
   justify-content: flex-start;
   gap: 6px;
   padding: 3px 8px;
-  /* One indent step == a dir's [chevron 18px + gap 6px], so a child's content
-     (file name, or sub-folder chevron) starts exactly under its parent's
-     folder icon. */
-  padding-left: calc(8px + var(--depth, 0) * 24px);
+  /* One indent step == the full chevron + folder-icon prefix on a dir row:
+     chevron 18px + gap 6px + folder-icon 14px + gap 6px = 44px. A child file
+     row (no chevron/folder prefix) lands its name at exactly the x-position
+     of its parent folder's name, and a nested dir row's text aligns with
+     its grandparent's text — what a treegrid is supposed to look like. */
+  padding-left: calc(8px + var(--depth, 0) * 44px);
   background: inherit;
   border-right: 2px solid var(--border, #e2e8f0);
 }

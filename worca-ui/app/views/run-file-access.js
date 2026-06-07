@@ -21,6 +21,32 @@ let _sortMode = 'tree'; // 'tree' | 'most-read' | 'most-written' | 'churn'
 let _groupSearchesByStage = false;
 let _groupGraphByStage = false;
 
+// File-column width persistence. The drag handle on the File column header
+// rewrites this and saves to localStorage so the chosen width survives
+// reloads and re-renders. ``null`` means "use the CSS default" (220px).
+const FILE_COL_WIDTH_STORAGE_KEY = 'worca:access:fileColWidth';
+const FILE_COL_WIDTH_MIN = 160;
+const FILE_COL_WIDTH_MAX = 800;
+
+function _readSavedFileColWidth() {
+  try {
+    if (typeof localStorage === 'undefined') return null;
+    const raw = localStorage.getItem(FILE_COL_WIDTH_STORAGE_KEY);
+    if (!raw) return null;
+    const n = Number.parseInt(raw, 10);
+    if (!Number.isFinite(n)) return null;
+    return _clampFileColWidth(n);
+  } catch {
+    return null;
+  }
+}
+
+function _clampFileColWidth(n) {
+  return Math.max(FILE_COL_WIDTH_MIN, Math.min(FILE_COL_WIDTH_MAX, n));
+}
+
+let _fileColWidth = _readSavedFileColWidth();
+
 // Drawer state — null = closed; { type: 'file'|'cell', filePath, colKey } = open
 let _openDrawer = null; // { type, filePath, colKey? }
 
@@ -43,7 +69,12 @@ export function _resetAccessStateForTests() {
   _groupSearchesByStage = false;
   _groupGraphByStage = false;
   _openDrawer = null;
+  _fileColWidth = null;
   _rerenderFn = () => {};
+}
+
+export function _setFileColWidthForTests(width) {
+  _fileColWidth = width == null ? null : _clampFileColWidth(width);
 }
 
 export function _setControlsForTests({
@@ -104,7 +135,15 @@ export function runFileAccessView(_run, _settings, options = {}) {
   // Group columns by stage
   const stageGroups = _buildStageGroups(columns);
 
-  return html`<div class="run-file-access">
+  // Saved column width carries through as an inline CSS var on the root so
+  // the grid template (var(--fa-file-col-width)) and the sticky cells (also
+  // var(--fa-file-col-width)) read the user's chosen value in lockstep. The
+  // resize handle's pointer events also rewrite this var directly, but the
+  // inline style here guarantees the value survives any re-render.
+  const rootStyle =
+    _fileColWidth != null ? `--fa-file-col-width:${_fileColWidth}px` : nothing;
+
+  return html`<div class="run-file-access" style=${rootStyle}>
     ${_kpiStrip(summary)}
     ${_controlsBar()}
     ${_treetable(tree, columns, stageGroups, searches)}
@@ -177,6 +216,71 @@ function _controlsBar() {
       <option value="churn">Most touched</option>
     </select>
   </div>`;
+}
+
+// ---------------------------------------------------------------------------
+// File-column drag-resize handler
+// ---------------------------------------------------------------------------
+
+// Pointer-driven resize for the File column. We bypass a re-render during the
+// drag — writing the CSS var directly on the .run-file-access root is cheap,
+// avoids template work per pointermove, and keeps the visual response 1:1
+// with the cursor. On pointerup we persist the final width to localStorage
+// and update the module-level value so subsequent re-renders match.
+function _startFileColResize(e) {
+  // Only respond to the primary button / single-finger touch.
+  if (e.button != null && e.button !== 0) return;
+  e.preventDefault();
+  e.stopPropagation();
+
+  const handleEl = e.currentTarget;
+  const rootEl = handleEl.closest('.run-file-access');
+  const headerEl = handleEl.closest('.access-col-file-header');
+  if (!rootEl || !headerEl) return;
+
+  // The header's left edge is the anchor we measure from. We capture it
+  // once at drag start instead of re-querying per move — the header sits
+  // sticky at left:0 of the scroll container so its left edge does not
+  // shift while the user is dragging.
+  const leftEdge = headerEl.getBoundingClientRect().left;
+
+  // Visual + UX dressing for the drag duration. The body-level class keeps
+  // the col-resize cursor showing even when the pointer leaves the 7px
+  // handle hit area, which is otherwise easy at faster drag speeds.
+  handleEl.classList.add('access-col-file-resizer--active');
+  document.body.classList.add('access-col-file-resizing');
+
+  const apply = (clientX) => {
+    const w = _clampFileColWidth(clientX - leftEdge);
+    rootEl.style.setProperty('--fa-file-col-width', `${w}px`);
+    return w;
+  };
+
+  const onMove = (ev) => {
+    apply(ev.clientX);
+  };
+
+  const onUp = (ev) => {
+    const finalW = apply(ev.clientX);
+    _fileColWidth = finalW;
+    try {
+      if (typeof localStorage !== 'undefined') {
+        localStorage.setItem(FILE_COL_WIDTH_STORAGE_KEY, String(finalW));
+      }
+    } catch {
+      // Best-effort persistence — a localStorage write failure (quota,
+      // privacy mode) should not break the in-session resize.
+    }
+    window.removeEventListener('pointermove', onMove);
+    window.removeEventListener('pointerup', onUp);
+    window.removeEventListener('pointercancel', onUp);
+    handleEl.classList.remove('access-col-file-resizer--active');
+    document.body.classList.remove('access-col-file-resizing');
+  };
+
+  window.addEventListener('pointermove', onMove);
+  window.addEventListener('pointerup', onUp);
+  window.addEventListener('pointercancel', onUp);
 }
 
 // ---------------------------------------------------------------------------
@@ -444,8 +548,23 @@ function _tableHeader(stageGroups, visible) {
   );
 
   // Row 2 — per-column headers ("Iter N" over agent), or Σ for collapsed stage.
+  // The File header carries the drag handle (pinned to its right edge) that
+  // resizes the column by rewriting --fa-file-col-width on the .run-file-access
+  // root. The handle is a child of the sticky header so it scrolls correctly
+  // (stays attached to the column edge) and so its hit area follows the column
+  // when the user resizes during horizontal scroll.
   const colHeaderCells = [
-    html`<div class="access-col-header access-col-file-header" role="columnheader">File</div>`,
+    html`<div class="access-col-header access-col-file-header" role="columnheader">
+      File
+      <span
+        class="access-col-file-resizer"
+        role="separator"
+        aria-orientation="vertical"
+        aria-label="Resize file column"
+        title="Drag to resize"
+        @pointerdown=${_startFileColResize}
+      ></span>
+    </div>`,
   ];
   for (const v of visible) {
     if (v.type === 'sigma') {

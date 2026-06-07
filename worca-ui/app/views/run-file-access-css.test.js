@@ -116,6 +116,35 @@ describe('File Access CSS rules present in styles.css', () => {
     expect(css).toMatch(/\.access-cell--file\s*\{[^}]*left\s*:\s*0/);
   });
 
+  it('indents child rows by one full chevron+folder prefix per depth (44px)', () => {
+    // The per-depth indent must equal the chevron+folder prefix on a dir row
+    // (chevron 18 + gap 6 + icon 14 + gap 6 = 44), so a child file's name and
+    // a nested dir's text both land at the x-position of the parent's text.
+    expect(css).toMatch(
+      /\.access-cell--file\s*\{[^}]*padding-left\s*:\s*calc\(\s*8px\s*\+\s*var\(\s*--depth[^)]*\)\s*\*\s*44px\s*\)/,
+    );
+  });
+
+  it('defines .access-col-file-resizer drag handle for the File column', () => {
+    expect(css).toContain('.access-col-file-resizer');
+    expect(css).toMatch(
+      /\.access-col-file-resizer\s*\{[^}]*position\s*:\s*absolute/,
+    );
+    expect(css).toMatch(
+      /\.access-col-file-resizer\s*\{[^}]*cursor\s*:\s*col-resize/,
+    );
+  });
+
+  it('defines body-level cursor lock for an in-progress file-column resize', () => {
+    // While dragging, JS adds .access-col-file-resizing to <body> so the
+    // col-resize cursor stays visible even when the pointer leaves the
+    // narrow handle hit area.
+    expect(css).toContain('.access-col-file-resizing');
+    expect(css).toMatch(
+      /\.access-col-file-resizing[^}]*cursor\s*:\s*col-resize/,
+    );
+  });
+
   it('defines .access-cell--empty', () => {
     expect(css).toContain('.access-cell--empty');
   });

@@ -5,6 +5,7 @@ import { beforeEach, describe, expect, it } from 'vitest';
 import {
   _resetAccessStateForTests,
   _setControlsForTests,
+  _setFileColWidthForTests,
   runFileAccessView,
 } from './run-file-access.js';
 
@@ -598,6 +599,239 @@ describe('runFileAccessView', () => {
       }),
     );
     expect(el.querySelector('.access-back-btn')).toBeNull();
+  });
+
+  // --- File-column drag-resize ---
+
+  it('renders a drag handle in the File column header', () => {
+    const el = mount(
+      runFileAccessView(MINIMAL_RUN, MINIMAL_SETTINGS, { model: makeModel() }),
+    );
+    const fileHeader = el.querySelector(
+      '.access-col-header.access-col-file-header',
+    );
+    expect(fileHeader).not.toBeNull();
+    const resizer = fileHeader.querySelector('.access-col-file-resizer');
+    expect(resizer).not.toBeNull();
+    // a11y bits — separator with aria-label so screen readers can announce it.
+    expect(resizer.getAttribute('role')).toBe('separator');
+    expect(resizer.getAttribute('aria-label')).toMatch(/resize/i);
+  });
+
+  it('does not apply an inline --fa-file-col-width when no saved width', () => {
+    // _resetAccessStateForTests() in beforeEach already cleared the module-
+    // level value back to null, so the root should fall back to the CSS
+    // default (220px) and carry no inline style override.
+    const el = mount(
+      runFileAccessView(MINIMAL_RUN, MINIMAL_SETTINGS, { model: makeModel() }),
+    );
+    const root = el.querySelector('.run-file-access');
+    expect(root).not.toBeNull();
+    // jsdom serialises an absent style attribute as empty / missing.
+    const styleAttr = root.getAttribute('style') || '';
+    expect(styleAttr).not.toContain('--fa-file-col-width');
+  });
+
+  it('applies a saved file column width as an inline CSS var on the root', () => {
+    _setFileColWidthForTests(360);
+    const el = mount(
+      runFileAccessView(MINIMAL_RUN, MINIMAL_SETTINGS, { model: makeModel() }),
+    );
+    const root = el.querySelector('.run-file-access');
+    expect(root.getAttribute('style') || '').toMatch(
+      /--fa-file-col-width\s*:\s*360px/,
+    );
+  });
+
+  it('clamps an out-of-range saved width into the [160, 800] bounds', () => {
+    // Below the floor.
+    _setFileColWidthForTests(40);
+    let el = mount(
+      runFileAccessView(MINIMAL_RUN, MINIMAL_SETTINGS, { model: makeModel() }),
+    );
+    expect(el.querySelector('.run-file-access').getAttribute('style')).toMatch(
+      /--fa-file-col-width\s*:\s*160px/,
+    );
+    // Above the ceiling.
+    _setFileColWidthForTests(9999);
+    el = mount(
+      runFileAccessView(MINIMAL_RUN, MINIMAL_SETTINGS, { model: makeModel() }),
+    );
+    expect(el.querySelector('.run-file-access').getAttribute('style')).toMatch(
+      /--fa-file-col-width\s*:\s*800px/,
+    );
+  });
+
+  it('pointerdown on the resize handle drives --fa-file-col-width during drag', () => {
+    const el = mount(
+      runFileAccessView(MINIMAL_RUN, MINIMAL_SETTINGS, { model: makeModel() }),
+    );
+    document.body.appendChild(el);
+
+    const root = el.querySelector('.run-file-access');
+    const resizer = el.querySelector('.access-col-file-resizer');
+    const header = el.querySelector(
+      '.access-col-header.access-col-file-header',
+    );
+    expect(resizer).not.toBeNull();
+
+    // Pin the header's left edge so the drag math is deterministic in jsdom.
+    header.getBoundingClientRect = () => ({
+      left: 100,
+      top: 0,
+      right: 320,
+      bottom: 32,
+      width: 220,
+      height: 32,
+      x: 100,
+      y: 0,
+      toJSON() {},
+    });
+
+    // Start the drag — currentTarget is the resizer itself.
+    resizer.dispatchEvent(
+      new PointerEvent('pointerdown', {
+        bubbles: true,
+        button: 0,
+        clientX: 320,
+      }),
+    );
+    // Body cursor lock + handle active class applied for the drag duration.
+    expect(document.body.classList.contains('access-col-file-resizing')).toBe(
+      true,
+    );
+    expect(resizer.classList.contains('access-col-file-resizer--active')).toBe(
+      true,
+    );
+
+    // Move the pointer — width = clientX - leftEdge (350 - 100 = 250).
+    window.dispatchEvent(
+      new PointerEvent('pointermove', { bubbles: true, clientX: 350 }),
+    );
+    expect(root.style.getPropertyValue('--fa-file-col-width')).toBe('250px');
+
+    // A second move tracks live without re-rendering.
+    window.dispatchEvent(
+      new PointerEvent('pointermove', { bubbles: true, clientX: 400 }),
+    );
+    expect(root.style.getPropertyValue('--fa-file-col-width')).toBe('300px');
+
+    // Release — body class drops, handle deactivates, width persists.
+    window.dispatchEvent(
+      new PointerEvent('pointerup', { bubbles: true, clientX: 400 }),
+    );
+    expect(document.body.classList.contains('access-col-file-resizing')).toBe(
+      false,
+    );
+    expect(resizer.classList.contains('access-col-file-resizer--active')).toBe(
+      false,
+    );
+    expect(localStorage.getItem('worca:access:fileColWidth')).toBe('300');
+
+    // A subsequent re-render reads the persisted width back through the
+    // module-level state and renders it as an inline CSS var.
+    const el2 = mount(
+      runFileAccessView(MINIMAL_RUN, MINIMAL_SETTINGS, { model: makeModel() }),
+    );
+    expect(el2.querySelector('.run-file-access').getAttribute('style')).toMatch(
+      /--fa-file-col-width\s*:\s*300px/,
+    );
+
+    document.body.removeChild(el);
+    localStorage.removeItem('worca:access:fileColWidth');
+  });
+
+  it('clamps the drag width into the [160, 800] bounds during pointermove', () => {
+    const el = mount(
+      runFileAccessView(MINIMAL_RUN, MINIMAL_SETTINGS, { model: makeModel() }),
+    );
+    document.body.appendChild(el);
+    const root = el.querySelector('.run-file-access');
+    const resizer = el.querySelector('.access-col-file-resizer');
+    const header = el.querySelector(
+      '.access-col-header.access-col-file-header',
+    );
+    header.getBoundingClientRect = () => ({
+      left: 100,
+      top: 0,
+      right: 320,
+      bottom: 32,
+      width: 220,
+      height: 32,
+      x: 100,
+      y: 0,
+      toJSON() {},
+    });
+
+    resizer.dispatchEvent(
+      new PointerEvent('pointerdown', {
+        bubbles: true,
+        button: 0,
+        clientX: 320,
+      }),
+    );
+
+    // Drag far to the left — pointer at x=120, so raw width = 20; clamped to 160.
+    window.dispatchEvent(
+      new PointerEvent('pointermove', { bubbles: true, clientX: 120 }),
+    );
+    expect(root.style.getPropertyValue('--fa-file-col-width')).toBe('160px');
+
+    // Drag far to the right — pointer at x=2000, so raw width = 1900; clamped to 800.
+    window.dispatchEvent(
+      new PointerEvent('pointermove', { bubbles: true, clientX: 2000 }),
+    );
+    expect(root.style.getPropertyValue('--fa-file-col-width')).toBe('800px');
+
+    window.dispatchEvent(
+      new PointerEvent('pointerup', { bubbles: true, clientX: 2000 }),
+    );
+    document.body.removeChild(el);
+    localStorage.removeItem('worca:access:fileColWidth');
+  });
+
+  it('pointercancel ends the drag and persists the final width', () => {
+    const el = mount(
+      runFileAccessView(MINIMAL_RUN, MINIMAL_SETTINGS, { model: makeModel() }),
+    );
+    document.body.appendChild(el);
+    const resizer = el.querySelector('.access-col-file-resizer');
+    const header = el.querySelector(
+      '.access-col-header.access-col-file-header',
+    );
+    header.getBoundingClientRect = () => ({
+      left: 100,
+      top: 0,
+      right: 320,
+      bottom: 32,
+      width: 220,
+      height: 32,
+      x: 100,
+      y: 0,
+      toJSON() {},
+    });
+
+    resizer.dispatchEvent(
+      new PointerEvent('pointerdown', {
+        bubbles: true,
+        button: 0,
+        clientX: 320,
+      }),
+    );
+    window.dispatchEvent(
+      new PointerEvent('pointermove', { bubbles: true, clientX: 380 }),
+    );
+    window.dispatchEvent(
+      new PointerEvent('pointercancel', { bubbles: true, clientX: 380 }),
+    );
+
+    expect(document.body.classList.contains('access-col-file-resizing')).toBe(
+      false,
+    );
+    expect(localStorage.getItem('worca:access:fileColWidth')).toBe('280');
+
+    document.body.removeChild(el);
+    localStorage.removeItem('worca:access:fileColWidth');
   });
 });
 
