@@ -123,3 +123,22 @@ class TestAgentOverlays:
     def test_guardian_has_pr_create_step(self):
         guardian = (INVESTIGATE_DIR / "agents" / "guardian.md").read_text(encoding="utf-8")
         assert "gh pr create" in guardian
+
+    def test_investigate_guardian_carries_role_boundaries(self):
+        """Investigate guardian REPLACES the base prompt, so the role-bounding
+        guardrails introduced for the base guardian (commit 4ff14a5b) don't
+        reach this template automatically. This template carries its own,
+        narrower deny list adapted to the publish-only role — no source reads,
+        no builds/tests, no TaskCreate, no git diff against history, but the
+        staged-diff sanity check (``git diff --cached --stat``) is permitted.
+        """
+        guardian = (INVESTIGATE_DIR / "agents" / "guardian.md").read_text(encoding="utf-8")
+        # Top-of-prompt framing (mirrors the base guardian's "Not Starting From
+        # Zero" pattern but stated as "Publishing, Not Implementing").
+        assert "You Are Publishing a Plan, Not Implementing" in guardian
+        # Deny-list bullets in Rules section (so they survive minor rebases).
+        assert "Never read source, test, config, or doc files" in guardian
+        assert "Never run build, test, lint, or verification commands" in guardian
+        assert "Never use `TaskCreate` or `TaskUpdate`" in guardian
+        # The one exception — staged-diff sanity check is allowed and named.
+        assert "git diff --cached --stat" in guardian
