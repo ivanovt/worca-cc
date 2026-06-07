@@ -14,7 +14,6 @@ import {
   ClipboardPaste,
   Coins,
   Copy,
-  Cpu,
   Database,
   FolderOpen,
   iconSvg,
@@ -857,15 +856,11 @@ export function readPermissionsFromDom() {
 }
 
 export function readPricingFromDom() {
-  const models = {};
-  const pricingModels = getModelKeys(settingsData?.worca);
-  for (const model of pricingModels) {
-    models[model] = {};
-    for (const field of PRICING_FIELDS) {
-      const el = document.getElementById(`pricing-${model}-${field.key}`);
-      models[model][field.key] = parseFloat(el?.value) || 0;
-    }
-  }
+  // Per-model pricing rows moved to the Models page (each model alias has
+  // its own Pricing accordion in the editor). The Costs & Budgets tab now
+  // only covers server-tool pricing + currency. We deliberately omit the
+  // `models` key here so saveSettings' deep-merge preserves any per-model
+  // pricing the runtime currently has — the Models editor owns writes to it.
   const searchEl = document.getElementById(
     'pricing-server_tools-web_search_per_request',
   );
@@ -873,7 +868,6 @@ export function readPricingFromDom() {
     'pricing-server_tools-web_fetch_per_request',
   );
   return {
-    models,
     server_tools: {
       web_search_per_request: parseFloat(searchEl?.value) || 0,
       web_fetch_per_request: parseFloat(fetchEl?.value) || 0,
@@ -2593,18 +2587,24 @@ export function effortTab(worca, rerender) {
 
 function pricingTab(worca, rerender) {
   const pricing = worca.pricing || {};
-  const models = pricing.models || {};
   const serverTools = pricing.server_tools || {};
-  const pricingModels = getModelKeys(worca);
   // Budget moved here from the Webhooks tab — Max Cost is a
   // pipeline-halt threshold (a cost circuit breaker), and Warning
   // Threshold emits a `cost.budget_warning` event at that
-  // percentage of max. Both are project cost policy and belong
-  // next to per-model pricing rather than under webhook config.
+  // percentage of max. Both are project cost policy.
   const budget = worca.budget || {};
 
   return html`
     <div class="settings-tab-content">
+      <sl-alert variant="neutral" open class="costs-budgets-models-link">
+        <strong>Per-model pricing moved.</strong>
+        Each model alias now carries its own pricing rates — edit them in the
+        <a href="#" @click=${(e) => {
+          e.preventDefault();
+          window.location.hash = '#/models';
+        }}>Models</a> page (open a card → Pricing accordion).
+      </sl-alert>
+
       <h3 class="settings-section-title">Budget</h3>
       <div class="settings-grid">
         <div class="settings-field">
@@ -2619,43 +2619,7 @@ function pricingTab(worca, rerender) {
         </div>
       </div>
 
-      <h3 class="settings-section-title">Pricing</h3>
-      <div class="pricing-table-wrap">
-        <table class="pricing-table">
-          <thead>
-            <tr>
-              <th>Model</th>
-              ${PRICING_FIELDS.map((f) => html`<th>${f.label}</th>`)}
-            </tr>
-          </thead>
-          <tbody>
-            ${pricingModels.map((model) => {
-              const costs = models[model] || EMPTY_MODEL;
-              return html`
-                <tr>
-                  <td class="pricing-model-name">${model}</td>
-                  ${PRICING_FIELDS.map(
-                    (f) => html`
-                    <td>
-                      <sl-input
-                        class="pricing-input"
-                        id="pricing-${model}-${f.key}"
-                        type="number"
-                        step="0.01"
-                        min="0"
-                        value="${costs[f.key] ?? 0}"
-                        size="small"
-                      ></sl-input>
-                    </td>
-                  `,
-                  )}
-                </tr>
-              `;
-            })}
-          </tbody>
-        </table>
-      </div>
-
+      <h3 class="settings-section-title">Server tool pricing</h3>
       <div class="pricing-table-wrap">
         <table class="pricing-table pricing-table--auto">
           <thead>
@@ -3400,11 +3364,12 @@ export function projectSettingsView(
           guide, fleet, defaults); Governance keeps only its hook
           guards (dispatch was the template-driven half).
         -->
-        <sl-tab slot="nav" panel="models">
-          ${unsafeHTML(iconSvg(Cpu, 14))}
-          Models
-          ${helpFor('agents-models')}
-        </sl-tab>
+        <!--
+          Models tab removed — model alias management moved to the new
+          top-level Models page so it can show all 3 tiers (builtin /
+          user / project) in one place, the way Pipeline Templates does.
+          Per-model pricing is now co-located on each model's editor page.
+        -->
         <sl-tab slot="nav" panel="pipeline">
           ${unsafeHTML(iconSvg(Workflow, 14))}
           Pipeline
@@ -3417,7 +3382,7 @@ export function projectSettingsView(
         </sl-tab>
         <sl-tab slot="nav" panel="pricing">
           ${unsafeHTML(iconSvg(Coins, 14))}
-          Pricing
+          Costs & Budgets
           <!-- no dedicated doc page yet (W-061 prototype: skip-if-no-doc) -->
         </sl-tab>
         <sl-tab slot="nav" panel="webhooks">
@@ -3436,7 +3401,6 @@ export function projectSettingsView(
           ${helpFor('crg')}
         </sl-tab>
 
-        <sl-tab-panel name="models">${modelsTab(worca, rerender)}</sl-tab-panel>
         <sl-tab-panel name="pipeline">${pipelineTab(worca, rerender)}</sl-tab-panel>
         <sl-tab-panel name="governance">${governanceTab(worca, permissions, rerender)}</sl-tab-panel>
         <sl-tab-panel name="pricing">${pricingTab(worca, rerender)}</sl-tab-panel>

@@ -71,6 +71,14 @@ import {
   writeLogLine,
 } from './views/log-viewer.js';
 import {
+  loadModelForEdit,
+  modelEditorState,
+  modelEditorView,
+  resetModelEditor,
+  saveModel,
+} from './views/model-editor.js';
+import { fetchModels, modelsView, setupModelsPolling } from './views/models.js';
+import {
   getEffectiveProjectId,
   getNewRunSubmitState,
   invalidateTemplateCache,
@@ -621,6 +629,8 @@ let costsFetched = false;
 
 // -- Pipelines / Templates --
 let _templatesPollCleanup = null;
+let _modelsPollCleanup = null;
+let _editorModelsFetching = false; // single in-flight models fetch for inline collision check
 let _worcaCliStatusFetching = false; // single in-flight probe guard
 let _editorTemplatesFetching = false; // single in-flight templates fetch for inline collision check
 // Editor state and cleanup from pipelines-editor module
@@ -910,6 +920,12 @@ function resetProjectState() {
     _templatesPollCleanup();
     _templatesPollCleanup = null;
   }
+  // Models
+  if (_modelsPollCleanup) {
+    _modelsPollCleanup();
+    _modelsPollCleanup = null;
+  }
+  resetModelEditor();
   // Webhook UI
   webhookSelectedId = null;
   webhookCategoryFilter = 'all';
@@ -1959,6 +1975,205 @@ async function _executeDeleteTemplate(tid, tier) {
   }
 }
 
+// ─── Models handlers ─────────────────────────────────────────────────────
+//
+// Symmetric to the template handlers: edit navigates to the editor; create
+// navigates to the editor with a fresh slot at project tier (the editor's
+// own tier selector lets the user retarget User before saving); duplicate
+// and delete prompt via the shared confirm-dialog and refresh the cached
+// list on success.
+
+function handleEditModel(tier, alias) {
+  navigate('models', alias, store.getState().currentProjectId, 'edit', tier);
+}
+
+function handleCreateModel() {
+  // Default tier = project, matching the templates create flow. The editor
+  // surfaces a tier picker when isNew=true so the user can flip to User
+  // before saving — see model-editor.js.
+  navigate(
+    'models',
+    'new',
+    store.getState().currentProjectId,
+    'edit',
+    'project',
+  );
+}
+
+function handleDuplicateModel(tier, alias) {
+  _modelActionDialog = {
+    mode: 'duplicate',
+    srcTier: tier,
+    srcAlias: alias,
+    dstTier: tier === 'builtin' ? 'project' : tier,
+    dstAlias: `${alias}-copy`,
+    error: null,
+  };
+  rerender();
+  requestAnimationFrame(() => {
+    document.querySelector('.model-action-dialog')?.show();
+  });
+}
+
+async function handleDeleteModel(tier, alias) {
+  if (tier === 'builtin') {
+    showActionError('Built-in models are read-only — cannot delete.');
+    return;
+  }
+  showConfirm(
+    {
+      label: 'Delete model',
+      message: html`
+        Are you sure you want to delete
+        <code>${alias}</code> from the <strong>${tier}</strong> tier?
+        <br /><br />
+        This removes both the id (settings.json) and the env block
+        (settings.local.json). Templates that reference this alias will
+        fall through to a lower tier or fail to resolve.
+      `,
+      confirmLabel: 'Delete',
+      confirmVariant: 'danger',
+      onConfirm: () => _executeDeleteModel(tier, alias),
+    },
+    rerender,
+  );
+}
+
+async function _executeDeleteModel(tier, alias) {
+  try {
+    const res = await fetch(
+      projectUrl(`/models/${tier}/${encodeURIComponent(alias)}`),
+      { method: 'DELETE' },
+    );
+    const data = await res.json();
+    if (!data.ok) {
+      showActionError(data.error || 'Failed to delete model');
+      return;
+    }
+    const models = await fetchModels(store.getState().currentProjectId || null);
+    store.setState({ models, modelsLoaded: true });
+    rerender();
+  } catch (err) {
+    showActionError(`Failed to delete model: ${err.message}`);
+  }
+}
+
+let _modelActionDialog = null;
+
+function _dismissModelActionDialog() {
+  _modelActionDialog = null;
+  rerender();
+}
+
+async function _executeDuplicateModel() {
+  if (!_modelActionDialog) return;
+  const { srcTier, srcAlias, dstTier, dstAlias } = _modelActionDialog;
+  if (!dstAlias || !/^[a-zA-Z0-9_-]{1,64}$/.test(dstAlias)) {
+    _modelActionDialog = {
+      ..._modelActionDialog,
+      error: 'Alias must match [a-zA-Z0-9_-], 1-64 chars.',
+    };
+    rerender();
+    return;
+  }
+  try {
+    const res = await fetch(
+      projectUrl(
+        `/models/${srcTier}/${encodeURIComponent(srcAlias)}/duplicate`,
+      ),
+      {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ dst_tier: dstTier, dst_alias: dstAlias }),
+      },
+    );
+    const data = await res.json();
+    if (!data.ok) {
+      _modelActionDialog = {
+        ..._modelActionDialog,
+        error: data.error || 'Duplicate failed',
+      };
+      rerender();
+      return;
+    }
+    const models = await fetchModels(store.getState().currentProjectId || null);
+    store.setState({ models, modelsLoaded: true });
+    _dismissModelActionDialog();
+    // Drop the user straight into the new entry so they can adjust env /
+    // pricing immediately, mirroring how Pipeline Templates routes after
+    // a duplicate succeeds.
+    navigate(
+      'models',
+      dstAlias,
+      store.getState().currentProjectId,
+      'edit',
+      dstTier,
+    );
+  } catch (err) {
+    _modelActionDialog = {
+      ..._modelActionDialog,
+      error: `Duplicate failed: ${err.message}`,
+    };
+    rerender();
+  }
+}
+
+function _modelDuplicateDialogTemplate() {
+  const dlg = _modelActionDialog;
+  if (!dlg || dlg.mode !== 'duplicate') return '';
+  const { srcTier, srcAlias, dstTier, dstAlias, error } = dlg;
+  return html`
+    <sl-dialog
+      label="Duplicate model"
+      class="model-action-dialog"
+      open
+      @sl-after-hide=${() => _dismissModelActionDialog()}
+    >
+      <div class="model-duplicate-form">
+        <p>
+          Duplicate <code>${srcAlias}</code> (from
+          <strong>${srcTier}</strong>) to a new tier + alias.
+        </p>
+        <sl-radio-group
+          label="Destination tier"
+          name="dst-tier"
+          value=${dstTier}
+          @sl-change=${(e) => {
+            _modelActionDialog = {
+              ..._modelActionDialog,
+              dstTier: e.target.value,
+            };
+            rerender();
+          }}
+        >
+          <sl-radio value="project">Project</sl-radio>
+          <sl-radio value="user">User</sl-radio>
+        </sl-radio-group>
+        <sl-input
+          label="Destination alias"
+          .value=${dstAlias}
+          @sl-input=${(e) => {
+            _modelActionDialog = {
+              ..._modelActionDialog,
+              dstAlias: e.target.value,
+            };
+            rerender();
+          }}
+        ></sl-input>
+        ${
+          error ? html`<sl-alert variant="danger" open>${error}</sl-alert>` : ''
+        }
+      </div>
+      <sl-button slot="footer" variant="default" @click=${() => _dismissModelActionDialog()}>
+        Cancel
+      </sl-button>
+      <sl-button slot="footer" variant="primary" @click=${() => _executeDuplicateModel()}>
+        Duplicate
+      </sl-button>
+    </sl-dialog>
+  `;
+}
+
 function handleEditTemplate(tid, tier) {
   const count = _countInflightRunsForTemplate(tid);
   if (count > 0) {
@@ -2394,11 +2609,19 @@ function _templateActionDialogTemplate(state) {
     `;
   } else if (dlg.mode === 'import') {
     const isZip = dlg.parsed?._kind === 'zip';
+    const bundleModelCount =
+      !isZip && dlg.parsed?.models ? Object.keys(dlg.parsed.models).length : 0;
+    const bundlePricingCount =
+      !isZip && dlg.parsed?.pricing?.models
+        ? Object.keys(dlg.parsed.pricing.models).length
+        : 0;
+    const dstTierLabel =
+      (dlg.tier || 'project') === 'project' ? 'Project' : 'User';
     body = html`
       <p class="dialog-lead">
         Choose a bundle file exported via the Export button on any
-        template card. The bundle's <code>templates[]</code> entries land
-        in the selected scope.
+        template card. Templates, model aliases, and per-model pricing
+        in the bundle all land in the same selected scope.
       </p>
       <div class="settings-field">
         <label class="settings-label" for="dlg-import-file">Bundle file</label>
@@ -2423,7 +2646,33 @@ function _templateActionDialogTemplate(state) {
           : dlg.parsed
             ? html`
               <div class="settings-field">
-                <label class="settings-label">Templates in bundle</label>
+                <label class="settings-label">Bundle contents</label>
+                <ul class="dialog-bundle-summary">
+                  <li>
+                    <strong>${dlg.parsed.templates.length}</strong>
+                    template${dlg.parsed.templates.length === 1 ? '' : 's'}
+                    → <em>${dstTierLabel}</em>
+                  </li>
+                  ${
+                    bundleModelCount > 0
+                      ? html`<li>
+                          <strong>${bundleModelCount}</strong>
+                          model alias${bundleModelCount === 1 ? '' : 'es'}
+                          → <em>${dstTierLabel}</em>
+                        </li>`
+                      : ''
+                  }
+                  ${
+                    bundlePricingCount > 0
+                      ? html`<li>
+                          <strong>${bundlePricingCount}</strong>
+                          pricing entr${bundlePricingCount === 1 ? 'y' : 'ies'}
+                          → <em>${dstTierLabel}</em>
+                        </li>`
+                      : ''
+                  }
+                </ul>
+                <label class="settings-label" style="margin-top:0.75rem">Templates</label>
                 <ul class="dialog-bundle-list">
                   ${dlg.parsed.templates.map(
                     (t) =>
@@ -4377,11 +4626,16 @@ function contentHeaderView() {
   ) {
     showBack = true;
     ({ title, badge, actionButton } = runPageHeaderParts(route.runId));
-  } else if (route.runId && route.section !== 'templates') {
-    // The templates section also encodes its tid in `route.runId` (e.g.
-    // `#/templates/feature-glm-ds/edit`), so without the section guard
+  } else if (
+    route.runId &&
+    route.section !== 'templates' &&
+    route.section !== 'models'
+  ) {
+    // The templates / models sections also encode their primary key
+    // in `route.runId` (e.g. `#/templates/feature-glm-ds/edit`,
+    // `#/models/opus/edit/builtin`), so without the section guard
     // this generic "run detail" handler would overwrite the dedicated
-    // "Edit Template" title below.
+    // "Edit Template" / "Edit Model" title below.
     showBack = true;
     ({ title, badge, actionButton } = runPageHeaderParts(route.runId));
   } else if (route.section === 'active') {
@@ -4577,6 +4831,81 @@ function contentHeaderView() {
         </button>
       `;
     }
+  } else if (route.section === 'models') {
+    if (route.action === 'edit') {
+      const isBuiltinView = route.tier === 'builtin';
+      const isNew = route.runId === 'new';
+      title = isBuiltinView ? 'View Model' : isNew ? 'New Model' : 'Edit Model';
+      showBack = true;
+      if (isBuiltinView) {
+        badge = html`<sl-badge
+          variant="warning"
+          pill
+          title="Built-in models can't be modified. Use Duplicate to fork into project or user scope."
+          >Read-only</sl-badge
+        >`;
+      } else {
+        const saving = modelEditorState.saving;
+        actionButton = html`
+          <button
+            class="action-btn action-btn--secondary"
+            @click=${() => navigate('models', null, route.projectId)}
+            ?disabled=${saving}
+            title="Cancel and return to the Models list"
+          >
+            Cancel
+          </button>
+          <button
+            class="action-btn action-btn--primary"
+            ?disabled=${saving}
+            title="Save changes"
+            @click=${() =>
+              saveModel({
+                projectId: route.projectId,
+                allModels: state.models || [],
+                onSaved: ({ tier, alias }) => {
+                  // Refresh list, keep the user on the editor.
+                  fetchModels(route.projectId || null).then((models) => {
+                    store.setState({ models, modelsLoaded: true });
+                  });
+                  // For renames or new entries, update the URL in place
+                  // so refresh / back-button works.
+                  if (
+                    route.runId !== alias ||
+                    (route.tier && route.tier !== tier)
+                  ) {
+                    navigate(
+                      'models',
+                      alias,
+                      route.projectId,
+                      'edit',
+                      tier || route.tier,
+                    );
+                  }
+                },
+              })}
+          >
+            ${saving ? html`<sl-spinner></sl-spinner>` : ''}
+            Save
+          </button>
+        `;
+      }
+    } else {
+      title = 'Models';
+      showBack = false;
+      const cliOk = state.worcaCliStatus?.ok !== false;
+      actionButton = html`
+        <button
+          class="action-btn action-btn--primary"
+          ?disabled=${!cliOk}
+          title=${cliOk ? 'Create a new model alias' : 'Upgrade worca-cc to enable create'}
+          @click=${() => handleCreateModel()}
+        >
+          ${unsafeHTML(iconSvg(Plus, 14))}
+          New
+        </button>
+      `;
+    }
   } else if (route.section === 'project-settings') {
     title = 'Project Settings';
     showBack = true;
@@ -4758,7 +5087,8 @@ function mainContentView() {
     route.section !== 'fleet-runs' &&
     route.section !== 'workspace-runs' &&
     route.section !== 'workspaces' &&
-    route.section !== 'templates'
+    route.section !== 'templates' &&
+    route.section !== 'models'
   ) {
     const run = store.getRunById(route.runId);
     // If the run doesn't belong to the current project (e.g. after a project
@@ -5044,6 +5374,104 @@ function mainContentView() {
       onDelete: handleDeleteTemplate,
       onExport: handleExportTemplate,
       onGist: handleCopyGistUrl,
+    });
+  }
+
+  if (route.section === 'models') {
+    // Project-scoped — All-Projects mode has no project to bind to.
+    const isAllProjects =
+      (state.projects || []).length > 1 && !state.currentProjectId;
+    if (isAllProjects) {
+      return html`
+        <div class="empty-state pipelines-empty">
+          <p>Select a project from the sidebar to view its models.</p>
+          <sl-button variant="primary" @click=${() => navigate('dashboard', null, null)}>
+            Back to Dashboard
+          </sl-button>
+        </div>
+      `;
+    }
+
+    // Initial list poll
+    if (!_modelsPollCleanup) {
+      _modelsPollCleanup = setupModelsPolling(
+        { currentProjectId: route.projectId },
+        store,
+        rerender,
+      );
+    }
+
+    // Probe worca-cc status once (shared with templates page).
+    if (state.worcaCliStatus === undefined && !_worcaCliStatusFetching) {
+      _worcaCliStatusFetching = true;
+      fetch('/api/worca-cli')
+        .then((r) => r.json())
+        .then((status) => {
+          store.setState({ worcaCliStatus: status || null });
+        })
+        .catch(() => {
+          store.setState({
+            worcaCliStatus: {
+              ok: false,
+              installed: null,
+              minimum: 'unknown',
+              message: 'Failed to probe worca-cc CLI status',
+            },
+          });
+        })
+        .finally(() => {
+          _worcaCliStatusFetching = false;
+        });
+    }
+
+    // Editor branch
+    if (route.runId && route.action === 'edit') {
+      const tier = route.tier || 'project';
+      const alias = route.runId;
+      // Trigger load when (tier, alias) changes — same pattern as the
+      // template editor. modelEditorState.alias tracks the loaded entry;
+      // for 'new' we clear via resetModelEditor inside loadModelForEdit.
+      const loadedMatches =
+        (alias === 'new' &&
+          modelEditorState.isNew &&
+          modelEditorState.tier === tier) ||
+        (alias !== 'new' &&
+          modelEditorState.alias === alias &&
+          modelEditorState.tier === tier);
+      if (!loadedMatches && !modelEditorState.loading) {
+        loadModelForEdit({
+          tier,
+          alias,
+          projectId: route.projectId,
+          rerender,
+        });
+      }
+      // Ensure the list is loaded for the inline alias-collision check.
+      if (!state.modelsLoaded && !_editorModelsFetching) {
+        _editorModelsFetching = true;
+        fetchModels(route.projectId || null)
+          .then((models) => store.setState({ models, modelsLoaded: true }))
+          .finally(() => {
+            _editorModelsFetching = false;
+          });
+      }
+      return modelEditorView(state, {
+        projectId: route.projectId,
+        allModels: state.models || [],
+        rerender,
+        onTierChange: (nextTier) => {
+          // Flipping the storage picker on a new entry just rewrites the
+          // URL tier slot so refresh / back-button stay coherent. The
+          // editor state's tier is already updated by the picker itself.
+          navigate('models', alias, route.projectId, 'edit', nextTier);
+        },
+      });
+    }
+
+    return modelsView(state, {
+      onEdit: handleEditModel,
+      onDuplicate: handleDuplicateModel,
+      onDelete: handleDeleteModel,
     });
   }
 
@@ -5464,6 +5892,7 @@ function rerender() {
         : ''
     }
     ${_templateActionDialogTemplate(state)}
+    ${_modelDuplicateDialogTemplate()}
     ${confirmDialogTemplate()}
     ${batchWorcaSetupDialogTemplate(rerender)}
     ${addProjectDialogView(state, {

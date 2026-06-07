@@ -652,6 +652,34 @@ async function _loadProjectSettings(projectId) {
   } catch {
     // best-effort — leave the default empty settings in place
   }
+
+  // Fetch the per-tier model list so the dropdown can tag each option with
+  // its tier (Project / User / Built-in). Best-effort — on failure the
+  // dropdown still works, options just won't carry tier badges.
+  try {
+    const modelsUrl = projectId
+      ? `/api/projects/${projectId}/models`
+      : '/api/models';
+    const res = await fetch(modelsUrl);
+    if (!res.ok) {
+      editorState.modelTierMap = {};
+      return;
+    }
+    const data = await res.json();
+    const tierMap = {};
+    for (const m of data.models || []) {
+      // Project shadows User shadows Builtin — record the highest-priority
+      // tier per alias (mirrors how resolve_model() picks).
+      const priority = { project: 3, user: 2, builtin: 1 };
+      const current = tierMap[m.alias];
+      if (!current || priority[m.tier] > priority[current]) {
+        tierMap[m.alias] = m.tier;
+      }
+    }
+    editorState.modelTierMap = tierMap;
+  } catch {
+    editorState.modelTierMap = {};
+  }
 }
 
 export async function loadTemplate(tier, tid, projectId) {
@@ -1663,6 +1691,23 @@ function _agentsTab(formBuffer, settings, projectId, rerender) {
   const autoMode = effort.auto_mode || 'adaptive';
   const autoCap = effort.auto_cap || 'xhigh';
   const state = editorState;
+  const tierMap = editorState.modelTierMap || {};
+  // Title-cased single-letter tier badge for the dropdown options. Keeps
+  // each option tight (Sonnet · P / Sonnet · U / Sonnet · B) instead of
+  // wrapping. Hover tooltip carries the full word.
+  const tierLabel = (alias) => {
+    const t = tierMap[alias];
+    if (!t) return '';
+    const letter = t === 'project' ? 'P' : t === 'user' ? 'U' : 'B';
+    return ` · ${letter}`;
+  };
+  const tierTitle = (alias) => {
+    const t = tierMap[alias];
+    if (!t) return '';
+    const word =
+      t === 'project' ? 'Project' : t === 'user' ? 'User' : 'Built-in';
+    return `Resolves from ${word} tier — click to open in Models page`;
+  };
 
   return html`
     <div class="settings-tab-content">
@@ -1752,27 +1797,47 @@ function _agentsTab(formBuffer, settings, projectId, rerender) {
               <div class="settings-card-body">
                 <div class="settings-field">
                   <label class="settings-label" for="agent-${name}-model">Model</label>
-                  <sl-select
-                    id="agent-${name}-model"
-                    .value=${agent.model || 'sonnet'}
-                    size="small"
-                    hoist
-                    @sl-change=${(e) => {
-                      editorState.formBuffer.agents[name].model =
-                        e.target.value;
-                      rerender();
-                    }}
-                    @sl-blur=${() => {
-                      validateConfigDebounced(
-                        projectId,
-                        editorState.formBuffer,
-                        state.viewMode,
-                        rerender,
-                      );
-                    }}
-                  >
-                    ${modelOptions.map((m) => html`<sl-option value="${m}">${m}</sl-option>`)}
-                  </sl-select>
+                  <div class="agent-model-select-row">
+                    <sl-select
+                      id="agent-${name}-model"
+                      .value=${agent.model || 'sonnet'}
+                      size="small"
+                      hoist
+                      @sl-change=${(e) => {
+                        editorState.formBuffer.agents[name].model =
+                          e.target.value;
+                        rerender();
+                      }}
+                      @sl-blur=${() => {
+                        validateConfigDebounced(
+                          projectId,
+                          editorState.formBuffer,
+                          state.viewMode,
+                          rerender,
+                        );
+                      }}
+                    >
+                      ${modelOptions.map(
+                        (m) =>
+                          html`<sl-option value="${m}" title=${tierTitle(m)}>${m}${tierLabel(m)}</sl-option>`,
+                      )}
+                    </sl-select>
+                    ${
+                      tierMap[agent.model || 'sonnet']
+                        ? html`<a
+                            class="agent-model-open-link"
+                            href="#/models"
+                            title=${tierTitle(agent.model || 'sonnet')}
+                            @click=${(e) => {
+                              e.preventDefault();
+                              const t = tierMap[agent.model || 'sonnet'];
+                              window.location.hash = `#/models/${encodeURIComponent(agent.model || 'sonnet')}/edit/${t}`;
+                            }}
+                            aria-label="Open ${agent.model || 'sonnet'} in Models page"
+                          >↗</a>`
+                        : ''
+                    }
+                  </div>
                 </div>
                 <div class="settings-field">
                   <label class="settings-label" for="agent-${name}-turns">Max turns</label>

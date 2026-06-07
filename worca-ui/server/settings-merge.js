@@ -82,28 +82,75 @@ export function readLocalSettings(settingsPath) {
   }
 }
 
+// Cross-tier merge atomic paths. Entries at these paths replace wholesale
+// when the project tier defines them — they do NOT deep-merge across
+// user-global ↔ project. Within-tier id+env still merges (the settings.json /
+// settings.local.json sibling pair is one logical tier). Mirrors the Python
+// _ATOMIC_LEAF_PATHS list in src/worca/utils/settings.py.
+const ATOMIC_LEAF_PATHS = [
+  ['worca', 'models'],
+  ['worca', 'pricing', 'models'],
+];
+
+function replaceAtomicSubkeys(merged, override, path) {
+  let nodeMerged = merged;
+  let nodeOverride = override;
+  for (const segment of path) {
+    if (
+      !nodeMerged ||
+      typeof nodeMerged !== 'object' ||
+      Array.isArray(nodeMerged) ||
+      !(segment in nodeMerged)
+    )
+      return;
+    if (
+      !nodeOverride ||
+      typeof nodeOverride !== 'object' ||
+      Array.isArray(nodeOverride) ||
+      !(segment in nodeOverride)
+    )
+      return;
+    nodeMerged = nodeMerged[segment];
+    nodeOverride = nodeOverride[segment];
+  }
+  if (
+    !nodeMerged ||
+    typeof nodeMerged !== 'object' ||
+    Array.isArray(nodeMerged) ||
+    !nodeOverride ||
+    typeof nodeOverride !== 'object' ||
+    Array.isArray(nodeOverride)
+  )
+    return;
+  for (const [key, value] of Object.entries(nodeOverride)) {
+    nodeMerged[key] = value;
+  }
+}
+
 /**
  * Read the full effective settings stack the way the Python runtime resolves
  * it: user-global base → user-global .local → project base → project .local.
- * Each layer deep-merges over the previous. Missing files are treated as
- * empty objects. Used by UI surfaces (model alias dropdowns, etc.) that must
- * mirror what `worca.utils.settings.resolve_model` sees at run time.
+ * Each layer deep-merges over the previous, EXCEPT entries under
+ * worca.models.* and worca.pricing.models.* which replace wholesale across
+ * tiers (project shadows user shadows builtin per alias). Missing files are
+ * treated as empty objects.
  *
  * `globalSettingsPath` is passed in so callers can substitute it during
  * tests; production callers thread the result of `paths.globalSettingsPath()`.
  */
 export function readEffectiveSettings(projectSettingsPath, globalSettingsPath) {
-  const layers = [];
+  const userLayers = [];
+  const projectLayers = [];
   if (globalSettingsPath) {
     try {
-      layers.push(JSON.parse(readFileSync(globalSettingsPath, 'utf8')));
+      userLayers.push(JSON.parse(readFileSync(globalSettingsPath, 'utf8')));
     } catch {
       /* missing or invalid — treat as empty */
     }
     const globalLocal = localPathFor(globalSettingsPath);
     if (existsSync(globalLocal)) {
       try {
-        layers.push(JSON.parse(readFileSync(globalLocal, 'utf8')));
+        userLayers.push(JSON.parse(readFileSync(globalLocal, 'utf8')));
       } catch {
         /* invalid — skip */
       }
@@ -111,18 +158,30 @@ export function readEffectiveSettings(projectSettingsPath, globalSettingsPath) {
   }
   if (projectSettingsPath) {
     try {
-      layers.push(JSON.parse(readFileSync(projectSettingsPath, 'utf8')));
+      projectLayers.push(JSON.parse(readFileSync(projectSettingsPath, 'utf8')));
     } catch {
       /* missing or invalid — treat as empty */
     }
     const projectLocal = localPathFor(projectSettingsPath);
     if (existsSync(projectLocal)) {
       try {
-        layers.push(JSON.parse(readFileSync(projectLocal, 'utf8')));
+        projectLayers.push(JSON.parse(readFileSync(projectLocal, 'utf8')));
       } catch {
         /* invalid — skip */
       }
     }
   }
-  return layers.reduce((acc, layer) => deepMerge(acc, layer), {});
+  const userMerged = userLayers.reduce(
+    (acc, layer) => deepMerge(acc, layer),
+    {},
+  );
+  const projectMerged = projectLayers.reduce(
+    (acc, layer) => deepMerge(acc, layer),
+    {},
+  );
+  const merged = deepMerge(userMerged, projectMerged);
+  for (const path of ATOMIC_LEAF_PATHS) {
+    replaceAtomicSubkeys(merged, projectMerged, path);
+  }
+  return merged;
 }

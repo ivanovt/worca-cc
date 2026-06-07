@@ -10085,3 +10085,229 @@ body.help-mode-active sl-tab {
   background: rgba(34, 197, 94, 0.2);
   color: #86efac;
 }
+
+/* ────────────────────────────────────────────────────────────────────────
+ * Models page — mirrors Pipeline Templates structure.
+ *
+ * The list view inherits .pipelines-view / .pipelines-content /
+ * .pipelines-tier-section / .pipelines-grid from the Pipelines page so
+ * spacing, section collapsibles, and grid behavior match exactly. Only
+ * the bits unique to model cards / model editor live here.
+ * ────────────────────────────────────────────────────────────────────── */
+
+/* Model card on the Models page. Distinct from .model-card (which the
+   legacy Settings → Models tab used for in-place edit rows). */
+.model-tier-card {
+  cursor: pointer;
+  transition: border-color 120ms ease, box-shadow 120ms ease;
+}
+.model-tier-card:hover {
+  border-color: var(--accent);
+  box-shadow: 0 4px 12px rgba(0, 0, 0, 0.08);
+}
+.model-tier-card .run-card-actions {
+  margin-top: auto;
+  padding-top: 0.5rem;
+}
+.model-card-alt-badge {
+  margin-left: auto;
+}
+.model-card-meta {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0.5rem;
+}
+
+/* ── Model editor ── */
+.model-editor .editor-content {
+  display: flex;
+  flex-direction: column;
+  gap: 1.25rem;
+  padding-top: 1rem;
+}
+.model-editor-section {
+  background: var(--bg-secondary);
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  padding: 1rem 1.25rem;
+}
+.model-editor-section-head {
+  display: flex;
+  justify-content: space-between;
+  align-items: flex-start;
+  gap: 1rem;
+  margin-bottom: 0.5rem;
+}
+.model-editor-section-head h3 {
+  margin: 0;
+}
+.model-editor-resolves-banner {
+  margin-bottom: 0.5rem;
+}
+.model-editor-resolves-banner code {
+  margin-left: 0.4rem;
+  margin-right: 0.4rem;
+  background: var(--bg-tertiary);
+  padding: 0.1rem 0.4rem;
+  border-radius: 3px;
+}
+.model-editor-secret-banner {
+  margin-bottom: 0.5rem;
+}
+.model-editor-env-table {
+  margin-top: 0.5rem;
+  width: 100%;
+}
+.model-editor-env-table th,
+.model-editor-env-table td {
+  vertical-align: top;
+  padding: 0.4rem 0.5rem;
+}
+.model-editor-env-row--invalid sl-input::part(base) {
+  border-color: var(--status-failed, #ef4444);
+}
+.model-editor-env-row--placeholder sl-input::part(base) {
+  border-color: var(--status-paused, #f59e0b);
+}
+.model-editor-env-error {
+  display: block;
+  color: var(--status-failed, #ef4444);
+  font-size: 0.75rem;
+  margin-top: 0.25rem;
+}
+.model-editor-env-warn {
+  display: block;
+  color: var(--status-paused, #f59e0b);
+  font-size: 0.75rem;
+  margin-top: 0.25rem;
+}
+.model-editor-env-actions {
+  width: 2.5rem;
+  text-align: right;
+}
+.model-editor-env-empty {
+  margin: 0.5rem 0 0;
+}
+.model-editor-pricing-accordion::part(base) {
+  background: transparent;
+  border: none;
+  padding: 0;
+}
+.model-editor-pricing-accordion::part(header) {
+  padding: 0.25rem 0;
+}
+.model-editor-pricing-summary {
+  display: flex;
+  align-items: center;
+  gap: 0.75rem;
+}
+.model-editor-applied-list {
+  margin: 0.5rem 0 0;
+  padding-left: 1.25rem;
+}
+.model-editor-applied-list li {
+  margin-bottom: 0.25rem;
+}
+.model-editor-alias-input {
+  min-width: 12rem;
+}
+.model-editor-id-input {
+  max-width: 30rem;
+}
+.editor-readonly-badge {
+  margin-left: 0.25rem;
+}
+
+/* Tier picker pill for new model entries — replaces the read-only Storage
+   badge while isNew=true so the user can flip the destination tier before
+   saving. Styled as a field-pill so it sits next to the other subheader
+   pills without breaking the row. */
+.editor-storage-pill {
+  background: var(--bg-tertiary);
+  border-radius: 999px;
+  padding: 0 0.5rem;
+  display: inline-flex;
+  align-items: center;
+  gap: 0.35rem;
+}
+.model-editor-tier-select {
+  min-width: 7rem;
+}
+
+/* Imported-from-bundle attribution. Dropped on first UI save (the server
+   doesn't preserve _imported_from when writeModelEntry runs). */
+.model-editor-imported-banner {
+  margin-bottom: 0.5rem;
+}
+.model-editor-imported-banner code {
+  margin-left: 0.25rem;
+  background: var(--bg-tertiary);
+  padding: 0.1rem 0.4rem;
+  border-radius: 3px;
+}
+.model-card-imported-badge::part(base) {
+  background: var(--bg-tertiary);
+}
+
+/* Model duplicate dialog (tier picker + alias input) */
+.model-duplicate-form {
+  display: flex;
+  flex-direction: column;
+  gap: 0.75rem;
+}
+
+/* Pipeline editor: per-agent model dropdown gains a tier badge inline
+   in each option, plus a small "open in Models" jump link. */
+.agent-model-select-row {
+  display: flex;
+  align-items: center;
+  gap: 0.4rem;
+}
+.agent-model-select-row sl-select {
+  flex: 1;
+  min-width: 0;
+}
+.agent-model-open-link {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 1.5rem;
+  height: 1.5rem;
+  border-radius: 4px;
+  color: var(--muted);
+  text-decoration: none;
+  font-size: 1rem;
+  font-weight: 600;
+  flex-shrink: 0;
+}
+.agent-model-open-link:hover {
+  background: var(--bg-tertiary);
+  color: var(--accent);
+}
+
+/* Costs & Budgets tab → notice linking to the Models page for per-model
+   pricing edits. */
+.costs-budgets-models-link {
+  margin-bottom: 1rem;
+}
+.costs-budgets-models-link a {
+  color: var(--accent);
+  text-decoration: underline;
+}
+
+/* Import dialog — bundle-contents summary block (what lands where). */
+.dialog-bundle-summary {
+  background: var(--bg-tertiary);
+  border-radius: 6px;
+  padding: 0.5rem 1rem;
+  margin-bottom: 0.5rem;
+  list-style: none;
+}
+.dialog-bundle-summary li {
+  margin: 0.15rem 0;
+}
+.dialog-bundle-summary em {
+  font-style: normal;
+  font-weight: 600;
+  color: var(--accent);
+}

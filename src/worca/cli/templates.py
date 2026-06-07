@@ -487,6 +487,24 @@ def cmd_templates_create(args):
     print(f"created template '{template.id}' in {tier_label}")
 
 
+def _derive_bundle_label(source: str) -> str:
+    """Boil a bundle source down to a short human-friendly label for the
+    ``_imported_from`` attribution badge on the Models page.
+
+    Examples:
+        /path/to/feature-fast-bundle.json -> "feature-fast-bundle.json"
+        https://gist.github.com/.../bundle.json -> "bundle.json"
+        gist:abcdef -> "gist:abcdef"
+    """
+    if not source:
+        return ""
+    # Strip any query/fragment.
+    label = source.split("?")[0].split("#")[0]
+    # Take the last path segment; fall back to the whole string for non-paths.
+    tail = label.rstrip("/").rsplit("/", 1)[-1] if "/" in label else label
+    return tail or label[:64]
+
+
 def _find_settings_path(scope: str = "project") -> str | None:
     """Locate the settings.json that template-import should write to.
 
@@ -852,11 +870,15 @@ def cmd_templates_export(args):
 def cmd_templates_import(args):
     """worca templates import --from <source> — import templates from a bundle.
 
-    Model aliases (``worca.models``) and pricing (``worca.pricing.models``) in
-    the bundle always land in user-global settings (``~/.worca/settings.json``)
-    regardless of ``--scope``. Templates themselves still honor ``--scope``.
-    The split keeps repo-committed settings.json free of per-developer env /
-    secret scaffolding while letting the project template reference the alias.
+    Templates, model aliases (``worca.models``) and pricing
+    (``worca.pricing.models``) in the bundle all land in the tier picked via
+    ``--scope`` (project or user). This is the v2 behaviour — earlier
+    versions hardcoded models/pricing to user-global; see MIGRATION.md.
+
+    Each imported model entry is stamped with ``_imported_from: <bundle-name>``
+    in settings.json so the Models page can surface a small "Imported from X"
+    attribution badge. The badge is dropped the first time the user saves
+    the entry via the UI (ownership transfer).
     """
     source = args.from_source
     scope = args.scope
@@ -1028,9 +1050,12 @@ def cmd_templates_import(args):
 
     settings_patch: dict = {}
     template_settings_path = _find_settings_path(scope)
-    # Model aliases always land user-global so the project's committed
-    # settings.json stays free of per-developer env/secret scaffolds.
-    models_settings_path = _find_settings_path("user")
+    # Model aliases and pricing land in the SAME scope the templates do, so
+    # an "import to Project" applies the whole bundle (templates + models +
+    # pricing) to the project. Earlier behaviour hardcoded user-global,
+    # which broke the parity between Pipeline Templates' tier model and
+    # bundle contents. The Models page's "Import" flow expects this.
+    models_settings_path = _find_settings_path(scope)
 
     # Filter bundle's models/pricing to aliases actually referenced by
     # templates. For preview mode we consider the FULL bundle so the dialog
@@ -1079,7 +1104,9 @@ def cmd_templates_import(args):
         preview = _build_collision_preview(bundle_models, bundle_pricing, models_settings_path)
         preview["template_ids"] = [t.get("id") for t in bundle_templates]
         preview["template_collisions"] = template_collisions_meta
-        preview["models_scope"] = "user"
+        # Models, pricing, and templates all land in the same scope now
+        # (previously models were hardcoded to user-global).
+        preview["models_scope"] = scope
         preview["template_scope"] = scope
         preview["template_settings_path"] = template_settings_path
         print(json.dumps(preview, indent=2))
@@ -1098,6 +1125,24 @@ def cmd_templates_import(args):
     # template never references a stale alias name. Transactional with the
     # rename in the settings patch.
     _rewrite_template_model_refs(to_import, rename_map)
+
+    # Stamp bundle attribution on each imported model entry so the Models
+    # page can surface a small "Imported from <X>" badge. Derived from the
+    # source's basename — covers files, gist URLs, and HTTP URLs uniformly.
+    # The UI drops the badge on first edit (ownership transfer); the server's
+    # writeModelEntry does not preserve _imported_from across UI saves.
+    bundle_label = _derive_bundle_label(source)
+    if bundle_models and bundle_label:
+        stamped: dict = {}
+        for alias, entry in bundle_models.items():
+            if isinstance(entry, str):
+                # Promote string-form to object-form to carry the metadata.
+                stamped[alias] = {"id": entry, "_imported_from": bundle_label}
+            elif isinstance(entry, dict):
+                stamped[alias] = {**entry, "_imported_from": bundle_label}
+            else:
+                stamped[alias] = entry
+        bundle_models = stamped
 
     if bundle_models:
         settings_patch["models"] = bundle_models
@@ -1123,10 +1168,8 @@ def cmd_templates_import(args):
 
     if to_import and settings_patch:
         print(
-            f"info: templates landed in {scope} scope ({target_dir}); "
-            f"model aliases landed in user-global ({models_settings_path}). "
-            "Collaborators sharing the project must import this bundle on "
-            "their own machines to get the aliases.",
+            f"info: templates, model aliases, and pricing all landed in "
+            f"{scope} scope ({target_dir}, {models_settings_path}).",
             file=sys.stderr,
         )
 
