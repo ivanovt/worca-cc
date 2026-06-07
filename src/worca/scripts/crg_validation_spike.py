@@ -98,6 +98,24 @@ def _mcp_request(method: str, params: Optional[dict] = None, req_id: Optional[in
     return f"Content-Length: {len(body)}\r\n\r\n{body}".encode()
 
 
+def _clean_subprocess_env(**extra: str) -> dict[str, str]:
+    """Create a clean subprocess environment without worca-specific vars.
+
+    When spawning CRG serve tests, we must not inherit WORCA_* vars that
+    trigger governance guards (e.g., WORCA_AGENT causes CRG mutation guard
+    violations). Tests run the binary directly, not through agent tool use.
+    """
+    env = os.environ.copy()
+    # Remove worca-specific environment variables that trigger guards
+    worca_keys = [k for k in env if k.startswith("WORCA_")]
+    for key in worca_keys:
+        del env[key]
+    # Also remove CLAUDECODE to avoid any nested CLI interference
+    env.pop("CLAUDECODE", None)
+    env.update(extra)
+    return env
+
+
 def _wait_readable(stream, max_wait: float) -> bool:
     """Block up to ``max_wait`` seconds for ``stream`` to be readable.
 
@@ -193,11 +211,10 @@ def validate_read_tools_no_dml(db_path: str, repo_root: str) -> ValidationResult
     wal_path = db_path + "-wal"
     shm_path = db_path + "-shm"
 
-    env = {
-        **os.environ,
-        "CRG_REPO_ROOT": os.path.abspath(repo_root),
-        "CRG_DATA_DIR": data_dir,
-    }
+    env = _clean_subprocess_env(
+        CRG_REPO_ROOT=os.path.abspath(repo_root),
+        CRG_DATA_DIR=data_dir,
+    )
 
     proc = subprocess.Popen(
         ["code-review-graph", "serve"],
@@ -306,11 +323,10 @@ def validate_env_var_honor(data_dir: str, repo_root: str) -> ValidationResult:
             details=f"graph.db not found at {db_path}",
         )
 
-    env = {
-        **os.environ,
-        "CRG_REPO_ROOT": os.path.abspath(repo_root),
-        "CRG_DATA_DIR": os.path.abspath(data_dir),
-    }
+    env = _clean_subprocess_env(
+        CRG_REPO_ROOT=os.path.abspath(repo_root),
+        CRG_DATA_DIR=os.path.abspath(data_dir),
+    )
 
     proc = subprocess.Popen(
         ["code-review-graph", "serve"],
@@ -392,11 +408,10 @@ def measure_serve_startup_latency(
             details=f"graph.db not found at {db_path}",
         )
 
-    env = {
-        **os.environ,
-        "CRG_REPO_ROOT": os.path.abspath(repo_root),
-        "CRG_DATA_DIR": os.path.abspath(data_dir),
-    }
+    env = _clean_subprocess_env(
+        CRG_REPO_ROOT=os.path.abspath(repo_root),
+        CRG_DATA_DIR=os.path.abspath(data_dir),
+    )
 
     latencies_ms: list[float] = []
     errors: list[str] = []
