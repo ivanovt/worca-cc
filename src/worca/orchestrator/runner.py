@@ -2246,17 +2246,6 @@ def effective_bead_cap_status(
     }
 
 
-def _has_critical_or_major_issues(result: dict) -> bool:
-    """Check if result contains critical or major issues.
-
-    This is used to determine whether to loop back to implement.
-    Only checks the 'issues' array, not 'observations' (per D7).
-    """
-    new_issues = result.get("issues", [])
-    critical_issues = [i for i in new_issues if i.get("severity") in ("critical", "major")]
-    return bool(critical_issues)
-
-
 def _persist_observations(
     status: dict,
     loop_counters: dict[str, int],

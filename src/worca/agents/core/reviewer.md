@@ -16,7 +16,7 @@ You receive the test results and proof status from the Tester. You have read-onl
    - Run `git diff {{review_base}}..HEAD` to see all changed files since pipeline start
    {{else}}
    - Run `git merge-base HEAD origin/HEAD` to find the base commit, then `git diff <base>..HEAD`
-   - If merge-base fails (no origin/remote or orphan branch), exit review with `outcome: approve` and note the error in the `notes` field
+   - If merge-base fails (no origin/remote or orphan branch), exit review with `outcome: approve` and record the error as an `observations` entry (severity `minor`, file `git`, description naming the failed command)
    {{/if}}
 3. For each changed file, evaluate:
    - **Correctness** — logic errors, off-by-one errors, missing edge cases
