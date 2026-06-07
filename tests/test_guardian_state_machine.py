@@ -30,6 +30,15 @@ GUARDIAN_PATH = (
     / "guardian.md"
 )
 
+PR_BLOCK_PATH = (
+    pathlib.Path(__file__).parent.parent
+    / "src"
+    / "worca"
+    / "agents"
+    / "core"
+    / "pr.block.md"
+)
+
 RUNNER_PATH = (
     pathlib.Path(__file__).parent.parent
     / "src"
@@ -383,3 +392,28 @@ class TestBehaviorPreservation:
         assert "target_branch" in rendered_no_defer
         assert "**Workspace:** my-platform" in rendered_no_defer
         assert "gh pr create --base" in rendered_no_defer
+
+
+class TestGuardianRoleBoundaries:
+    """Acceptance: guardian.md must forbid re-verification actions and mirror in Rules."""
+
+    def test_not_starting_from_zero_section_exists(self):
+        """guardian.md must have a ## You Are Not Starting From Zero section."""
+        source = GUARDIAN_PATH.read_text()
+        assert "You Are Not Starting From Zero" in source or "You are not starting from zero" in source
+
+    def test_banned_command_list_explicit(self):
+        """guardian.md must list build/test/git diff/TaskCreate in the guard."""
+        source = GUARDIAN_PATH.read_text()
+        banned = ("git diff", "git show", "TaskCreate", "TaskUpdate",
+                  "source, test, config, or documentation files")
+        # Check for broader phrases that might appear instead of exact terms
+        assert ("build" in source and "test" in source and "lint" in source and "verification" in source), \
+            "guardian.md must forbid build/test/lint/verification commands"
+        for term in banned:
+            assert term in source or term.lower() in source.lower(), f"guardian.md must forbid {term}"
+
+    def test_pr_block_prepend_guard(self):
+        """pr.block.md must prepend the 'already implemented' guard."""
+        source = PR_BLOCK_PATH.read_text()
+        assert "already implemented" in source.lower() or "already implemented, tested, and reviewed" in source.lower()
