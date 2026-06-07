@@ -863,6 +863,10 @@ W-065: Deferrable PR creation with manual promote-from-UI.
 - **`quick-fix` template now mandates a single bead (`max_beads: 1`).** Previously the coordinator could produce multiple beads for a quick-fix run; now it is instructed to deliver the entire fix as one atomic bead. All other built-in templates (feature, bugfix, refactor) remain unchanged at `max_beads: 0` (auto). If you have a **custom `quick-fix` template override** that relies on multi-bead decomposition, add `max_beads: 0` to its `config.agents.coordinator` block to restore the old behavior.
 - **New `worca.agents.coordinator.max_beads` config key (additive, default `0`).** No existing runs or templates are affected — `0` means auto, which is today's behavior. The key is template-owned and settable per-run via `--max-beads`. No `worca init --upgrade` required.
 
+### 0.50.0 → 0.51.0
+
+- **No breaking changes.** Agent prompt refinements (execution-stage scope bounding, reviewer notes/observations schema alignment, role-bounding guardrails on investigate/guardian), env hygiene (subprocess env now strips stale `WORCA_*` / `CLAUDECODE` for nested invocations — #307), reviewer diff scoping fix (diff now scoped to pipeline-start git_head — #305), and worca-ui Max Beads dropdown passthrough sentinel (#304). No `worca init --upgrade` required; settings and runtime layout unchanged.
+
 ## Getting help
 
 - Issues: https://github.com/SinishaDjukic/worca-cc/issues
