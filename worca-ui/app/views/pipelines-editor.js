@@ -1204,7 +1204,10 @@ export function pipelinesEditorView(state, options) {
     idDraft,
     idDirty,
   } = editorState;
-  const settings = state?.settings || {};
+  // Settings live on editorState (populated by _loadProjectSettings); the
+  // app store has no `settings` key, so reading state.settings here would
+  // silently drop project-defined model aliases from the dropdown.
+  const settings = editorState.settings || { worca: {} };
   const hasErrors = validationIssues.some((i) => i.severity === 'error');
   const hasWarnings = validationIssues.some((i) => i.severity === 'warning');
 

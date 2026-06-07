@@ -313,6 +313,12 @@ function exportBundle(projectRoot, id, mode = 'standalone') {
   const dir = mkdtempSync(join(tmpdir(), 'worca-bundle-'));
   try {
     const bundlePath = join(dir, `${id}-bundle.out`);
+    // --include-models / --include-pricing: bundle the project's worca.models
+    // and worca.pricing entries that the template references (e.g. a custom
+    // "glm-ds" alias). The CLI already filters to *referenced* aliases via
+    // collect_referenced_model_aliases, so built-ins the importer already has
+    // (opus/sonnet/haiku) aren't shipped redundantly. Without these flags a
+    // bundle that names a custom alias is broken on import.
     runWorcaTemplates(projectRoot, [
       'export',
       '--to',
@@ -321,6 +327,8 @@ function exportBundle(projectRoot, id, mode = 'standalone') {
       id,
       '--mode',
       normalizedMode,
+      '--include-models',
+      '--include-pricing',
     ]);
     if (existsSync(bundlePath)) {
       const buf = readFileSync(bundlePath);
@@ -354,7 +362,15 @@ function exportBundle(projectRoot, id, mode = 'standalone') {
 function exportGist(projectRoot, id) {
   const stdout = runWorcaTemplates(
     projectRoot,
-    ['export', '--to', 'gist', '--templates', id],
+    [
+      'export',
+      '--to',
+      'gist',
+      '--templates',
+      id,
+      '--include-models',
+      '--include-pricing',
+    ],
     { timeout: 30000 },
   );
   // The CLI prints the gist URL (from `gh gist create`) as its final stdout line.

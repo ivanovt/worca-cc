@@ -1116,6 +1116,23 @@ describe('templates-routes — (tier, id) contract', () => {
       );
     });
 
+    // Without these flags a template that references a custom worca.models
+    // alias (e.g. "glm-ds") produces a bundle that's broken at import time —
+    // the alias isn't shipped, so the importer can't resolve it. The CLI
+    // already filters to referenced aliases, so unconditional opt-in is safe.
+    it('passes --include-models and --include-pricing so custom aliases ship', async () => {
+      mockExecSync.mockReturnValue('https://gist.github.com/octocat/abc123\n');
+      const app = await createTestApp(projectRoot);
+      await request(
+        app,
+        'POST',
+        '/api/projects/test/templates/builtin/feature/bundle?format=gist',
+      );
+      const argv = mockExecSync.mock.calls[0][1];
+      expect(argv).toContain('--include-models');
+      expect(argv).toContain('--include-pricing');
+    });
+
     it('rejects a non-gist format with 400 and does not shell out', async () => {
       const app = await createTestApp(projectRoot);
       const { status, body } = await request(
@@ -1198,6 +1215,22 @@ describe('templates-routes — (tier, id) contract', () => {
       );
       const args = templateArgs(mockExecSync.mock.calls[0]);
       expect(args[args.indexOf('--mode') + 1]).toBe('standalone');
+    });
+
+    // Same rationale as the gist case: a template referencing a custom
+    // worca.models alias is broken on import without these. The CLI filters
+    // to referenced aliases, so opting in here is always safe.
+    it('passes --include-models and --include-pricing for JSON/ZIP downloads', async () => {
+      const app = await createTestApp(projectRoot);
+      seedBuiltin('feature');
+      await request(
+        app,
+        'GET',
+        '/api/projects/test/templates/builtin/feature/bundle',
+      );
+      const args = templateArgs(mockExecSync.mock.calls[0]);
+      expect(args).toContain('--include-models');
+      expect(args).toContain('--include-pricing');
     });
   });
 });
