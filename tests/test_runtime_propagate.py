@@ -55,6 +55,56 @@ def test_propagate_models_no_clobber_existing_keys(tmp_path):
     assert merged["worca"]["agents"] == {"planner": {"model": "alt"}}
 
 
+def test_propagate_split_storage_id_in_base_env_in_local(tmp_path):
+    """The split-storage case: id lives in parent's settings.json, env lives
+    in parent's settings.local.json, and the worktree's settings.json (from a
+    stale HEAD) lacks the alias entirely. Propagation must reconstruct the
+    full {id, env} pair so normalize_model_entry() doesn't reject it.
+
+    Regression: pre-fix the worktree got `{env: ...}` with no id and the
+    pipeline crashed at the first resolve_model() call with
+    "model entry must be a string ID or {id, env} object".
+    """
+    src = tmp_path / "src"
+    src.mkdir()
+    (src / "settings.json").write_text(
+        json.dumps({"worca": {"models": {"glm-ds": {"id": "opus"}}}})
+    )
+    (src / "settings.local.json").write_text(
+        json.dumps(
+            {"worca": {"models": {"glm-ds": {"env": {"ANTHROPIC_BASE_URL": "https://api.x"}}}}}
+        )
+    )
+
+    dst = tmp_path / "dst"
+    dst.mkdir()
+    # Worktree's settings.json from stale HEAD — no glm-ds at all.
+    (dst / "settings.json").write_text(
+        json.dumps({"worca": {"models": {"opus": "claude-opus-4-6"}}})
+    )
+
+    propagate_runtime_local_keys(str(src), str(dst))
+    merged = json.loads((dst / "settings.json").read_text())
+    glm = merged["worca"]["models"]["glm-ds"]
+    assert glm["id"] == "opus"
+    assert glm["env"] == {"ANTHROPIC_BASE_URL": "https://api.x"}
+    # Pre-existing worktree entries from HEAD survive.
+    assert merged["worca"]["models"]["opus"] == "claude-opus-4-6"
+
+
+def test_propagate_no_parent_files(tmp_path):
+    """When neither parent file exists, propagation is a no-op (no crash)."""
+    src = tmp_path / "src"
+    src.mkdir()
+    dst = tmp_path / "dst"
+    dst.mkdir()
+    (dst / "settings.json").write_text(json.dumps({"worca": {"models": {"a": "x"}}}))
+
+    propagate_runtime_local_keys(str(src), str(dst))
+    merged = json.loads((dst / "settings.json").read_text())
+    assert merged == {"worca": {"models": {"a": "x"}}}
+
+
 def test_propagate_webhooks_still_works(tmp_path):
     """Adding models to the allowlist doesn't break existing webhook propagation."""
     src = tmp_path / "src"

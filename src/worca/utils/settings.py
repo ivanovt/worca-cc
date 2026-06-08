@@ -36,6 +36,40 @@ def deep_merge(base: dict, override: dict) -> dict:
     return result
 
 
+# Cross-tier merge atomic paths. Each tuple addresses a dict whose direct
+# children should be replaced wholesale (not deep-merged) when an upper tier
+# (project) overrides a lower tier (user-global). Within a single tier the
+# normal deep_merge still applies (so settings.json `{id}` + settings.local.json
+# `{env}` still compose into one entry per tier).
+_ATOMIC_LEAF_PATHS = (
+    ("worca", "models"),
+    ("worca", "pricing", "models"),
+)
+
+
+def _replace_atomic_subkeys(merged: dict, override: dict, path: tuple) -> None:
+    """Mutate `merged` so each key at `path` defined in `override` replaces
+    the merged entry wholesale (instead of the recursive deep-merge result).
+
+    Walks `path` in both `merged` and `override`; for each alias key the
+    override defines at that path, sets `merged[...][alias] = override[...][alias]`
+    verbatim. Silently no-ops if either input doesn't reach the full path.
+    """
+    node_merged = merged
+    node_override = override
+    for segment in path:
+        if not isinstance(node_merged, dict) or segment not in node_merged:
+            return
+        if not isinstance(node_override, dict) or segment not in node_override:
+            return
+        node_merged = node_merged[segment]
+        node_override = node_override[segment]
+    if not isinstance(node_merged, dict) or not isinstance(node_override, dict):
+        return
+    for key, value in node_override.items():
+        node_merged[key] = value
+
+
 def _local_path_for(settings_path: str) -> str:
     """Derive the .local.json sibling path from a base settings path."""
     root, ext = os.path.splitext(settings_path)
@@ -158,4 +192,11 @@ def load_settings_with_global_fallback(
     if not global_blob:
         return project
 
-    return deep_merge(global_blob, project)
+    merged = deep_merge(global_blob, project)
+    # Whole-entry replace for model aliases and per-model pricing: a project-tier
+    # entry shadows the user-global entry in entirety (rather than per-field
+    # deep-merging). Matches the Models page UX where each alias resolves from
+    # exactly one tier; mirrors how Pipeline Templates shadow across tiers.
+    for path in _ATOMIC_LEAF_PATHS:
+        _replace_atomic_subkeys(merged, project, path)
+    return merged

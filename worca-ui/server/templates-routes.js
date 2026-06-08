@@ -404,6 +404,7 @@ function _baseImportArgs(
   dstTier,
   resolutionsPath,
   onModelConflict,
+  bundleLabel,
 ) {
   const args = [
     'import',
@@ -419,7 +420,29 @@ function _baseImportArgs(
   if (onModelConflict) {
     args.push('--on-model-conflict', onModelConflict);
   }
+  if (bundleLabel) {
+    // Pass the user-visible filename so `_imported_from` is stamped with
+    // (e.g.) `feature-glm-ds-bundle.zip` instead of the server-side temp
+    // name `bundle.zip`. Optional — falls back to source basename in CLI.
+    args.push('--bundle-label', bundleLabel);
+  }
   return args;
+}
+
+// Bundle filename is forwarded by the UI as an HTTP header so the
+// imported-from attribution badge shows the user-facing name rather than
+// the server-side temp `bundle.zip`. Sanitize lightly: reject paths /
+// slashes / oversized values to keep argv hygiene.
+const _BUNDLE_LABEL_HEADER = 'x-bundle-filename';
+function _readBundleLabel(req) {
+  const raw = req.headers[_BUNDLE_LABEL_HEADER];
+  if (typeof raw !== 'string' || raw.length === 0 || raw.length > 256) {
+    return null;
+  }
+  if (raw.includes('/') || raw.includes('\\') || raw.includes('\0')) {
+    return null;
+  }
+  return raw;
 }
 
 function handleZipImport(req, res) {
@@ -435,6 +458,7 @@ function handleZipImport(req, res) {
   const zipBuffer = req.body;
   const resolutions = _parseResolutionsHeader(req);
   const onModelConflict = req.query.on_model_conflict || null;
+  const bundleLabel = _readBundleLabel(req);
   const dir = mkdtempSync(join(tmpdir(), 'worca-import-'));
   const tmpPath = join(dir, 'bundle.zip');
   try {
@@ -442,7 +466,13 @@ function handleZipImport(req, res) {
     const resolutionsPath = _writeResolutionsFile(dir, resolutions);
     const stdout = runWorcaTemplates(
       req.project.projectRoot,
-      _baseImportArgs(tmpPath, dstTier, resolutionsPath, onModelConflict),
+      _baseImportArgs(
+        tmpPath,
+        dstTier,
+        resolutionsPath,
+        onModelConflict,
+        bundleLabel,
+      ),
       { timeout: 60000 },
     );
     const imported = [];
@@ -538,10 +568,12 @@ function handleJsonImport(req, res) {
     });
   }
   if (rejectBuiltinWrite(res, dstTier, 'import to')) return;
+  const bundleLabel = _readBundleLabel(req);
   try {
     const result = importBundle(req.project.projectRoot, bundle, dstTier, {
       resolutions,
       onModelConflict,
+      bundleLabel,
     });
     res.json({ ok: true, ...result });
   } catch (err) {
@@ -555,7 +587,7 @@ function importBundle(projectRoot, bundle, tier, opts = {}) {
   if (!bundle || !Array.isArray(bundle.templates)) {
     throw new Error('Bundle must contain a "templates" array');
   }
-  const { resolutions, onModelConflict } = opts;
+  const { resolutions, onModelConflict, bundleLabel } = opts;
   const dir = mkdtempSync(join(tmpdir(), 'worca-import-'));
   const bundlePath = join(dir, 'bundle.json');
   try {
@@ -563,7 +595,13 @@ function importBundle(projectRoot, bundle, tier, opts = {}) {
     const resolutionsPath = _writeResolutionsFile(dir, resolutions);
     runWorcaTemplates(
       projectRoot,
-      _baseImportArgs(bundlePath, tier, resolutionsPath, onModelConflict),
+      _baseImportArgs(
+        bundlePath,
+        tier,
+        resolutionsPath,
+        onModelConflict,
+        bundleLabel,
+      ),
       { timeout: 60000 },
     );
     const targetDir = dirForTier(projectRoot, tier);

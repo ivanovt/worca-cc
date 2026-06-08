@@ -30,26 +30,58 @@ def deep_merge(base: dict, override: dict) -> dict:
 
 def propagate_runtime_local_keys(src_dir: str, dst_dir: str) -> None:
     """Merge a narrow allowlist of worca-namespace keys from the parent's
-    settings.local.json into the worktree's settings.json.
+    settings files into the worktree's settings.json.
+
+    Reads from BOTH parent files for the allowlist keys, in order:
+      1. parent's settings.json       (working-tree view, beats HEAD-derived worktree)
+      2. parent's settings.local.json (env + secrets)
+    Within the overlay, settings.local.json deep-merges over settings.json so a
+    split-storage model entry (id in base, env in local) recomposes into a
+    complete {id, env} pair before it hits the worktree.
+
+    Why both files: with `.claude/settings.json` git-tracked, `git worktree add`
+    materialises HEAD's version — which is stale relative to whatever the user
+    just imported / edited in the working tree. Reading only settings.local.json
+    leaks env without id when HEAD doesn't carry the new alias yet, producing a
+    malformed `{env: ...}` entry that fails normalize_model_entry().
 
     No-op when:
-    - The parent has no settings.local.json.
-    - The local file has no worca-namespace runtime keys.
+    - Neither parent file exists.
+    - Neither file has worca-namespace runtime keys.
     - The worktree has no settings.json to augment.
     """
+    src_settings = os.path.join(src_dir, "settings.json")
     src_local = os.path.join(src_dir, "settings.local.json")
     dst_settings = os.path.join(dst_dir, "settings.json")
-    if not os.path.exists(src_local) or not os.path.exists(dst_settings):
+    if not os.path.exists(dst_settings):
         return
 
-    try:
-        with open(src_local, encoding="utf-8") as f:
-            local = json.load(f)
-    except (OSError, json.JSONDecodeError):
-        return
+    def _load_worca(path: str) -> dict:
+        if not os.path.exists(path):
+            return {}
+        try:
+            with open(path, encoding="utf-8") as f:
+                data = json.load(f)
+        except (OSError, json.JSONDecodeError):
+            return {}
+        worca = data.get("worca") if isinstance(data, dict) else None
+        return worca if isinstance(worca, dict) else {}
 
-    local_worca = (local.get("worca") if isinstance(local, dict) else None) or {}
-    overlay = {k: local_worca[k] for k in PROPAGATED_LOCAL_WORCA_KEYS if k in local_worca}
+    parent_base_worca = _load_worca(src_settings)
+    parent_local_worca = _load_worca(src_local)
+
+    overlay: dict = {}
+    for key in PROPAGATED_LOCAL_WORCA_KEYS:
+        base_v = parent_base_worca.get(key)
+        local_v = parent_local_worca.get(key)
+        if base_v is None and local_v is None:
+            continue
+        if isinstance(base_v, dict) and isinstance(local_v, dict):
+            overlay[key] = deep_merge(base_v, local_v)
+        elif local_v is not None:
+            overlay[key] = local_v
+        else:
+            overlay[key] = base_v
     if not overlay:
         return
 

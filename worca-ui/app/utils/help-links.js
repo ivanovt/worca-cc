@@ -64,6 +64,10 @@ export const HELP_LINKS = Object.freeze({
     slug: 'configuration/agents-and-models',
     title: 'Agents & models',
   },
+  models: {
+    slug: 'configuration/agents-and-models',
+    title: 'Models',
+  },
   'stages-config': {
     slug: 'configuration/stages',
     title: 'Stage configuration',

@@ -882,6 +882,18 @@ PR #308: template bundle layout v3, two-phase import with collision dialog.
 - **Editor cache invalidation on import.** Imported template ids are evicted from the worca-ui editor cache so the next view picks up the imported config without a manual refresh. No user action required.
 - **No settings.json migration required.** `worca init --upgrade` refreshes the runtime copy but does not rewrite settings for this release. Settings and runtime layout are unchanged.
 
+### 0.52.0 → 0.53.0
+
+Top-level Models page; bundle imports scope-honest; cross-tier model resolution changes from deep-merge to whole-entry replace.
+
+- **New top-level "Models" page in worca-ui.** Mirrors Pipeline Templates: three stacked collapsible sections (Built-in / User / Project) with the same card pattern. Each model alias is a card; click to open the editor (alias + id + env table + pricing accordion + applied-by). Project-scope-only — hidden in global mode, same rule as Pipeline Templates.
+- **Settings → Models tab removed.** Per-alias management moved entirely to the new Models page. No redirect — direct deep links to the old tab navigate to the Settings root instead.
+- **Settings → Pricing renamed to "Costs & Budgets".** Per-model pricing rows are gone (each model now carries its own Pricing accordion in the editor). The tab keeps Web Search, Web Fetch, currency, and budget. A notice at the top points at the new Models page.
+- **Bundle import is now scope-honest for models and pricing.** Previously `worca templates import --scope project` *always* wrote bundle `worca.models` and `worca.pricing.models` to `~/.worca/settings.json` regardless of `--scope`. Now templates, models, and pricing all land in the same chosen tier (the project's `.claude/settings.json` for `--scope project`, `~/.worca/settings.json` for `--scope user`). The UI bundle-import dialog's tier picker now applies to the whole bundle. Existing scripts that relied on the old "always user-global" behavior for models need to switch to `--scope user` explicitly if that's still what they want.
+- **Cross-tier resolution for `worca.models.*` and `worca.pricing.models.*` is now whole-entry replace.** Previously the layered settings stack (user-global → project → project-local) deep-merged each alias entry field-by-field, so a project entry `{id: "X"}` would silently inherit env from a user-global entry `{id: "Y", env: {...}}`. Now an alias resolves from exactly one tier — Project shadows User shadows Built-in, in entirety. Within a single tier, the `settings.json` / `settings.local.json` id/env split still composes (that's a storage-format detail, not a tier). Any setup that relied on cross-tier composition needs to copy the full entry into the tier that should own it. Other `worca.*` paths continue to deep-merge as before.
+- **Imported models stamp `_imported_from` attribution metadata.** `worca templates import` writes `_imported_from: "<bundle-name>"` on each imported entry's `worca.models.<alias>` block. The Models page surfaces this as an "Imported · X" badge on the card and a banner in the editor. The badge is dropped on the first UI save (ownership transfer).
+- **No `worca init --upgrade` migration required.** Settings file shape is unchanged; the new resolution semantics are read-side only and the new UI page is purely additive in worca-ui. Old settings continue to work; the only observable behavior change is the cross-tier replace (above).
+
 ## Getting help
 
 - Issues: https://github.com/SinishaDjukic/worca-cc/issues

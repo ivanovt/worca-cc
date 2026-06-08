@@ -10085,3 +10085,335 @@ body.help-mode-active sl-tab {
   background: rgba(34, 197, 94, 0.2);
   color: #86efac;
 }
+
+/* ────────────────────────────────────────────────────────────────────────
+ * Models page — mirrors Pipeline Templates structure.
+ *
+ * The list view inherits .pipelines-view / .pipelines-content /
+ * .pipelines-tier-section / .pipelines-grid from the Pipelines page so
+ * spacing, section collapsibles, and grid behavior match exactly. Only
+ * the bits unique to model cards / model editor live here.
+ * ────────────────────────────────────────────────────────────────────── */
+
+/* Model card on the Models page. Distinct from .model-card (which the
+   legacy Settings → Models tab used for in-place edit rows). */
+.model-tier-card {
+  cursor: pointer;
+  transition: border-color 120ms ease, box-shadow 120ms ease;
+}
+.model-tier-card:hover {
+  border-color: var(--accent);
+  box-shadow: 0 4px 12px rgba(0, 0, 0, 0.08);
+}
+.model-tier-card .run-card-actions {
+  margin-top: auto;
+  padding-top: 0.5rem;
+}
+.model-card-alt-badge {
+  margin-left: auto;
+}
+.model-card-meta {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0.5rem;
+}
+
+/* ── Model editor ── */
+.model-editor .editor-content {
+  display: flex;
+  flex-direction: column;
+  gap: 1.25rem;
+  padding-top: 1rem;
+}
+.model-editor-section {
+  background: var(--bg-secondary);
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  padding: 1rem 1.25rem;
+}
+.model-editor-section-head {
+  display: flex;
+  justify-content: space-between;
+  align-items: flex-start;
+  gap: 1rem;
+  margin-bottom: 0.5rem;
+}
+.model-editor-section-head h3 {
+  margin: 0;
+}
+.model-editor-resolves-banner {
+  margin-bottom: 0.5rem;
+}
+.model-editor-resolves-banner code {
+  margin-left: 0.4rem;
+  margin-right: 0.4rem;
+  background: var(--bg-tertiary);
+  padding: 0.1rem 0.4rem;
+  border-radius: 3px;
+}
+.model-editor-secret-banner {
+  margin-bottom: 0.5rem;
+}
+/* Self-contained env-vars table — deliberately NOT sharing .pricing-table
+   styles. Pricing rows are narrow numeric cells; env rows are wide
+   key/value text fields that need to fill the remaining horizontal
+   space evenly. Sharing the class would pull in the 104px max-width
+   meant for the rate cells. */
+.model-editor-env-table {
+  margin-top: 0.5rem;
+  width: 100%;
+  /* table-layout: fixed makes the column widths below actually apply
+     instead of getting collapsed by sl-input min-width. */
+  table-layout: fixed;
+  border-collapse: collapse;
+  font-size: 13px;
+}
+.model-editor-env-table th,
+.model-editor-env-table td {
+  vertical-align: middle;
+  padding: 0.3rem 0.5rem;
+  box-sizing: border-box;
+}
+.model-editor-env-table th {
+  text-align: left;
+  font-weight: 600;
+  color: var(--muted);
+  font-size: 11px;
+  text-transform: uppercase;
+  letter-spacing: 0.04em;
+}
+/* Key + value split the row evenly between them; actions is a fixed
+   icon-button column on the right. With table-layout: fixed every
+   column needs an explicit width — otherwise the un-sized column
+   takes 1/N of the remaining space (so 1/3 of the row, not 2.5rem). */
+.model-editor-env-table th:nth-child(1),
+.model-editor-env-table td:nth-child(1),
+.model-editor-env-table th:nth-child(2),
+.model-editor-env-table td:nth-child(2) {
+  width: calc((100% - 3.5rem) / 2);
+}
+.model-editor-env-table th:nth-child(3),
+.model-editor-env-table td:nth-child(3) {
+  width: 3.5rem;
+}
+.model-editor-env-actions {
+  text-align: right;
+}
+.model-editor-env-table .model-editor-env-key,
+.model-editor-env-table .model-editor-env-value {
+  width: 100%;
+  max-width: none;
+  display: block;
+}
+.model-editor-env-row--invalid sl-input::part(base) {
+  border-color: var(--status-failed, #ef4444);
+}
+/* Placeholder-valued env rows (one of SECRET_PLACEHOLDERS): outline the VALUE
+   input in red as a visual hint to swap in the real secret. Visual only — save
+   stays enabled, the run-time decides whether the placeholder is acceptable. */
+.model-editor-env-row--placeholder .model-editor-env-value::part(base) {
+  border-color: var(--status-failed, #ef4444);
+  border-width: 2px;
+  box-shadow: 0 0 0 1px rgba(239, 68, 68, 0.15);
+}
+.model-editor-env-error {
+  display: block;
+  color: var(--status-failed, #ef4444);
+  font-size: 0.75rem;
+  margin-top: 0.25rem;
+}
+.model-editor-env-warn {
+  display: block;
+  color: var(--status-failed, #ef4444);
+  font-size: 0.75rem;
+  margin-top: 0.25rem;
+  font-weight: 500;
+}
+/* width handled by the .model-editor-env-table td:nth-child(3) rule
+   above (table-layout: fixed needs the column-position selector, not
+   the cell class, to win deterministically) — keep this rule for the
+   text-align only. */
+.model-editor-env-empty {
+  margin: 0.5rem 0 0;
+}
+.model-editor-pricing-accordion::part(base) {
+  background: transparent;
+  border: none;
+  padding: 0;
+}
+.model-editor-pricing-accordion::part(header) {
+  padding: 0.25rem 0;
+}
+.model-editor-pricing-summary {
+  display: flex;
+  align-items: center;
+  gap: 0.75rem;
+}
+/* Right-aligned action row under the pricing table. Only renders when at
+   least one field is set — "Clear pricing" wipes the entire entry. */
+.model-editor-pricing-actions {
+  display: flex;
+  justify-content: flex-end;
+  margin-top: 0.75rem;
+}
+.model-editor-applied-list {
+  margin: 0.5rem 0 0;
+  padding-left: 1.25rem;
+}
+.model-editor-applied-list li {
+  margin-bottom: 0.25rem;
+}
+
+/* Grouped Applied-by layout — one row per template, tier badge + linked
+   template name on the first line, agent chips wrapping below. */
+.model-editor-applied-count {
+  flex-shrink: 0;
+}
+.model-editor-applied-groups {
+  margin-top: 0.5rem;
+  display: flex;
+  flex-direction: column;
+  gap: 0.5rem;
+}
+.model-editor-applied-row {
+  padding: 0.5rem 0.75rem;
+  background: var(--bg-tertiary, var(--bg));
+  border-radius: 6px;
+  border: 1px solid var(--border);
+}
+.model-editor-applied-row-head {
+  display: flex;
+  align-items: center;
+  gap: 0.5rem;
+  margin-bottom: 0.25rem;
+}
+.model-editor-applied-link {
+  color: var(--accent);
+  text-decoration: none;
+  font-weight: 600;
+  font-family: var(--sl-font-mono);
+  font-size: 0.875rem;
+}
+.model-editor-applied-link:hover {
+  text-decoration: underline;
+}
+.model-editor-applied-agents {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0.35rem;
+  margin-top: 0.35rem;
+  padding-left: 0.25rem;
+}
+.model-editor-applied-agent {
+  display: inline-block;
+  padding: 0.1rem 0.45rem;
+  background: var(--bg-secondary, var(--bg));
+  border: 1px solid var(--border);
+  border-radius: 3px;
+  font-size: 0.75rem;
+  color: var(--muted);
+}
+.model-editor-alias-input {
+  min-width: 12rem;
+}
+.model-editor-id-input {
+  max-width: 30rem;
+}
+.editor-readonly-badge {
+  margin-left: 0.25rem;
+}
+
+/* Tier picker pill for new model entries — replaces the read-only Storage
+   badge while isNew=true so the user can flip the destination tier before
+   saving. Styled as a field-pill so it sits next to the other subheader
+   pills without breaking the row. */
+.editor-storage-pill {
+  background: var(--bg-tertiary);
+  border-radius: 999px;
+  padding: 0 0.5rem;
+  display: inline-flex;
+  align-items: center;
+  gap: 0.35rem;
+}
+.model-editor-tier-select {
+  min-width: 7rem;
+}
+
+/* Imported-from-bundle attribution. Dropped on first UI save (the server
+   doesn't preserve _imported_from when writeModelEntry runs). */
+.model-editor-imported-banner {
+  margin-bottom: 0.5rem;
+}
+.model-editor-imported-banner code {
+  margin-left: 0.25rem;
+  background: var(--bg-tertiary);
+  padding: 0.1rem 0.4rem;
+  border-radius: 3px;
+}
+/* Imported-from badge — let Shoelace's neutral variant draw both bg and
+   text. The previous bg-tertiary override gave the badge a low-contrast
+   gray-on-gray look (text used the default light neutral text color on
+   a darker gray background and became unreadable). */
+
+/* Model duplicate dialog (tier picker + alias input) */
+.model-duplicate-form {
+  display: flex;
+  flex-direction: column;
+  gap: 0.75rem;
+}
+
+/* Pipeline editor: per-agent model dropdown gains a tier badge inline
+   in each option, plus a small "open in Models" jump link. */
+.agent-model-select-row {
+  display: flex;
+  align-items: center;
+  gap: 0.4rem;
+}
+.agent-model-select-row sl-select {
+  flex: 1;
+  min-width: 0;
+}
+.agent-model-open-link {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 1.5rem;
+  height: 1.5rem;
+  border-radius: 4px;
+  color: var(--muted);
+  text-decoration: none;
+  font-size: 1rem;
+  font-weight: 600;
+  flex-shrink: 0;
+}
+.agent-model-open-link:hover {
+  background: var(--bg-tertiary);
+  color: var(--accent);
+}
+
+/* Costs & Budgets tab → notice linking to the Models page for per-model
+   pricing edits. */
+.costs-budgets-models-link {
+  margin-bottom: 1rem;
+}
+.costs-budgets-models-link a {
+  color: var(--accent);
+  text-decoration: underline;
+}
+
+/* Import dialog — bundle-contents summary block (what lands where). */
+.dialog-bundle-summary {
+  background: var(--bg-tertiary);
+  border-radius: 6px;
+  padding: 0.5rem 1rem;
+  margin-bottom: 0.5rem;
+  list-style: none;
+}
+.dialog-bundle-summary li {
+  margin: 0.15rem 0;
+}
+.dialog-bundle-summary em {
+  font-style: normal;
+  font-weight: 600;
+  color: var(--accent);
+}

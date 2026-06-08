@@ -29,6 +29,7 @@ import { getDefaultBranch } from './git-helpers.js';
 import { extractAndStripGlobalKeys } from './global-keys.js';
 import { LaunchLock } from './launch-lock.js';
 import { createModelEnvRouter } from './model-env-routes.js';
+import { createModelsRouter } from './models-routes.js';
 import { globalSettingsPath, preferencesPath } from './paths.js';
 import { readPreferences } from './preferences.js';
 import { ProcessManager } from './process-manager.js';
@@ -462,8 +463,11 @@ export function createProjectScopedRoutes({
     res.json({ ok: true, files });
   });
 
-  // --- Model env endpoints (writes wholesale to settings.local.json) ---
+  // --- Model env endpoints (legacy, writes wholesale to settings.local.json) ---
   router.use('/settings/model-env', createModelEnvRouter());
+
+  // --- Models CRUD (tier-aware: builtin/user/project + co-located pricing) ---
+  router.use('/models', createModelsRouter());
 
   // --- Template CRUD endpoints (templates-routes.js) ---
   router.use(createTemplatesRoutes());

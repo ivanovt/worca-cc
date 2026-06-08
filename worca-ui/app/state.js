@@ -133,7 +133,13 @@ export function createStore(initial = {}) {
         // editor's Set Default ↔ Unset Default toggle would not
         // re-render after a successful PUT because the no-op
         // detector would treat the patch as unchanged.
-        next.defaultTemplate === state.defaultTemplate
+        next.defaultTemplate === state.defaultTemplate &&
+        // Models page list (mirrors the templates list checks above —
+        // without these entries the no-op detector swallows the patch
+        // and the Models page stays stuck on its loading spinner forever).
+        next.models === state.models &&
+        next.modelsLoaded === state.modelsLoaded &&
+        next.modelsError === state.modelsError
       )
         return;
       state = next;
