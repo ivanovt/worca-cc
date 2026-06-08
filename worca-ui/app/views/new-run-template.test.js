@@ -9,6 +9,9 @@ vi.mock('lit-html', () => ({ html: () => null, nothing: null }));
 vi.mock('lit-html/directives/unsafe-html.js', () => ({
   unsafeHTML: () => null,
 }));
+vi.mock('lit-html/directives/ref.js', () => ({
+  ref: () => null,
+}));
 vi.mock('../utils/icons.js', () => ({
   iconSvg: () => '',
   FileText: 'FileText',
@@ -45,6 +48,7 @@ describe('new-run — template module state and submit', () => {
 
     vi.resetModules();
     vi.doMock('lit-html', () => ({ html: () => null, nothing: null }));
+    vi.doMock('lit-html/directives/ref.js', () => ({ ref: () => null }));
     vi.doMock('lit-html/directives/unsafe-html.js', () => ({
       unsafeHTML: () => null,
     }));
@@ -147,6 +151,7 @@ describe('new-run — fetchTemplates via newRunView', () => {
 
     vi.resetModules();
     vi.doMock('lit-html', () => ({ html: () => null, nothing: null }));
+    vi.doMock('lit-html/directives/ref.js', () => ({ ref: () => null }));
     vi.doMock('lit-html/directives/unsafe-html.js', () => ({
       unsafeHTML: () => null,
     }));
@@ -245,6 +250,7 @@ describe('new-run — defaultOptionLabel reflects worca.default_template', () =>
   beforeEach(async () => {
     vi.resetModules();
     vi.doMock('lit-html', () => ({ html: () => null, nothing: null }));
+    vi.doMock('lit-html/directives/ref.js', () => ({ ref: () => null }));
     vi.doMock('lit-html/directives/unsafe-html.js', () => ({
       unsafeHTML: () => null,
     }));
@@ -303,6 +309,7 @@ describe('new-run — preselect default template when worca.default_template is 
 
     vi.resetModules();
     vi.doMock('lit-html', () => ({ html: () => null, nothing: null }));
+    vi.doMock('lit-html/directives/ref.js', () => ({ ref: () => null }));
     vi.doMock('lit-html/directives/unsafe-html.js', () => ({
       unsafeHTML: () => null,
     }));

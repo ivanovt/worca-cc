@@ -18,6 +18,20 @@ def _write_template(directory: Path, data: dict):
     (directory / "template.json").write_text(json.dumps(data))
 
 
+def _model_id(entry):
+    """Pull the model id out of a worca.models entry, regardless of whether
+    the entry is stored as the bare-string form (``"claude-opus-4-6"``) or
+    the object form (``{"id": "claude-opus-4-6", ...}``). Lets assertions
+    written for the bare form keep working after bundle-import learned to
+    stamp ``_imported_from`` on imported entries.
+    """
+    if isinstance(entry, str):
+        return entry
+    if isinstance(entry, dict):
+        return entry.get("id")
+    return None
+
+
 def _minimal(
     id: str,
     name: str = None,
@@ -1369,7 +1383,8 @@ class TestTemplatesImport:
         )
         settings = json.loads(user_settings_path.read_text())
         worca_settings = settings.get("worca", {})
-        assert worca_settings.get("models", {}).get("opus") == {"id": "claude-opus-4-6"}, (
+        # Imported entry carries `_imported_from`; assert against the id.
+        assert _model_id(worca_settings.get("models", {}).get("opus")) == "claude-opus-4-6", (
             f"bundle model 'opus' must land in worca.models; got {worca_settings.get('models')}"
         )
         assert worca_settings.get("pricing") == {"currency": "USD"}
@@ -1434,8 +1449,15 @@ class TestTemplatesImport:
             main(["templates", "import", "--from", str(bundle_file), "--non-interactive"])
 
         capsys.readouterr()
-        written = json.loads(settings_path.read_text())
-        proxy_env = written.get("worca", {}).get("models", {}).get("proxy", {}).get("env", {})
+        # Per-model `env` now lands in the `.local.json` sibling (it's
+        # secret-shaped); `settings.json` carries only the public fields
+        # (id, pricing, _imported_from). The reserved-key stripping runs
+        # before the split, so the assertion targets the local file.
+        local_path = settings_path.with_suffix(".local.json")
+        local = json.loads(local_path.read_text())
+        proxy_env = (
+            local.get("worca", {}).get("models", {}).get("proxy", {}).get("env", {})
+        )
         assert "ANTHROPIC_BASE_URL" in proxy_env
         assert "WORCA_AGENT" not in proxy_env
         assert "PATH" not in proxy_env
@@ -1558,8 +1580,11 @@ class TestTemplatesImport:
             main(["templates", "import", "--from", str(bundle_file), "--non-interactive"])
 
         written = json.loads(settings_path.read_text())
-        assert written["worca"]["models"]["opus"] == "claude-opus-4-6"
-        assert written["worca"]["models"]["sonnet"] == "claude-sonnet-4-6"
+        # `opus` is imported (carries _imported_from); `sonnet` was already
+        # local (untouched). Compare by id so we tolerate the provenance
+        # stamp transparently.
+        assert _model_id(written["worca"]["models"]["opus"]) == "claude-opus-4-6"
+        assert _model_id(written["worca"]["models"]["sonnet"]) == "claude-sonnet-4-6"
         assert written["worca"]["pricing"]["currency"] == "USD"
 
 
@@ -1810,9 +1835,10 @@ class TestImportCrossDeviceSafety:
             (project_dir / "imported-tmpl" / "template.json").read_text()
         )
         assert landed["config"]["agents"]["planner"]["model"] == "opus"
-        # Settings.json picked up the new model alias
+        # Settings.json picked up the new model alias (imported entries
+        # carry an `_imported_from` provenance stamp — compare by id).
         post = json.loads(settings_path.read_text())
-        assert post["worca"]["models"]["opus"] == "claude-opus-4-6"
+        assert _model_id(post["worca"]["models"]["opus"]) == "claude-opus-4-6"
         # And no staged-import or .bak-* leftovers next to settings.json
         leftovers = [
             p for p in settings_dir.iterdir()
@@ -1978,9 +2004,12 @@ class TestImportDeepMerge:
 
         merged = json.loads(settings_path.read_text())
         models = merged["worca"]["models"]
+        # `haiku` was pre-existing (untouched). `opus` and `sonnet` are
+        # bundle-imported and carry the `_imported_from` provenance stamp,
+        # so compare by id.
         assert models["haiku"] == "claude-haiku-4-5"
-        assert models["opus"] == "claude-opus-4-6"
-        assert models["sonnet"] == "claude-sonnet-4-6"
+        assert _model_id(models["opus"]) == "claude-opus-4-6"
+        assert _model_id(models["sonnet"]) == "claude-sonnet-4-6"
         # Unrelated config preserved.
         assert merged["worca"]["loops"]["plan_review"]["max"] == 5
         assert merged["other_top_level"]["keep_me"] is True
@@ -2124,9 +2153,12 @@ class TestExportAliasFiltering:
         assert "opus" not in bundle["models"]
         assert "sonnet" not in bundle["models"]
 
-    def test_export_pricing_keeps_non_models_keys(self, capsys, tmp_path):
-        """server_tools, currency, last_updated are project-wide context —
-        they must survive even when no templates reference any model."""
+    def test_export_pricing_strips_server_tools_keeps_currency(self, capsys, tmp_path):
+        """server_tools (web_fetch / web_search rates) is project-wide operator
+        config, NOT bundle cargo — it's stripped on export. currency and
+        last_updated describe the per-model rates that ARE shipped, so they
+        survive.
+        """
         builtin_dir, project_dir, user_dir = self._setup(tmp_path)
         _write_template(project_dir / "no-models", _minimal("no-models", tier="project"))
         settings = {
@@ -2150,9 +2182,10 @@ class TestExportAliasFiltering:
         bundle = json.loads(out_file.read_text())
         # models filtered to empty (no template references anything)...
         assert bundle["pricing"]["models"] == {}
-        # ...but the rest of the pricing context is preserved.
+        # ...server_tools dropped wholesale...
+        assert "server_tools" not in bundle["pricing"]
+        # ...but currency / last_updated describe the per-model rate column, so they ride along.
         assert bundle["pricing"]["currency"] == "USD"
-        assert bundle["pricing"]["server_tools"]["web_search_per_request"] == 0.01
         assert bundle["pricing"]["last_updated"] == "2026-04-06"
 
     def test_export_no_model_refs_drops_models_block(self, capsys, tmp_path):
@@ -2281,7 +2314,8 @@ class TestImportAliasCollision:
             bundle_models={"opus": "claude-opus-4-6"},
         )
         # Identical value: no prompt, no warning, value preserved.
-        assert written["worca"]["models"]["opus"] == "claude-opus-4-6"
+        # Imported entry carries `_imported_from`, so compare by id.
+        assert _model_id(written["worca"]["models"]["opus"]) == "claude-opus-4-6"
         err = capsys.readouterr().err
         assert "would overwrite" not in err
 
@@ -2306,8 +2340,8 @@ class TestImportAliasCollision:
             bundle_models={"opus": "claude-opus-4-6"},
             interactive_input="o",
         )
-        # Overwrite: bundle wins.
-        assert written["worca"]["models"]["opus"] == "claude-opus-4-6"
+        # Overwrite: bundle wins. Imported entry carries `_imported_from`.
+        assert _model_id(written["worca"]["models"]["opus"]) == "claude-opus-4-6"
 
     def test_different_value_interactive_skip(self, capsys, tmp_path):
         written = self._run(
@@ -2327,7 +2361,8 @@ class TestImportAliasCollision:
             current_models={"sonnet": "claude-sonnet-4-6"},
             bundle_models={"opus": "claude-opus-4-6"},
         )
-        assert written["worca"]["models"]["opus"] == "claude-opus-4-6"
+        # `opus` was bundle-imported (stamped); `sonnet` was pre-existing.
+        assert _model_id(written["worca"]["models"]["opus"]) == "claude-opus-4-6"
         assert written["worca"]["models"]["sonnet"] == "claude-sonnet-4-6"
         err = capsys.readouterr().err
         assert "would overwrite" not in err
@@ -2868,7 +2903,8 @@ class TestImportAliasRename:
         )
         assert "glm-ds" in written["worca"]["models"]
         assert "glm-ds-01" in written["worca"]["models"]
-        assert written["worca"]["models"]["glm-ds-01"] == {"id": "claude-opus-4-7"}
+        # Imported entry carries `_imported_from`; compare by id.
+        assert _model_id(written["worca"]["models"]["glm-ds-01"]) == "claude-opus-4-7"
         # Template ref rewritten transactionally
         assert landed["config"]["agents"]["planner"]["model"] == "glm-ds-01"
 
@@ -2892,7 +2928,8 @@ class TestImportAliasRename:
             bundle_models={"glm-ds": {"id": "claude-opus-4-7"}},
             resolutions={"glm-ds": {"action": "overwrite"}},
         )
-        assert written["worca"]["models"]["glm-ds"] == {"id": "claude-opus-4-7"}
+        # Bundle-imported entry carries `_imported_from`; compare by id.
+        assert _model_id(written["worca"]["models"]["glm-ds"]) == "claude-opus-4-7"
         assert landed["config"]["agents"]["planner"]["model"] == "glm-ds"
 
     def test_resolutions_file_per_alias_skip_keeps_local(self, tmp_path):
@@ -2969,7 +3006,9 @@ class TestImportPreview:
         aliases = {c["alias"] for c in payload["collisions"]}
         assert "glm-ds" in aliases
         assert "fresh" in payload["new_aliases"]
-        assert payload["models_scope"] == "user"
+        # Default scope is now `project` (scope-honest imports — see
+        # MIGRATION.md). Used to be `user` under the old hardcoded path.
+        assert payload["models_scope"] == "project"
         # Template was not written
         assert not (project_dir / "uses-alias").exists()
 

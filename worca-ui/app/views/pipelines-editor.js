@@ -652,6 +652,34 @@ async function _loadProjectSettings(projectId) {
   } catch {
     // best-effort — leave the default empty settings in place
   }
+
+  // Fetch the per-tier model list so the dropdown can tag each option with
+  // its tier (Project / User / Built-in). Best-effort — on failure the
+  // dropdown still works, options just won't carry tier badges.
+  try {
+    const modelsUrl = projectId
+      ? `/api/projects/${projectId}/models`
+      : '/api/models';
+    const res = await fetch(modelsUrl);
+    if (!res.ok) {
+      editorState.modelTierMap = {};
+      return;
+    }
+    const data = await res.json();
+    const tierMap = {};
+    for (const m of data.models || []) {
+      // Project shadows User shadows Builtin — record the highest-priority
+      // tier per alias (mirrors how resolve_model() picks).
+      const priority = { project: 3, user: 2, builtin: 1 };
+      const current = tierMap[m.alias];
+      if (!current || priority[m.tier] > priority[current]) {
+        tierMap[m.alias] = m.tier;
+      }
+    }
+    editorState.modelTierMap = tierMap;
+  } catch {
+    editorState.modelTierMap = {};
+  }
 }
 
 export async function loadTemplate(tier, tid, projectId) {
@@ -1663,6 +1691,47 @@ function _agentsTab(formBuffer, settings, projectId, rerender) {
   const autoMode = effort.auto_mode || 'adaptive';
   const autoCap = effort.auto_cap || 'xhigh';
   const state = editorState;
+  const tierMap = editorState.modelTierMap || {};
+  // Group the per-agent Model dropdown options by tier, mirroring the
+  // "Base template" picker on the New Pipeline / template-create dialog
+  // (small group label + sl-divider + indented options). Keeps the
+  // tier-aware UX consistent across surfaces — the previous "alias · P"
+  // single-letter suffix was implicit and easy to miss; group headers
+  // are explicit and let the user see the whole inventory grouped by
+  // where each alias lives.
+  //
+  // Order: PROJECT → USER → BUILT-IN — matches the resolution priority
+  // (Project shadows User shadows Built-in), so the first group is the
+  // tier the runtime actually picks from.
+  const groupModelOptionsByTier = (aliases) => {
+    const buckets = { project: [], user: [], builtin: [], other: [] };
+    for (const m of aliases) {
+      const t = tierMap[m] || 'other';
+      (buckets[t] || buckets.other).push(m);
+    }
+    for (const key of Object.keys(buckets)) {
+      buckets[key].sort((a, b) => a.localeCompare(b));
+    }
+    return [
+      { tier: 'project', label: 'PROJECT', items: buckets.project },
+      { tier: 'user', label: 'USER', items: buckets.user },
+      { tier: 'builtin', label: 'BUILT-IN', items: buckets.builtin },
+      // Aliases referenced by the template but missing from worca.models
+      // (orphans) — surfaced last so they don't silently disappear.
+      {
+        tier: 'other',
+        label: 'OTHER (referenced but not in worca.models)',
+        items: buckets.other,
+      },
+    ].filter((g) => g.items.length > 0);
+  };
+  const tierTitle = (alias) => {
+    const t = tierMap[alias];
+    if (!t) return 'Click ↗ to open this alias in the Models page';
+    const word =
+      t === 'project' ? 'Project' : t === 'user' ? 'User' : 'Built-in';
+    return `Resolves from ${word} tier — click ↗ to open in Models page`;
+  };
 
   return html`
     <div class="settings-tab-content">
@@ -1752,27 +1821,66 @@ function _agentsTab(formBuffer, settings, projectId, rerender) {
               <div class="settings-card-body">
                 <div class="settings-field">
                   <label class="settings-label" for="agent-${name}-model">Model</label>
-                  <sl-select
-                    id="agent-${name}-model"
-                    .value=${agent.model || 'sonnet'}
-                    size="small"
-                    hoist
-                    @sl-change=${(e) => {
-                      editorState.formBuffer.agents[name].model =
-                        e.target.value;
-                      rerender();
-                    }}
-                    @sl-blur=${() => {
-                      validateConfigDebounced(
-                        projectId,
-                        editorState.formBuffer,
-                        state.viewMode,
-                        rerender,
-                      );
-                    }}
-                  >
-                    ${modelOptions.map((m) => html`<sl-option value="${m}">${m}</sl-option>`)}
-                  </sl-select>
+                  <div class="agent-model-select-row">
+                    <sl-select
+                      id="agent-${name}-model"
+                      .value=${agent.model || 'sonnet'}
+                      size="small"
+                      hoist
+                      @sl-change=${(e) => {
+                        editorState.formBuffer.agents[name].model =
+                          e.target.value;
+                        rerender();
+                      }}
+                      @sl-blur=${() => {
+                        validateConfigDebounced(
+                          projectId,
+                          editorState.formBuffer,
+                          state.viewMode,
+                          rerender,
+                        );
+                      }}
+                    >
+                      ${(() => {
+                        // Render grouped tier sections — first PROJECT,
+                        // then USER, then BUILT-IN, matching the resolver
+                        // priority. Each group: small label + divider +
+                        // indented option rows (same pattern as the
+                        // template-create "Base template" picker).
+                        const groups = groupModelOptionsByTier(modelOptions);
+                        return groups.flatMap((g, idx) => [
+                          idx > 0 ? html`<sl-divider></sl-divider>` : '',
+                          html`<small class="template-group-label">${g.label}</small>`,
+                          ...g.items.map(
+                            (m) => html`<sl-option
+                              class="template-grouped"
+                              value="${m}"
+                              title=${tierTitle(m)}
+                            >${m}</sl-option>`,
+                          ),
+                        ]);
+                      })()}
+                    </sl-select>
+                    ${(() => {
+                      const alias = agent.model || 'sonnet';
+                      const t = tierMap[alias];
+                      if (!t) return '';
+                      // Use the full project-scoped Models URL so the
+                      // page lands in the right project context (matching
+                      // the route the user is editing this template in).
+                      // Falls back to the short form when projectId is
+                      // absent (single-project mode).
+                      const href = projectId
+                        ? `#/project/${projectId}/models/${encodeURIComponent(alias)}/edit/${t}`
+                        : `#/models/${encodeURIComponent(alias)}/edit/${t}`;
+                      return html`<a
+                        class="agent-model-open-link"
+                        href=${href}
+                        title=${tierTitle(alias)}
+                        aria-label="Open ${alias} in Models page"
+                      >↗</a>`;
+                    })()}
+                  </div>
                 </div>
                 <div class="settings-field">
                   <label class="settings-label" for="agent-${name}-turns">Max turns</label>

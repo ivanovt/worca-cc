@@ -8,6 +8,9 @@ vi.mock('lit-html', () => ({
 vi.mock('lit-html/directives/unsafe-html.js', () => ({
   unsafeHTML: () => null,
 }));
+vi.mock('lit-html/directives/ref.js', () => ({
+  ref: () => null,
+}));
 vi.mock('../utils/icons.js', () => ({
   iconSvg: () => '',
   FileText: 'FileText',
@@ -46,6 +49,7 @@ describe('submitNewRun — new format validation and payload', () => {
     vi.resetModules();
     // Re-apply mocks after resetModules
     vi.doMock('lit-html', () => ({ html: () => null, nothing: null }));
+    vi.doMock('lit-html/directives/ref.js', () => ({ ref: () => null }));
     vi.doMock('lit-html/directives/unsafe-html.js', () => ({
       unsafeHTML: () => null,
     }));
@@ -246,6 +250,7 @@ describe('submitNewRun — 409 max_concurrent_exceeded handling', () => {
 
     vi.resetModules();
     vi.doMock('lit-html', () => ({ html: () => null, nothing: null }));
+    vi.doMock('lit-html/directives/ref.js', () => ({ ref: () => null }));
     vi.doMock('lit-html/directives/unsafe-html.js', () => ({
       unsafeHTML: () => null,
     }));
@@ -359,6 +364,7 @@ describe('submitNewRun — project validation and routing', () => {
 
     vi.resetModules();
     vi.doMock('lit-html', () => ({ html: () => null, nothing: null }));
+    vi.doMock('lit-html/directives/ref.js', () => ({ ref: () => null }));
     vi.doMock('lit-html/directives/unsafe-html.js', () => ({
       unsafeHTML: () => null,
     }));
@@ -548,6 +554,7 @@ describe('getNewRunSubmitState — noProject flag', () => {
   beforeEach(async () => {
     vi.resetModules();
     vi.doMock('lit-html', () => ({ html: () => null, nothing: null }));
+    vi.doMock('lit-html/directives/ref.js', () => ({ ref: () => null }));
     vi.doMock('lit-html/directives/unsafe-html.js', () => ({
       unsafeHTML: () => null,
     }));

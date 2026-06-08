@@ -7,6 +7,7 @@ import {
   Boxes,
   ChevronDown,
   Coins,
+  Cpu,
   FileText,
   GitBranch,
   iconSvg,
@@ -434,6 +435,14 @@ export function sidebarView(
           <span class="sidebar-item-left">
             ${unsafeHTML(iconSvg(FileText, 16))}
             <span>Pipeline Templates</span>
+          </span>
+        </div>
+        <div class="sidebar-item ${route.section === 'models' ? 'active' : ''}"
+             title=${collapsed ? 'Models' : ''}
+             @click=${() => onNavigate('models')}>
+          <span class="sidebar-item-left">
+            ${unsafeHTML(iconSvg(Cpu, 16))}
+            <span>Models</span>
           </span>
         </div>
         `

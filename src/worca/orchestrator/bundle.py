@@ -32,13 +32,29 @@ from urllib.request import (
     build_opener,
 )
 
-# Placeholder used when redacting secret VALUES. Keys are always preserved so
-# users importing the bundle can see what env vars are expected and fill in
-# the correct secret locally.
-SECRET_PLACEHOLDER = "<YOUR-SECRET-HERE>"
+# Placeholder values used when redacting secret VALUES. Keys are always
+# preserved so users importing the bundle can see what env vars are expected
+# and fill in the correct secret locally.
+#
+# This is a LIST so we can grow the set over time (legacy placeholders, alt
+# wording) without breaking detection on already-shipped bundles. The first
+# entry is the canonical placeholder written by current redaction; the others
+# are recognised but never produced.
+#
+# MIRROR: keep aligned with `worca-ui/app/utils/secret-placeholders.js`. The
+# UI uses the same list to flag "Not configured" model cards and to outline
+# placeholder-valued env rows in the editor.
+SECRET_PLACEHOLDERS = ["<YOUR-SECRET-HERE>"]
 
-# Back-compat alias — old name kept for any external callers.
+# Back-compat aliases — old single-string name kept for callers that compare
+# directly against the canonical placeholder.
+SECRET_PLACEHOLDER = SECRET_PLACEHOLDERS[0]
 REDACTED_PLACEHOLDER = SECRET_PLACEHOLDER
+
+
+def is_secret_placeholder(value: object) -> bool:
+    """True when *value* is one of the recognised secret placeholders."""
+    return isinstance(value, str) and value in SECRET_PLACEHOLDERS
 
 SECRET_PATTERNS: list[tuple[re.Pattern[str], str]] = [
     (re.compile(r"^sk-[a-zA-Z0-9_-]{20,}$"), "Anthropic/OpenAI API key"),
