@@ -831,14 +831,16 @@ export function newRunView(_state, { rerender }) {
                 <label class="settings-label">Max Beads</label>
                 <sl-select id="new-run-max-beads" value=${maxBeads === null ? '' : String(maxBeads)} @sl-change=${handleMaxBeadsChange}>
                   ${(() => {
+                    // `0` is the Auto sentinel — render it as "Auto", not "0",
+                    // so the dropdown matches the semantics of the runtime.
                     const effective = resolveEffectiveMaxBeads();
-                    const defaultLabel =
-                      effective !== null
-                        ? `Template/project default (${effective})`
-                        : 'Template/project default (Auto)';
-                    return html`<sl-option value="">${defaultLabel}</sl-option>`;
+                    const renderEffective =
+                      effective === null || effective === 0
+                        ? 'Auto'
+                        : `${effective} bead${effective === 1 ? '' : 's'}`;
+                    return html`<sl-option value="">Default (${renderEffective})</sl-option>`;
                   })()}
-                  <sl-option value="0">Auto (force even if template/project has a cap)</sl-option>
+                  <sl-option value="0">Auto (no cap)</sl-option>
                   ${[1, 2, 3, 5, 10].map(
                     (n) =>
                       html`<sl-option value=${String(n)}>${n} beads</sl-option>`,
@@ -846,19 +848,18 @@ export function newRunView(_state, { rerender }) {
                 </sl-select>
                 ${(() => {
                   const effective = resolveEffectiveMaxBeads();
+                  const renderEffective =
+                    effective === null || effective === 0
+                      ? 'Auto'
+                      : `${effective} bead${effective === 1 ? '' : 's'}`;
                   let hintText = 'Cap on coordinator beads.';
                   if (maxBeads === null) {
-                    if (effective !== null) {
-                      hintText = `Using template/project default (${effective}). Explicit selection overrides this.`;
-                    } else {
-                      hintText =
-                        'Using template/project default (Auto). Explicit selection overrides this.';
-                    }
+                    hintText = `Using default (${renderEffective}). Explicit selection overrides this.`;
                   } else if (maxBeads === 0) {
                     hintText =
-                      'Explicitly set to Auto (no cap), overrides template/project default.';
+                      'Explicitly set to Auto (no cap), overrides default.';
                   } else {
-                    hintText = `Explicitly set to ${maxBeads} bead${maxBeads === 1 ? '' : 's'}, overrides template/project default.`;
+                    hintText = `Explicitly set to ${maxBeads} bead${maxBeads === 1 ? '' : 's'}, overrides default.`;
                   }
                   return html`<span class="settings-field-hint">${hintText}</span>`;
                 })()}
