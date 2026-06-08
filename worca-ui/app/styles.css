@@ -10208,8 +10208,13 @@ body.help-mode-active sl-tab {
 .model-editor-env-row--invalid sl-input::part(base) {
   border-color: var(--status-failed, #ef4444);
 }
-.model-editor-env-row--placeholder sl-input::part(base) {
-  border-color: var(--status-paused, #f59e0b);
+/* Placeholder-valued env rows (one of SECRET_PLACEHOLDERS): outline the VALUE
+   input in red as a visual hint to swap in the real secret. Visual only — save
+   stays enabled, the run-time decides whether the placeholder is acceptable. */
+.model-editor-env-row--placeholder .model-editor-env-value::part(base) {
+  border-color: var(--status-failed, #ef4444);
+  border-width: 2px;
+  box-shadow: 0 0 0 1px rgba(239, 68, 68, 0.15);
 }
 .model-editor-env-error {
   display: block;
@@ -10219,9 +10224,10 @@ body.help-mode-active sl-tab {
 }
 .model-editor-env-warn {
   display: block;
-  color: var(--status-paused, #f59e0b);
+  color: var(--status-failed, #ef4444);
   font-size: 0.75rem;
   margin-top: 0.25rem;
+  font-weight: 500;
 }
 /* width handled by the .model-editor-env-table td:nth-child(3) rule
    above (table-layout: fixed needs the column-position selector, not

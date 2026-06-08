@@ -2124,9 +2124,12 @@ class TestExportAliasFiltering:
         assert "opus" not in bundle["models"]
         assert "sonnet" not in bundle["models"]
 
-    def test_export_pricing_keeps_non_models_keys(self, capsys, tmp_path):
-        """server_tools, currency, last_updated are project-wide context —
-        they must survive even when no templates reference any model."""
+    def test_export_pricing_strips_server_tools_keeps_currency(self, capsys, tmp_path):
+        """server_tools (web_fetch / web_search rates) is project-wide operator
+        config, NOT bundle cargo — it's stripped on export. currency and
+        last_updated describe the per-model rates that ARE shipped, so they
+        survive.
+        """
         builtin_dir, project_dir, user_dir = self._setup(tmp_path)
         _write_template(project_dir / "no-models", _minimal("no-models", tier="project"))
         settings = {
@@ -2150,9 +2153,10 @@ class TestExportAliasFiltering:
         bundle = json.loads(out_file.read_text())
         # models filtered to empty (no template references anything)...
         assert bundle["pricing"]["models"] == {}
-        # ...but the rest of the pricing context is preserved.
+        # ...server_tools dropped wholesale...
+        assert "server_tools" not in bundle["pricing"]
+        # ...but currency / last_updated describe the per-model rate column, so they ride along.
         assert bundle["pricing"]["currency"] == "USD"
-        assert bundle["pricing"]["server_tools"]["web_search_per_request"] == 0.01
         assert bundle["pricing"]["last_updated"] == "2026-04-06"
 
     def test_export_no_model_refs_drops_models_block(self, capsys, tmp_path):

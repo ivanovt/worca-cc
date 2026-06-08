@@ -25,6 +25,7 @@ import {
   Trash2,
   Users,
 } from '../utils/icons.js';
+import { envHasPlaceholder } from '../utils/secret-placeholders.js';
 
 /**
  * Per-tier metadata for section headers — copy of the TIER_SECTIONS structure
@@ -214,6 +215,7 @@ function _modelCard(model, handlers) {
     tier,
     alias,
     id,
+    env,
     env_count,
     pricing,
     has_alt_endpoint,
@@ -221,6 +223,7 @@ function _modelCard(model, handlers) {
     imported_from,
   } = model;
   const isBuiltin = tier === 'builtin' || builtin;
+  const needsSecret = envHasPlaceholder(env);
 
   const cardClick = onEdit;
   const cardClickable = Boolean(cardClick);
@@ -260,6 +263,13 @@ function _modelCard(model, handlers) {
           has_alt_endpoint
             ? html`<sl-badge variant="warning" pill class="model-tier-card-alt-badge" title="Alt-endpoint (env routes Claude CLI off the default Anthropic endpoint)">
                 alt-endpoint
+              </sl-badge>`
+            : ''
+        }
+        ${
+          needsSecret
+            ? html`<sl-badge variant="danger" pill class="model-tier-card-needs-secret" title="One or more env values are placeholders left by a bundle import — open the model to replace them with a real secret">
+                Not configured
               </sl-badge>`
             : ''
         }

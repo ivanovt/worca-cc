@@ -24,8 +24,8 @@ import {
   Plus,
   Trash2,
 } from '../utils/icons.js';
+import { isSecretPlaceholder } from '../utils/secret-placeholders.js';
 
-const SECRET_PLACEHOLDER = '<SET_AT_IMPORT_TIME>';
 const ALIAS_RE = /^[a-zA-Z0-9_-]{1,64}$/;
 const PRICING_FIELDS = [
   { key: 'input_per_mtok', label: 'Input ($/MTok)', step: '0.01' },
@@ -348,8 +348,8 @@ export function modelEditorView(_state, options) {
 
   const env = _collectEnvForPayload();
   const hasAltEndpoint = ALT_ENDPOINT_HINT_KEYS.some((k) => env[k]);
-  const placeholders = Object.entries(env).filter(
-    ([, v]) => v === SECRET_PLACEHOLDER,
+  const placeholders = Object.entries(env).filter(([, v]) =>
+    isSecretPlaceholder(v),
   );
 
   const onAliasInput = (e) => {
@@ -575,7 +575,7 @@ function _envSection(rerender, disabled) {
                 <tbody>
                   ${rows.map((row, idx) => {
                     const reserved = isReservedKey((row.key || '').trim());
-                    const isPlaceholder = row.value === SECRET_PLACEHOLDER;
+                    const isPlaceholder = isSecretPlaceholder(row.value);
                     return html`
                       <tr class="model-editor-env-row${reserved ? ' model-editor-env-row--invalid' : ''}${isPlaceholder ? ' model-editor-env-row--placeholder' : ''}">
                         <td>

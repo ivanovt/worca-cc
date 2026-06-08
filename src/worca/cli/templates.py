@@ -25,6 +25,7 @@ from pathlib import Path
 from worca.orchestrator.bundle import (
     ID_RE,
     SECRET_PLACEHOLDER,
+    is_secret_placeholder,
     _OVERLAY_NAME_RE,
     _write_zip,
     build_export_manifest,
@@ -423,7 +424,13 @@ def register_subcommand(sub):
 
 
 def _load_current_worca_config() -> dict:
-    """Read worca config from .claude/settings.json if it exists, else return empty dict."""
+    """Read worca config from .claude/settings.json if it exists, else return empty dict.
+
+    Reads ONLY settings.json. Env blocks for models live in settings.local.json
+    after the id/env split and are NOT merged here — they would land in
+    template snapshots (gitignored→committed) and leak secrets. Export uses
+    `_load_models_with_env()` instead, which redacts on the way out.
+    """
     cwd = Path.cwd().resolve()
     for parent in [cwd, *cwd.parents]:
         if (parent / ".git").exists():
@@ -436,6 +443,60 @@ def _load_current_worca_config() -> dict:
                     pass
             break
     return {}
+
+
+def _load_models_with_env() -> dict:
+    """Return the project's `worca.models` map with env blocks merged in from
+    settings.local.json. Used only on the export path — `redact_bundle` then
+    scrubs secret VALUES before the bundle is written.
+
+    Without this merge, exports would drop env routing (e.g. ANTHROPIC_BASE_URL
+    for alt-endpoint aliases) because the id/env split keeps env in the
+    gitignored local file. See bundle.py's SECRET_PATTERNS for the scrub set.
+
+    Base entries come from `_load_current_worca_config()` so tests that patch
+    that loader continue to control what export sees. Entries with no env
+    splice are returned in their original shape (string OR object) so callers
+    that expected bare-string entries keep matching.
+    """
+    worca_config = _load_current_worca_config()
+    base_models = worca_config.get("models") or {}
+
+    local_models: dict = {}
+    cwd = Path.cwd().resolve()
+    for parent in [cwd, *cwd.parents]:
+        if (parent / ".git").exists():
+            local_path = parent / ".claude" / "settings.local.json"
+            if local_path.exists():
+                try:
+                    data = json.loads(local_path.read_text(encoding="utf-8"))
+                    local_models = (data.get("worca") or {}).get("models") or {}
+                except (json.JSONDecodeError, OSError):
+                    pass
+            break
+
+    merged: dict = {}
+    for alias, entry in base_models.items():
+        local_entry = local_models.get(alias)
+        env: dict | None = None
+        if isinstance(local_entry, dict):
+            env_val = local_entry.get("env")
+            if isinstance(env_val, dict) and env_val:
+                env = dict(env_val)
+        if env is None:
+            # Pass-through — preserve string-vs-object form.
+            merged[alias] = entry
+            continue
+        # Splicing env requires object form.
+        if isinstance(entry, str):
+            entry_obj: dict = {"id": entry}
+        elif isinstance(entry, dict):
+            entry_obj = dict(entry)
+        else:
+            continue
+        entry_obj["env"] = env
+        merged[alias] = entry_obj
+    return merged
 
 
 def cmd_templates_save(args):
@@ -880,7 +941,9 @@ def cmd_templates_export(args):
             raise SystemExit(1)
 
         # Gist path: single merged manifest (existing behaviour).
-        all_models = worca_config.get("models") or {}
+        # Env blocks are spliced in from settings.local.json by
+        # _load_models_with_env so alt-endpoint routing rides through redaction.
+        all_models = _load_models_with_env()
         referenced_aliases = collect_referenced_model_aliases(template_entries, all_models)
         models = None
         if args.include_models:
@@ -917,7 +980,9 @@ def cmd_templates_export(args):
     multi = len(template_entries) > 1
     out_dir = Path(dest).parent if multi else None
 
-    all_models = worca_config.get("models") or {}
+    # Env blocks are spliced in from settings.local.json by
+    # _load_models_with_env so alt-endpoint routing rides through redaction.
+    all_models = _load_models_with_env()
     referenced_aliases = collect_referenced_model_aliases(template_entries, all_models)
 
     models = None
@@ -1384,9 +1449,11 @@ def _filter_models_by_aliases(
 def _filter_pricing_by_aliases(
     all_pricing: dict, referenced: set[str], *, direction: str
 ) -> tuple[dict | None, list[str]]:
-    """Restrict `pricing.models` to entries in `referenced`; keep other
-    top-level pricing keys (`server_tools`, `currency`, `last_updated`, ...)
-    intact — they are project-wide context, not alias-specific.
+    """Restrict `pricing.models` to entries in `referenced`. `server_tools`
+    (web_fetch / web_search per-request rates) is dropped — those are
+    project-wide rates the operator configures locally, not bundle cargo.
+    `currency` and `last_updated` ride along as descriptors for the per-model
+    rates that ARE shipped.
 
     Returns (filtered_dict_or_None, dropped_aliases). Returns `None` when
     `all_pricing` is empty.
@@ -1405,6 +1472,8 @@ def _filter_pricing_by_aliases(
     result = {**all_pricing}
     if "models" in result:
         result["models"] = filtered_pm
+    # Strip project-wide rates that aren't model/template-related.
+    result.pop("server_tools", None)
     return result, dropped
 
 
@@ -1688,9 +1757,11 @@ def _resolve_settings_alias_collisions(
 
 
 def _collect_placeholder_paths(obj, path: str, out: list[str]) -> None:
-    """Walk obj; append every JSON path whose string value equals SECRET_PLACEHOLDER."""
+    """Walk obj; append every JSON path whose string value matches any
+    entry in SECRET_PLACEHOLDERS.
+    """
     if isinstance(obj, str):
-        if obj == SECRET_PLACEHOLDER:
+        if is_secret_placeholder(obj):
             out.append(path)
         return
     if isinstance(obj, dict):
