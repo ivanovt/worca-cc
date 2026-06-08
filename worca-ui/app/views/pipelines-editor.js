@@ -1692,21 +1692,45 @@ function _agentsTab(formBuffer, settings, projectId, rerender) {
   const autoCap = effort.auto_cap || 'xhigh';
   const state = editorState;
   const tierMap = editorState.modelTierMap || {};
-  // Title-cased single-letter tier badge for the dropdown options. Keeps
-  // each option tight (Sonnet · P / Sonnet · U / Sonnet · B) instead of
-  // wrapping. Hover tooltip carries the full word.
-  const tierLabel = (alias) => {
-    const t = tierMap[alias];
-    if (!t) return '';
-    const letter = t === 'project' ? 'P' : t === 'user' ? 'U' : 'B';
-    return ` · ${letter}`;
+  // Group the per-agent Model dropdown options by tier, mirroring the
+  // "Base template" picker on the New Pipeline / template-create dialog
+  // (small group label + sl-divider + indented options). Keeps the
+  // tier-aware UX consistent across surfaces — the previous "alias · P"
+  // single-letter suffix was implicit and easy to miss; group headers
+  // are explicit and let the user see the whole inventory grouped by
+  // where each alias lives.
+  //
+  // Order: PROJECT → USER → BUILT-IN — matches the resolution priority
+  // (Project shadows User shadows Built-in), so the first group is the
+  // tier the runtime actually picks from.
+  const groupModelOptionsByTier = (aliases) => {
+    const buckets = { project: [], user: [], builtin: [], other: [] };
+    for (const m of aliases) {
+      const t = tierMap[m] || 'other';
+      (buckets[t] || buckets.other).push(m);
+    }
+    for (const key of Object.keys(buckets)) {
+      buckets[key].sort((a, b) => a.localeCompare(b));
+    }
+    return [
+      { tier: 'project', label: 'PROJECT', items: buckets.project },
+      { tier: 'user', label: 'USER', items: buckets.user },
+      { tier: 'builtin', label: 'BUILT-IN', items: buckets.builtin },
+      // Aliases referenced by the template but missing from worca.models
+      // (orphans) — surfaced last so they don't silently disappear.
+      {
+        tier: 'other',
+        label: 'OTHER (referenced but not in worca.models)',
+        items: buckets.other,
+      },
+    ].filter((g) => g.items.length > 0);
   };
   const tierTitle = (alias) => {
     const t = tierMap[alias];
-    if (!t) return '';
+    if (!t) return 'Click ↗ to open this alias in the Models page';
     const word =
       t === 'project' ? 'Project' : t === 'user' ? 'User' : 'Built-in';
-    return `Resolves from ${word} tier — click to open in Models page`;
+    return `Resolves from ${word} tier — click ↗ to open in Models page`;
   };
 
   return html`
@@ -1817,26 +1841,45 @@ function _agentsTab(formBuffer, settings, projectId, rerender) {
                         );
                       }}
                     >
-                      ${modelOptions.map(
-                        (m) =>
-                          html`<sl-option value="${m}" title=${tierTitle(m)}>${m}${tierLabel(m)}</sl-option>`,
-                      )}
+                      ${(() => {
+                        // Render grouped tier sections — first PROJECT,
+                        // then USER, then BUILT-IN, matching the resolver
+                        // priority. Each group: small label + divider +
+                        // indented option rows (same pattern as the
+                        // template-create "Base template" picker).
+                        const groups = groupModelOptionsByTier(modelOptions);
+                        return groups.flatMap((g, idx) => [
+                          idx > 0 ? html`<sl-divider></sl-divider>` : '',
+                          html`<small class="template-group-label">${g.label}</small>`,
+                          ...g.items.map(
+                            (m) => html`<sl-option
+                              class="template-grouped"
+                              value="${m}"
+                              title=${tierTitle(m)}
+                            >${m}</sl-option>`,
+                          ),
+                        ]);
+                      })()}
                     </sl-select>
-                    ${
-                      tierMap[agent.model || 'sonnet']
-                        ? html`<a
-                            class="agent-model-open-link"
-                            href="#/models"
-                            title=${tierTitle(agent.model || 'sonnet')}
-                            @click=${(e) => {
-                              e.preventDefault();
-                              const t = tierMap[agent.model || 'sonnet'];
-                              window.location.hash = `#/models/${encodeURIComponent(agent.model || 'sonnet')}/edit/${t}`;
-                            }}
-                            aria-label="Open ${agent.model || 'sonnet'} in Models page"
-                          >↗</a>`
-                        : ''
-                    }
+                    ${(() => {
+                      const alias = agent.model || 'sonnet';
+                      const t = tierMap[alias];
+                      if (!t) return '';
+                      // Use the full project-scoped Models URL so the
+                      // page lands in the right project context (matching
+                      // the route the user is editing this template in).
+                      // Falls back to the short form when projectId is
+                      // absent (single-project mode).
+                      const href = projectId
+                        ? `#/project/${projectId}/models/${encodeURIComponent(alias)}/edit/${t}`
+                        : `#/models/${encodeURIComponent(alias)}/edit/${t}`;
+                      return html`<a
+                        class="agent-model-open-link"
+                        href=${href}
+                        title=${tierTitle(alias)}
+                        aria-label="Open ${alias} in Models page"
+                      >↗</a>`;
+                    })()}
                   </div>
                 </div>
                 <div class="settings-field">

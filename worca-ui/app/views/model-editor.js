@@ -303,11 +303,10 @@ export async function saveModel({ projectId, onSaved, allModels }) {
 // ────────────────────────────────────────────────────────────────────────
 
 export function modelEditorView(_state, options) {
-  // projectId + onCancel are handled by main.js (header buttons drive
-  // saveModel and navigation). The view itself only needs rerender +
-  // the live model list for inline alias-collision feedback, and the
-  // onTierChange callback for the new-entry tier picker.
-  const { rerender, allModels, onTierChange } = options || {};
+  // onCancel is handled by main.js (header buttons drive saveModel + nav).
+  // projectId is needed for the Applied-by template links so they resolve
+  // to /project/<id>/templates/... rather than the global short-form URL.
+  const { projectId, rerender, allModels, onTierChange } = options || {};
   if (rerender) _editorRerenderFn = rerender;
 
   const { loading, error, tier, isNew, aliasDraft, idDraft } = modelEditorState;
@@ -460,7 +459,7 @@ export function modelEditorView(_state, options) {
         ${_identitySection(idDraft, onIdInput, isBuiltinTier)}
         ${_envSection(rerender, isBuiltinTier)}
         ${_pricingSection(rerender, isBuiltinTier, hasAltEndpoint)}
-        ${_appliedBySection(modelEditorState.appliedBy)}
+        ${_appliedBySection(modelEditorState.appliedBy, projectId)}
       </div>
     </div>
   `;
@@ -565,7 +564,7 @@ function _envSection(rerender, disabled) {
         rows.length === 0
           ? html`<p class="settings-muted model-editor-env-empty">No env vars set.</p>`
           : html`
-              <table class="pricing-table model-editor-env-table">
+              <table class="model-editor-env-table">
                 <thead>
                   <tr>
                     <th>Key</th>
@@ -631,21 +630,47 @@ function _envSection(rerender, disabled) {
 }
 
 function _pricingSection(rerender, disabled, hasAltEndpoint) {
-  // Auto-open when alt-endpoint env present — those are the runs where pricing
-  // override is authoritative. Otherwise collapsed (Anthropic-direct runs use
-  // Claude CLI's own cost figure).
+  // Auto-open when alt-endpoint env present — those are the runs where the
+  // worca-supplied rates are authoritative (Claude CLI's reported cost is for
+  // Anthropic prices, which don't apply to a non-Anthropic endpoint).
   const wantOpen = modelEditorState.pricingOpen || hasAltEndpoint;
 
   const onPricingInput = (key, e) => {
-    modelEditorState.pricingDraft = {
-      ...modelEditorState.pricingDraft,
-      [key]: e.target.value,
-    };
+    // Empty input → leave the key absent in the draft (vs. `0` which is a
+    // valid "free" rate for unmetered proxies). _collectPricingForPayload
+    // turns an absent draft key into a missing field on save.
+    const raw = e.target.value;
+    const next = { ...modelEditorState.pricingDraft };
+    if (raw === '' || raw == null) {
+      delete next[key];
+    } else {
+      next[key] = raw;
+    }
+    modelEditorState.pricingDraft = next;
+    rerender?.();
+  };
+  const onClearAll = () => {
+    modelEditorState.pricingDraft = {};
     rerender?.();
   };
   const onToggle = (e) => {
     modelEditorState.pricingOpen = e.target.open;
   };
+
+  const hasAnyRate = PRICING_FIELDS.some(
+    (f) =>
+      modelEditorState.pricingDraft[f.key] != null &&
+      modelEditorState.pricingDraft[f.key] !== '',
+  );
+  // Badge taxonomy describes WHERE the cost number comes from, not the
+  // worca-vs-CLI relationship. Three states:
+  //   "explicit"   — user has entered rates; worca uses them
+  //                  (authoritative on alt-endpoint, fallback on default)
+  //   "Claude CLI" — default endpoint, no rates set; CLI reports the cost
+  //   (no badge)   — alt-endpoint with no rates; the alt-endpoint card
+  //                  badge already flags the missing-pricing risk
+  const showExplicit = hasAnyRate;
+  const showCliBadge = !hasAnyRate && !hasAltEndpoint;
 
   return html`
     <div class="editor-description-section model-editor-section">
@@ -658,16 +683,26 @@ function _pricingSection(rerender, disabled, hasAltEndpoint) {
         <div slot="summary" class="model-editor-pricing-summary">
           <h3 class="settings-section-title" style="margin:0">Pricing</h3>
           ${
-            hasAltEndpoint
-              ? html`<sl-badge variant="warning" pill>required for alt-endpoint</sl-badge>`
-              : html`<sl-badge variant="neutral" pill>optional</sl-badge>`
+            showExplicit
+              ? html`<sl-badge variant="primary" pill title="Worca uses these rates. On alt-endpoint runs they override Claude CLI's number; on default-endpoint runs they fall back in when the CLI doesn't report a cost.">explicit</sl-badge>`
+              : showCliBadge
+                ? html`<sl-badge variant="neutral" pill title="Default Anthropic endpoint — Claude CLI's reported total_cost_usd is the source of truth. Set rates here only if you want a fallback for runs that end without a reported cost.">Claude CLI</sl-badge>`
+                : ''
           }
         </div>
         <p class="settings-section-desc">
-          Only applied when this alias's <code>env</code> sets
-          <code>ANTHROPIC_BASE_URL</code> (i.e. routes Claude CLI off the
-          default Anthropic endpoint). For default-endpoint runs, Claude CLI's
-          own reported cost is the source of truth; these rates are a fallback.
+          ${
+            hasAltEndpoint
+              ? html`Set rates for accurate cost tracking on this alt-endpoint
+                 alias — Claude CLI's <code>total_cost_usd</code> reflects
+                 Anthropic prices, which don't apply to a non-Anthropic endpoint.
+                 An empty field means "unset" (worca skips that component); a
+                 literal <code>0</code> means "free" (e.g. unmetered cache reads
+                 on some proxies).`
+              : html`Optional. Used as a fallback only when Claude CLI ends a run
+                 without reporting a cost. An empty field means "unset"; a literal
+                 <code>0</code> means "free."`
+          }
         </p>
         <table class="pricing-table">
           <thead>
@@ -686,7 +721,7 @@ function _pricingSection(rerender, disabled, hasAltEndpoint) {
                       type="number"
                       step=${f.step}
                       min="0"
-                      placeholder="0"
+                      placeholder="—"
                       .value=${modelEditorState.pricingDraft[f.key] != null ? String(modelEditorState.pricingDraft[f.key]) : ''}
                       ?disabled=${disabled}
                       @sl-input=${(e) => onPricingInput(f.key, e)}
@@ -697,32 +732,109 @@ function _pricingSection(rerender, disabled, hasAltEndpoint) {
             </tr>
           </tbody>
         </table>
+        ${
+          hasAnyRate && !disabled
+            ? html`<div class="model-editor-pricing-actions">
+                <button
+                  class="action-btn action-btn--secondary"
+                  title="Clear all pricing fields — on save this removes worca.pricing.models.<alias> entirely"
+                  @click=${onClearAll}
+                >
+                  ${unsafeHTML(iconSvg(Trash2, 14))}
+                  Clear pricing
+                </button>
+              </div>`
+            : ''
+        }
       </sl-details>
     </div>
   `;
 }
 
-function _appliedBySection(appliedBy) {
+function _appliedBySection(appliedBy, projectId) {
+  // Group references by (tier, template_id) so a template that uses the
+  // alias for multiple agents collapses into one row instead of N copies.
+  // The server returns the flat list because that's its natural shape;
+  // grouping client-side keeps the API simple.
+  const groups = new Map();
+  for (const ref of appliedBy || []) {
+    const key = `${ref.tier}:${ref.template_id}`;
+    if (!groups.has(key)) {
+      groups.set(key, {
+        tier: ref.tier,
+        template_id: ref.template_id,
+        agents: [],
+      });
+    }
+    if (ref.agent) groups.get(key).agents.push(ref.agent);
+  }
+  const groupList = Array.from(groups.values());
+  const totalAgents = (appliedBy || []).length;
+
+  // Per-tier badge variant — Project = primary (blue, "yours"),
+  // User = neutral (shared across all your projects).
+  const tierVariant = (tier) =>
+    tier === 'project' ? 'primary' : tier === 'user' ? 'neutral' : 'warning';
+
+  const templateHref = (tier, tid) =>
+    projectId
+      ? `#/project/${projectId}/templates/${tier}/${encodeURIComponent(tid)}/edit`
+      : `#/templates/${tier}/${encodeURIComponent(tid)}/edit`;
+
   return html`
     <div class="editor-description-section model-editor-section">
-      <h3 class="settings-section-title">Applied by</h3>
-      <p class="settings-section-desc">
-        Templates and agent assignments that reference this alias.
-      </p>
+      <div class="model-editor-section-head">
+        <div>
+          <h3 class="settings-section-title">Applied by</h3>
+          <p class="settings-section-desc">
+            Templates in <strong>this project</strong> and your
+            <strong>user-tier</strong> templates that reference this alias.
+            Built-in templates aren't walked (they live inside the
+            <code>worca-cc</code> Python package); other projects'
+            templates aren't walked either.
+          </p>
+        </div>
+        ${
+          groupList.length > 0
+            ? html`<sl-badge variant="neutral" pill class="model-editor-applied-count">
+                ${groupList.length} template${groupList.length === 1 ? '' : 's'}
+                · ${totalAgents} agent${totalAgents === 1 ? '' : 's'}
+              </sl-badge>`
+            : ''
+        }
+      </div>
       ${
-        appliedBy.length === 0
+        groupList.length === 0
           ? html`<p class="settings-muted">(none discovered)</p>`
           : html`
-              <ul class="model-editor-applied-list">
-                ${appliedBy.map(
-                  (ref) => html`
-                    <li>
-                      <code>${ref.tier}/${ref.template_id}</code>
-                      ${ref.agent ? html`<span class="settings-muted"> — ${ref.agent}</span>` : ''}
-                    </li>
+              <div class="model-editor-applied-groups">
+                ${groupList.map(
+                  (g) => html`
+                    <div class="model-editor-applied-row">
+                      <div class="model-editor-applied-row-head">
+                        <sl-badge variant=${tierVariant(g.tier)} pill>
+                          ${g.tier}
+                        </sl-badge>
+                        <a
+                          class="model-editor-applied-link"
+                          href=${templateHref(g.tier, g.template_id)}
+                          title="Open template editor"
+                        >${g.template_id}</a>
+                      </div>
+                      ${
+                        g.agents.length > 0
+                          ? html`<div class="model-editor-applied-agents">
+                              ${g.agents.map(
+                                (a) =>
+                                  html`<code class="model-editor-applied-agent">${a}</code>`,
+                              )}
+                            </div>`
+                          : ''
+                      }
+                    </div>
                   `,
                 )}
-              </ul>
+              </div>
             `
       }
     </div>
