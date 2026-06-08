@@ -101,6 +101,8 @@ PIPELINE_CONSTANTS = [
     # Template lifecycle (2)
     ("TEMPLATE_APPLIED", "pipeline.template.applied"),
     ("TEMPLATE_DROPPED", "pipeline.template.dropped"),
+    # CLAUDE.md load mode (1)
+    ("CLAUDE_MD_MODE_RESOLVED", "pipeline.claude_md.mode_resolved"),
 ]
 
 CONTROL_CONSTANTS = [
@@ -140,19 +142,20 @@ def test_pipeline_constant_values_unique():
 
 
 def test_total_pipeline_constants():
-    """There must be exactly 57 pipeline.* outbound constants.
+    """There must be exactly 59 pipeline.* outbound constants.
 
     48 original + 2 dedicated learn events (pipeline.learn.completed/failed)
     + 1 dispatch_allowed hook event + 1 RUN_CANCELLED + 1 PLAN_EDITED
-    + 2 template lifecycle events + 1 ITERATION_ACCESS + 1 GIT_PR_DEFERRED = 57.
+    + 2 template lifecycle events + 1 ITERATION_ACCESS + 1 GIT_PR_DEFERRED
+    + 1 CLAUDE_MD_MODE_RESOLVED = 59.
     """
     import worca.events.types as T
     pipeline_vals = [
         v for k, v in vars(T).items()
         if k.isupper() and isinstance(v, str) and v.startswith("pipeline.")
     ]
-    assert len(pipeline_vals) == 58, (
-        f"Expected 58 pipeline.* constants, found {len(pipeline_vals)}"
+    assert len(pipeline_vals) == 59, (
+        f"Expected 59 pipeline.* constants, found {len(pipeline_vals)}"
     )
 
 
@@ -1275,3 +1278,57 @@ def test_agent_completed_payload_omits_context_final_pct_when_none():
         cost_usd=0.10, duration_ms=30000, exit_code=0,
     )
     assert "context_final_pct" not in p
+
+
+# ---------------------------------------------------------------------------
+# pipeline.claude_md.mode_resolved event (Phase 7 — TDD, written before impl)
+# ---------------------------------------------------------------------------
+
+def test_claude_md_mode_resolved_constant_exists():
+    import worca.events.types as T
+    assert hasattr(T, "CLAUDE_MD_MODE_RESOLVED")
+    assert T.CLAUDE_MD_MODE_RESOLVED == "pipeline.claude_md.mode_resolved"
+
+
+def test_claude_md_mode_resolved_payload_required_fields():
+    from worca.events.types import claude_md_mode_resolved_payload
+    p = claude_md_mode_resolved_payload(
+        mode="project",
+        source="cli",
+        overlay_path="/tmp/run/claude_md_overlay.json",
+        exclude_count=12,
+    )
+    assert p["mode"] == "project"
+    assert p["source"] == "cli"
+    assert p["overlay_path"] == "/tmp/run/claude_md_overlay.json"
+    assert p["exclude_count"] == 12
+    assert isinstance(p, dict)
+
+
+def test_claude_md_mode_resolved_payload_overlay_path_none():
+    from worca.events.types import claude_md_mode_resolved_payload
+    p = claude_md_mode_resolved_payload(
+        mode="none",
+        source="template",
+        overlay_path=None,
+        exclude_count=0,
+    )
+    assert p["overlay_path"] is None
+
+
+def test_claude_md_mode_resolved_payload_source_values():
+    from worca.events.types import claude_md_mode_resolved_payload
+    for source in ("cli", "template", "project_settings", "default"):
+        p = claude_md_mode_resolved_payload(
+            mode="all", source=source, overlay_path=None, exclude_count=0,
+        )
+        assert p["source"] == source
+
+
+def test_claude_md_mode_resolved_payload_mode_values():
+    from worca.events.types import claude_md_mode_resolved_payload
+    for mode in ("none", "project", "project+local", "all"):
+        p = claude_md_mode_resolved_payload(
+            mode=mode, source="default", overlay_path=None, exclude_count=0,
+        )
+        assert p["mode"] == mode

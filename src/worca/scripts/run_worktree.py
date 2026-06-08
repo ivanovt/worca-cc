@@ -208,6 +208,9 @@ def _build_pipeline_cmd(args: argparse.Namespace, run_id: str = "") -> list:
     if args.max_beads is not None:
         cmd.extend(["--max-beads", str(args.max_beads)])
 
+    if args.claude_md_mode is not None:
+        cmd.extend(["--claude-md-mode", args.claude_md_mode])
+
     return cmd
 
 
@@ -266,6 +269,12 @@ def create_parser() -> argparse.ArgumentParser:
         type=int,
         default=None,
         help="Cap on the number of beads the coordinator may create (0 = auto, None = use config)",
+    )
+    parser.add_argument(
+        "--claude-md-mode",
+        default=None,
+        choices=["none", "project", "project+local", "all"],
+        help="CLAUDE.md load mode override (none/project/project+local/all)",
     )
     parser.add_argument(
         "--settings",

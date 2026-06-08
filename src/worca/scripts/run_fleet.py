@@ -201,6 +201,7 @@ def build_child_cmd(
     guide: list | None = None,
     plan: str | None = None,
     max_beads: int | None = None,
+    claude_md_mode: str | None = None,
 ) -> list:
     """Build the run_worktree.py command for a single fleet child.
 
@@ -228,6 +229,9 @@ def build_child_cmd(
 
     if max_beads is not None:
         cmd.extend(["--max-beads", str(max_beads)])
+
+    if claude_md_mode is not None:
+        cmd.extend(["--claude-md-mode", claude_md_mode])
 
     return cmd
 
@@ -257,6 +261,7 @@ def run_plan_first(
     guide: list,
     fleet_runs_base: str | None = None,
     max_beads: int | None = None,
+    claude_md_mode: str | None = None,
 ) -> str | None:
     """Run the reference child (blocking) and wait for its Planner to produce a plan.
 
@@ -278,6 +283,7 @@ def run_plan_first(
         guide=guide,
         plan=None,  # reference child generates the plan
         max_beads=max_beads,
+        claude_md_mode=claude_md_mode,
     )
 
     proc = subprocess.run(
@@ -368,6 +374,7 @@ def dispatch_fleet(
     max_parallel: int,
     fleet_failure_threshold: float,
     max_beads: int | None = None,
+    claude_md_mode: str | None = None,
 ) -> dict:
     """Run fleet children in parallel with a semaphore-gated dispatch loop.
 
@@ -416,6 +423,7 @@ def dispatch_fleet(
                 guide=guide,
                 plan=plan,
                 max_beads=max_beads,
+                claude_md_mode=claude_md_mode,
             )
             # Capture stdout so we can read the child's run_id (run_worktree.py
             # prints `<run_id>\n<worktree_path>\n` then exits). Knowing the
@@ -513,6 +521,7 @@ def resume_fleet(fleet_id: str) -> int:
     plan = manifest.get("plan", {}).get("path")
     max_parallel = manifest.get("max_parallel", 5)
     threshold = manifest.get("fleet_failure_threshold", 0.30)
+    claude_md_mode = manifest.get("claude_md_mode")
 
     _SKIP_STATUSES = frozenset({
         PipelineStatus.COMPLETED, PipelineStatus.RUNNING,
@@ -607,6 +616,7 @@ def resume_fleet(fleet_id: str) -> int:
             plan=plan,
             max_parallel=max_parallel,
             fleet_failure_threshold=threshold,
+            claude_md_mode=claude_md_mode,
         )
 
     return 0
@@ -755,6 +765,12 @@ def create_parser() -> argparse.ArgumentParser:
         default=None,
         metavar="N",
         help="Override coordinator decomposition cap for every child (0 = auto)",
+    )
+    parser.add_argument(
+        "--claude-md-mode",
+        default=None,
+        choices=["none", "project", "project+local", "all"],
+        help="CLAUDE.md load mode override propagated to every child (none/project/project+local/all)",
     )
 
     return parser
@@ -934,6 +950,7 @@ def main(argv=None) -> int:
             "base_branch": args.base,
             "max_parallel": args.max_parallel,
             "fleet_failure_threshold": args.fleet_failure_threshold,
+            "claude_md_mode": args.claude_md_mode,
             "status": FleetStatus.RUNNING,
             "halt_reason": None,
             "children": [],
@@ -962,6 +979,7 @@ def main(argv=None) -> int:
                 base=args.base,
                 guide=guide_abs_ref,
                 max_beads=args.max_beads,
+                claude_md_mode=args.claude_md_mode,
             )
             if shared_plan is None:
                 print(
@@ -1005,6 +1023,7 @@ def main(argv=None) -> int:
             max_parallel=args.max_parallel,
             fleet_failure_threshold=args.fleet_failure_threshold,
             max_beads=args.max_beads,
+            claude_md_mode=args.claude_md_mode,
         )
 
         # Fire fleet.launched once dispatch returns — children may still be

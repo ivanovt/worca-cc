@@ -913,3 +913,127 @@ class TestMaxBeadsFleet:
         )
         idx = cmd.index("--max-beads")
         assert cmd[idx + 1] == "0"
+
+
+# ---- Phase 5: --claude-md-mode passthrough -----------------------------------
+
+class TestClaudeMdModeFleet:
+    """--claude-md-mode is parsed and forwarded to build_child_cmd."""
+
+    def _parse(self, argv):
+        from worca.scripts.run_fleet import create_parser
+        return create_parser().parse_args(argv)
+
+    def test_claude_md_mode_default_none(self):
+        args = self._parse(["--prompt", "x", "--projects", "/p"])
+        assert args.claude_md_mode is None
+
+    def test_claude_md_mode_parsed(self):
+        args = self._parse(["--prompt", "x", "--projects", "/p", "--claude-md-mode", "project"])
+        assert args.claude_md_mode == "project"
+
+    def test_build_child_cmd_includes_claude_md_mode_when_set(self):
+        from worca.scripts.run_fleet import build_child_cmd
+        cmd = build_child_cmd(
+            project_dir="/p",
+            fleet_id="f-001",
+            prompt="x",
+            claude_md_mode="project+local",
+        )
+        idx = cmd.index("--claude-md-mode")
+        assert cmd[idx + 1] == "project+local"
+
+    def test_build_child_cmd_omits_claude_md_mode_when_none(self):
+        from worca.scripts.run_fleet import build_child_cmd
+        cmd = build_child_cmd(
+            project_dir="/p",
+            fleet_id="f-001",
+            prompt="x",
+            claude_md_mode=None,
+        )
+        assert "--claude-md-mode" not in cmd
+
+    def test_manifest_persists_claude_md_mode(self, tmp_path):
+        from worca.scripts.run_fleet import main
+        written = {}
+
+        def capture(manifest, **kw):
+            written.update(manifest)
+
+        with (
+            patch("worca.scripts.run_fleet.check_target_readiness", return_value=(True, None)),
+            patch(
+                "worca.orchestrator.fleet_manifest.write_fleet_manifest",
+                side_effect=capture,
+            ),
+        ):
+            main(["--projects", str(tmp_path), "--prompt", "x", "--claude-md-mode", "project"])
+        assert written["claude_md_mode"] == "project"
+
+    def test_manifest_claude_md_mode_none_when_not_set(self, tmp_path):
+        from worca.scripts.run_fleet import main
+        written = {}
+
+        def capture(manifest, **kw):
+            written.update(manifest)
+
+        with (
+            patch("worca.scripts.run_fleet.check_target_readiness", return_value=(True, None)),
+            patch(
+                "worca.orchestrator.fleet_manifest.write_fleet_manifest",
+                side_effect=capture,
+            ),
+        ):
+            main(["--projects", str(tmp_path), "--prompt", "x"])
+        assert written["claude_md_mode"] is None
+
+    def test_resume_fleet_passes_claude_md_mode_to_dispatch(self):
+        from worca.scripts.run_fleet import resume_fleet
+        manifest = {
+            "fleet_id": "f_202601011200_abc123",
+            "work_request": {"description": "Fix auth", "source": None},
+            "base_branch": None,
+            "guide": {"paths": []},
+            "plan": {"path": None},
+            "max_parallel": 3,
+            "fleet_failure_threshold": 0.30,
+            "claude_md_mode": "project",
+            "children": [
+                {"project_path": "/repo/a", "run_id": None},
+            ],
+        }
+        with (
+            patch("worca.scripts.run_fleet.read_fleet_manifest", return_value=manifest),
+            patch("worca.scripts.run_fleet.update_fleet_status"),
+            patch("worca.scripts.run_fleet.dispatch_fleet") as mock_dispatch,
+        ):
+            resume_fleet("f_202601011200_abc123")
+
+        mock_dispatch.assert_called_once()
+        call_kwargs = mock_dispatch.call_args[1]
+        assert call_kwargs["claude_md_mode"] == "project"
+
+    def test_resume_fleet_none_claude_md_mode_when_absent_from_manifest(self):
+        from worca.scripts.run_fleet import resume_fleet
+        manifest = {
+            "fleet_id": "f_202601011200_abc123",
+            "work_request": {"description": "Fix auth", "source": None},
+            "base_branch": None,
+            "guide": {"paths": []},
+            "plan": {"path": None},
+            "max_parallel": 3,
+            "fleet_failure_threshold": 0.30,
+            "children": [
+                {"project_path": "/repo/a", "run_id": None},
+            ],
+        }
+        with (
+            patch("worca.scripts.run_fleet.read_fleet_manifest", return_value=manifest),
+            patch("worca.scripts.run_fleet.update_fleet_status"),
+            patch("worca.scripts.run_fleet.dispatch_fleet") as mock_dispatch,
+        ):
+            resume_fleet("f_202601011200_abc123")
+
+        mock_dispatch.assert_called_once()
+        call_kwargs = mock_dispatch.call_args[1]
+        assert call_kwargs["claude_md_mode"] is None

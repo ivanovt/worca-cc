@@ -258,6 +258,8 @@ def create_workspace_manifest(
     projects_by_name: dict[str, str],
     dependency_graph: dict[str, list[str]],
     failure_threshold: float | None = None,
+    max_beads: int | None = None,
+    claude_md_mode: str | None = None,
 ) -> dict:
     """Build the workspace manifest dict (extends fleet manifest schema per §7)."""
     guide_bytes = sum(
@@ -293,6 +295,8 @@ def create_workspace_manifest(
         "dag": {"tiers": dag_tiers, "dependency_graph": dependency_graph},
         "projects_by_name": projects_by_name,
         "failure_threshold": failure_threshold,
+        "max_beads": max_beads,
+        "claude_md_mode": claude_md_mode,
         "children": [],
         "integration_test": {"status": "pending", "exit_code": None, "log_path": None},
     }
@@ -943,6 +947,12 @@ def create_parser() -> argparse.ArgumentParser:
         metavar="N",
         help="Override coordinator decomposition cap for every child (0 = auto)",
     )
+    parser.add_argument(
+        "--claude-md-mode",
+        default=None,
+        choices=["none", "project", "project+local", "all"],
+        help="CLAUDE.md load mode override propagated to every child (none/project/project+local/all)",
+    )
 
     return parser
 
@@ -1103,7 +1113,13 @@ def _resume_workspace(workspace_root: str, workspace_id: str) -> int:
 
     print(f"Resuming workspace {workspace_id} — re-dispatching {len(redispatch)} project(s)")
 
-    executor = DagExecutor(manifest, run_dir, settings_path=settings_path)
+    executor = DagExecutor(
+        manifest,
+        run_dir,
+        settings_path=settings_path,
+        max_beads=manifest.get("max_beads"),
+        claude_md_mode=manifest.get("claude_md_mode"),
+    )
     result = executor.execute()
 
     if result["status"] == "halted":
@@ -1294,6 +1310,8 @@ def main(argv=None) -> int:
         projects_by_name=projects_by_name,
         dependency_graph=dependency_graph,
         failure_threshold=failure_threshold,
+        max_beads=args.max_beads,
+        claude_md_mode=args.claude_md_mode,
     )
 
     write_workspace_manifest(manifest, run_dir)
@@ -1478,7 +1496,7 @@ def main(argv=None) -> int:
 
     print(f"Workspace run {ws_id} — dispatching {len(ws.projects)} project(s)")
 
-    executor = DagExecutor(manifest, run_dir, settings_path=settings_path, max_beads=args.max_beads)
+    executor = DagExecutor(manifest, run_dir, settings_path=settings_path, max_beads=args.max_beads, claude_md_mode=args.claude_md_mode)
     result = executor.execute()
 
     if result["status"] == "halted":

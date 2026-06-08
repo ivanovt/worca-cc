@@ -205,6 +205,7 @@ def build_command(
     model: Optional[str] = None,
     settings: Optional[dict] = None,
     mcp_config: Optional[str] = None,
+    claude_md_overlay_path: Optional[str] = None,
     **kwargs,
 ) -> tuple[list[str], Optional[str]]:
     """Build the claude CLI command list without executing.
@@ -275,6 +276,8 @@ def build_command(
         cmd.extend(["--json-schema", schema_str])
     if mcp_config:
         cmd.extend(["--mcp-config", mcp_config, "--strict-mcp-config"])
+    if claude_md_overlay_path:
+        cmd.extend(["--settings", claude_md_overlay_path])
     return cmd, prompt_file
 
 
@@ -527,6 +530,7 @@ def run_agent(
     graphify_out: Optional[str] = None,
     model_alias: Optional[str] = None,
     mcp_config: Optional[str] = None,
+    claude_md_overlay_path: Optional[str] = None,
     run_dir: Optional[str] = None,
     stage: Optional[str] = None,
     iteration: Optional[int] = None,
@@ -563,6 +567,7 @@ def run_agent(
         model=model,
         settings=settings,
         mcp_config=mcp_config,
+        claude_md_overlay_path=claude_md_overlay_path,
     )
 
     global _current_proc

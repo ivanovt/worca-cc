@@ -1450,6 +1450,73 @@ def test_run_agent_no_mcp_config_omits_flags():
 
 
 # ---------------------------------------------------------------------------
+# build_command / run_agent: claude_md_overlay_path (Phase 3)
+# ---------------------------------------------------------------------------
+
+
+def test_build_command_with_claude_md_overlay_path():
+    cmd, pf = build_command("prompt", agent="planner", claude_md_overlay_path="/tmp/overlay.json")
+    assert pf is None
+    assert "--settings" in cmd
+    idx = cmd.index("--settings")
+    assert cmd[idx + 1] == "/tmp/overlay.json"
+
+
+def test_build_command_without_claude_md_overlay_path():
+    cmd, pf = build_command("prompt", agent="planner")
+    assert "--settings" not in cmd
+
+
+def test_build_command_claude_md_overlay_path_none_omits_flag():
+    cmd, pf = build_command("prompt", agent="planner", claude_md_overlay_path=None)
+    assert "--settings" not in cmd
+
+
+def test_build_command_claude_md_overlay_path_ordering_after_mcp_config():
+    mcp_json = '{"mcpServers":{}}'
+    cmd, pf = build_command(
+        "prompt", agent="planner",
+        mcp_config=mcp_json,
+        claude_md_overlay_path="/tmp/overlay.json",
+    )
+    mcp_idx = cmd.index("--mcp-config")
+    settings_idx = cmd.index("--settings")
+    assert settings_idx > mcp_idx
+
+
+def test_build_command_existing_calls_unaffected():
+    # Default None must not alter byte-for-byte output relative to before this param existed
+    cmd_explicit_none, _ = build_command("prompt", agent="planner", claude_md_overlay_path=None)
+    cmd_omitted, _ = build_command("prompt", agent="planner")
+    assert cmd_explicit_none == cmd_omitted
+    assert "--settings" not in cmd_omitted
+
+
+def test_run_agent_passes_claude_md_overlay_path_to_build_command():
+    result_event = {"ok": True}
+    mock_proc = _make_mock_popen(result_event)
+    with patch("worca.utils.claude_cli.subprocess.Popen", return_value=mock_proc) as mock_popen:
+        run_agent(
+            prompt="hello", agent="planner.md",
+            claude_md_overlay_path="/tmp/overlay.json",
+            settings={},
+        )
+    cmd = mock_popen.call_args[0][0]
+    assert "--settings" in cmd
+    idx = cmd.index("--settings")
+    assert cmd[idx + 1] == "/tmp/overlay.json"
+
+
+def test_run_agent_no_claude_md_overlay_path_omits_settings_flag():
+    result_event = {"ok": True}
+    mock_proc = _make_mock_popen(result_event)
+    with patch("worca.utils.claude_cli.subprocess.Popen", return_value=mock_proc) as mock_popen:
+        run_agent(prompt="hello", agent="planner.md", settings={})
+    cmd = mock_popen.call_args[0][0]
+    assert "--settings" not in cmd
+
+
+# ---------------------------------------------------------------------------
 # model_alias stamping
 # ---------------------------------------------------------------------------
 
