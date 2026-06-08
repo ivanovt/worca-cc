@@ -82,6 +82,44 @@ describe('pipelines-editor — project worca.models loading', () => {
     expect(calledSettings).toBe(true);
   });
 
+  it('populates modelTierMap with all tiers so the dropdown surfaces built-in/user aliases too', async () => {
+    // Repro of: editing a project template whose project only defines
+    // `glm-ds` showed just `glm-ds` (project) + whatever aliases the
+    // template already referenced. Built-in aliases (`opus`, `haiku`)
+    // were missing because the dropdown read only `worca.models`.
+    // Fix: union `Object.keys(editorState.modelTierMap)` into options.
+    // This test pins the tier-map populate path; the union itself is
+    // exercised live via the rendered editor.
+    mockFetchByUrl({
+      '/effective-settings': {
+        worca: { models: { 'glm-ds': { id: 'opus' } } },
+      },
+      '/templates/project/feature-glm-ds': TEMPLATE_BODY,
+      '/projects/test-proj/models': {
+        ok: true,
+        models: [
+          { alias: 'glm-ds', tier: 'project' },
+          { alias: 'opus', tier: 'builtin' },
+          { alias: 'sonnet', tier: 'builtin' },
+          { alias: 'haiku', tier: 'builtin' },
+        ],
+      },
+    });
+
+    await loadTemplate('project', 'feature-glm-ds', 'test-proj');
+
+    const st = getEditorState();
+    // All four aliases reachable for the dropdown union.
+    expect(Object.keys(st.modelTierMap).sort()).toEqual([
+      'glm-ds',
+      'haiku',
+      'opus',
+      'sonnet',
+    ]);
+    expect(st.modelTierMap['glm-ds']).toBe('project');
+    expect(st.modelTierMap.opus).toBe('builtin');
+  });
+
   it('falls back to empty settings when the settings fetch fails', async () => {
     globalThis.fetch = vi.fn((url) => {
       if (String(url).includes('/settings')) {
