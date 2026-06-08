@@ -3132,6 +3132,14 @@ async function _confirmTemplateActionDialog() {
         models: dlg.resolutions || {},
         templates: dlg.templateResolutions || {},
       };
+      // Forward the user-facing filename so the CLI can stamp it as
+      // `_imported_from` on each imported model entry — otherwise the
+      // CLI sees only the server-side temp file (`bundle.zip`) and the
+      // Models page badge ends up generic. Server sanitizes the header.
+      const bundleLabel = dlg.file?.name || null;
+      const bundleLabelHeader = bundleLabel
+        ? { 'x-bundle-filename': bundleLabel }
+        : {};
       let res;
       if (isZip) {
         const importUrl = `${projectUrl('/templates/import')}?dst_tier=${encodeURIComponent(tier)}`;
@@ -3140,13 +3148,17 @@ async function _confirmTemplateActionDialog() {
           headers: {
             'Content-Type': 'application/zip',
             'x-resolutions': JSON.stringify(bodyResolutions),
+            ...bundleLabelHeader,
           },
           body: dlg.file,
         });
       } else {
         res = await fetch(projectUrl('/templates/import'), {
           method: 'POST',
-          headers: { 'Content-Type': 'application/json' },
+          headers: {
+            'Content-Type': 'application/json',
+            ...bundleLabelHeader,
+          },
           body: JSON.stringify({
             bundle: dlg.parsed,
             dst_tier: tier,

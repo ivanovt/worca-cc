@@ -360,6 +360,17 @@ def register_subcommand(sub):
             "anything. Used by the worca-ui import flow."
         ),
     )
+    import_parser.add_argument(
+        "--bundle-label",
+        dest="bundle_label",
+        default=None,
+        help=(
+            "Override the human-friendly label stamped on each imported "
+            "model entry as `_imported_from`. Defaults to the basename of "
+            "--from. Useful for UI imports where the source path is a "
+            "temp file but the user-facing filename is known separately."
+        ),
+    )
 
     # validate
     validate_parser = templates_sub.add_parser(
@@ -527,14 +538,99 @@ def _find_settings_path(scope: str = "project") -> str | None:
     return None
 
 
-def _atomic_import(templates, settings_patch, target_dir, settings_path):
+def _local_settings_path_for(settings_path: str) -> str:
+    """Derive the `.local.json` sibling path from a `settings.json` path."""
+    root, ext = os.path.splitext(settings_path)
+    return root + ".local" + ext
+
+
+def _split_models_patch(settings_patch: dict) -> tuple[dict, dict]:
+    """Split a bundle settings_patch into (base_patch, local_patch).
+
+    Enforces the W-053 storage rule: per-model `id` and pricing land in
+    `settings.json` (committed), `env` lands in `settings.local.json`
+    (gitignored — safe for secrets). Mirrors `writeModelEntry` in the
+    worca-ui server so a bundle-import write produces the same on-disk
+    shape as a subsequent UI save.
+
+    Returns (base_patch, local_patch). Either may be empty. Both retain
+    the `worca` namespace one level up so the caller can deep_merge them
+    over existing settings.
+
+    Per-alias decisions:
+      - bare string form (id only) → base, untouched
+      - object form with env → base gets the non-env fields (`{id, ...}`),
+        local gets `{env: {...}}`; if base would be `{id: X}` alone,
+        flattens to the bare-string form for cleaner JSON
+      - object form without env → base, untouched (will flatten if id-only)
+    """
+    base: dict = {}
+    local: dict = {}
+
+    # Pricing is not secret — keep it in the committed file.
+    if settings_patch.get("pricing"):
+        base["pricing"] = settings_patch["pricing"]
+
+    models = settings_patch.get("models") or {}
+    if not models:
+        return base, local
+
+    base_models: dict = {}
+    local_models: dict = {}
+    for alias, entry in models.items():
+        if isinstance(entry, str):
+            base_models[alias] = entry
+            continue
+        if not isinstance(entry, dict):
+            # Malformed — preserve in base so it still surfaces somewhere
+            # (the loader will warn about its shape).
+            base_models[alias] = entry
+            continue
+
+        env = entry.get("env") or {}
+        base_part = {k: v for k, v in entry.items() if k != "env"}
+
+        if env:
+            local_models[alias] = {"env": env}
+            if base_part:
+                base_models[alias] = base_part
+        else:
+            # No env in the bundle for this alias — flatten id-only to the
+            # canonical bare-string form (matches what writeModelEntry on
+            # the UI side emits when env is empty).
+            if list(base_part.keys()) == ["id"]:
+                base_models[alias] = base_part["id"]
+            elif base_part:
+                base_models[alias] = base_part
+
+    if base_models:
+        base["models"] = base_models
+    if local_models:
+        local["models"] = local_models
+    return base, local
+
+
+def _atomic_import(
+    templates,
+    settings_patch,
+    target_dir,
+    settings_path,
+    *,
+    local_settings_patch=None,
+    local_settings_path=None,
+):
     """Two-phase import: stage to tmpdir, then commit with full rollback.
+
+    Writes up to TWO settings files atomically: ``settings_path`` (committed)
+    and the optional ``local_settings_path`` (gitignored). The storage split
+    enforced by ``_split_models_patch`` puts model env blocks in the local
+    file so secrets never land in committed JSON.
 
     Rollback model:
       1. Stage everything to a tmpdir (no target mutation yet).
       2. For each template that would replace an existing dst, rename the
-         existing dst aside to `<dst>.bak-<rand>`. Same for settings.json.
-      3. Copy staged templates into place. Then os.replace settings.json.
+         existing dst aside to `<dst>.bak-<rand>`. Same for both settings files.
+      3. Copy staged templates into place. Then os.replace each settings file.
       4. On any failure during step 3: remove anything newly committed,
          restore every `.bak-*` to its original location, raise.
       5. On success: delete all `.bak-*` backups.
@@ -549,11 +645,11 @@ def _atomic_import(templates, settings_patch, target_dir, settings_path):
     in common setups — macOS (`/private/var/folders/...` vs `/Volumes/X`),
     Linux (`/tmp` tmpfs vs ext4 on `/home`), Windows (`C:\\Users\\…\\Temp`
     vs `D:\\repo`). To guarantee single-FS for the atomic replace, we stage
-    `settings.json` in the SAME parent directory as the target, not in the
-    system tempdir. Template directories can keep staging in the system
-    tempdir because `shutil.copytree` is a file-by-file copy (no rename),
-    which handles cross-device natively. Same pattern as `state/status.py`
-    and `cli/init.py`.
+    `settings.json` (and its `.local` sibling) in the SAME parent directory
+    as the target, not in the system tempdir. Template directories can keep
+    staging in the system tempdir because `shutil.copytree` is a file-by-file
+    copy (no rename), which handles cross-device natively. Same pattern as
+    `state/status.py` and `cli/init.py`.
     """
     target_real = target_dir.resolve()
     for tmpl_id in templates:
@@ -567,13 +663,51 @@ def _atomic_import(templates, settings_patch, target_dir, settings_path):
     # (original_path, backup_path, kind) — kind is "dir" or "file"
     backups: list[tuple[Path, Path, str]] = []
     committed_templates: list[Path] = []
-    # Settings staging file lives next to the target (see docstring). Tracked
-    # separately so the finally block can sweep it on rollback / mid-commit
-    # failure without relying on the system-tempdir cleanup.
-    staged_settings_local: Path | None = None
+    # Settings staging files live next to their targets (see docstring).
+    # Tracked here so the finally block can sweep them on rollback or a
+    # mid-commit failure without relying on the system-tempdir cleanup.
+    # One slot per managed settings file (base + local) — both are written
+    # in the same commit so a failure on either rolls both back.
+    staged_paths: list[Path] = []
 
     def _bak_name(p: Path) -> Path:
         return p.with_name(p.name + f".bak-{uuid.uuid4().hex[:8]}")
+
+    def _prepare_settings_text(patch, path):
+        """Read+deep_merge+serialize; return None if nothing to write."""
+        if not patch or not path:
+            return None
+        p = Path(path)
+        if p.exists():
+            current = json.loads(p.read_text(encoding="utf-8"))
+        else:
+            current = {}
+        patched = deep_merge(current, {"worca": patch})
+        return json.dumps(patched, indent=2)
+
+    def _stage_and_replace(new_text, path, prefix):
+        """Backup existing, stage next to target, atomic-replace.
+
+        Mutates the `backups` and `staged_paths` lists in-place so the
+        rollback / finally blocks see the intermediate state.
+        """
+        if new_text is None or not path:
+            return
+        sp = Path(path)
+        sp.parent.mkdir(parents=True, exist_ok=True)
+        if sp.exists():
+            bak = _bak_name(sp)
+            shutil.copy2(str(sp), str(bak))
+            backups.append((sp, bak, "file"))
+        fd, tmp_name = tempfile.mkstemp(
+            prefix=prefix, suffix=".tmp", dir=str(sp.parent),
+        )
+        staged_paths.append(Path(tmp_name))
+        with os.fdopen(fd, "w", encoding="utf-8") as f:
+            f.write(new_text)
+        os.replace(tmp_name, str(sp))
+        # Consumed — drop from sweep list.
+        staged_paths.pop()
 
     try:
         # ---- Stage (no target mutation) ----
@@ -593,17 +727,12 @@ def _atomic_import(templates, settings_patch, target_dir, settings_path):
                     (agents_dir / fname).write_text(content, encoding="utf-8")
 
         # Serialize the patched settings now (early failure on JSON errors)
-        # but defer the file write to the commit phase so it lands in the
-        # target's directory — required for same-FS os.replace below.
-        new_settings_text: str | None = None
-        if settings_patch and settings_path:
-            sp = Path(settings_path)
-            if sp.exists():
-                current = json.loads(sp.read_text(encoding="utf-8"))
-            else:
-                current = {}
-            patched = deep_merge(current, {"worca": settings_patch})
-            new_settings_text = json.dumps(patched, indent=2)
+        # but defer the file writes to the commit phase so they land in the
+        # target directory — required for same-FS os.replace below.
+        new_settings_text = _prepare_settings_text(settings_patch, settings_path)
+        new_local_text = _prepare_settings_text(
+            local_settings_patch, local_settings_path,
+        )
 
         # ---- Commit with backup-first ----
         try:
@@ -617,31 +746,14 @@ def _atomic_import(templates, settings_patch, target_dir, settings_path):
                 shutil.copytree(str(src), str(dst))
                 committed_templates.append(dst)
 
-            if new_settings_text is not None and settings_path:
-                sp = Path(settings_path)
-                # Ensure the target's parent exists before staging next to it.
-                # In normal usage this is always `.claude/`, which the caller
-                # guarantees exists, but be defensive.
-                sp.parent.mkdir(parents=True, exist_ok=True)
-                if sp.exists():
-                    bak = _bak_name(sp)
-                    shutil.copy2(str(sp), str(bak))
-                    backups.append((sp, bak, "file"))
-                # Stage in target's directory so os.replace is single-FS on
-                # POSIX (no EXDEV) and Windows (no ERROR_NOT_SAME_DEVICE).
-                # The hidden prefix keeps the staging file out of casual
-                # `ls` and prevents tools watching the directory from
-                # confusing it with a real settings.json.
-                fd, tmp_name = tempfile.mkstemp(
-                    prefix=".settings.json.import-",
-                    suffix=".tmp",
-                    dir=str(sp.parent),
-                )
-                staged_settings_local = Path(tmp_name)
-                with os.fdopen(fd, "w", encoding="utf-8") as f:
-                    f.write(new_settings_text)
-                os.replace(str(staged_settings_local), str(sp))
-                staged_settings_local = None  # consumed by os.replace
+            _stage_and_replace(
+                new_settings_text, settings_path, ".settings.json.import-",
+            )
+            _stage_and_replace(
+                new_local_text,
+                local_settings_path,
+                ".settings.local.json.import-",
+            )
         except Exception:
             # Rollback: tear down what we committed, then restore backups.
             for d in committed_templates:
@@ -668,13 +780,13 @@ def _atomic_import(templates, settings_patch, target_dir, settings_path):
                     except OSError:
                         pass
     finally:
-        # Sweep any staged-next-to-target settings file that wasn't consumed
-        # (write failure, os.replace failure, or pre-replace exception).
-        # Required so the rollback-leftover assertion `no .bak-* siblings`
-        # also holds for our import-staging file.
-        if staged_settings_local is not None:
+        # Sweep any staged-next-to-target settings files that weren't
+        # consumed (write failure, os.replace failure, or pre-replace
+        # exception). Required so the rollback-leftover assertion
+        # `no .bak-* / .import- siblings` also holds for our staging files.
+        for sp in staged_paths:
             try:
-                staged_settings_local.unlink()
+                sp.unlink()
             except OSError:
                 pass
         shutil.rmtree(staging, ignore_errors=True)
@@ -1127,11 +1239,16 @@ def cmd_templates_import(args):
     _rewrite_template_model_refs(to_import, rename_map)
 
     # Stamp bundle attribution on each imported model entry so the Models
-    # page can surface a small "Imported from <X>" badge. Derived from the
-    # source's basename — covers files, gist URLs, and HTTP URLs uniformly.
-    # The UI drops the badge on first edit (ownership transfer); the server's
+    # page can surface a small "Imported from <X>" badge. Prefer the
+    # explicit --bundle-label arg when supplied (the UI passes the user's
+    # original filename, since the source path is a server-side temp file
+    # named `bundle.zip`); fall back to the source's basename for CLI
+    # callers — covers files, gist URLs, and HTTP URLs uniformly. The UI
+    # drops the badge on first edit (ownership transfer); the server's
     # writeModelEntry does not preserve _imported_from across UI saves.
-    bundle_label = _derive_bundle_label(source)
+    bundle_label = (
+        getattr(args, "bundle_label", None) or _derive_bundle_label(source)
+    )
     if bundle_models and bundle_label:
         stamped: dict = {}
         for alias, entry in bundle_models.items():
@@ -1158,18 +1275,42 @@ def cmd_templates_import(args):
         return
 
     # Single atomic transaction: templates land in `target_dir` (per --scope),
-    # model aliases / pricing land in user-global settings.json. _atomic_import
-    # already handles cross-FS staging + rollback for both surfaces.
+    # model aliases / pricing land split between settings.json (id +
+    # _imported_from + pricing) and settings.local.json (env). The split
+    # mirrors writeModelEntry in the worca-ui server so a CLI-import write
+    # produces the same on-disk shape as a subsequent UI save — secrets
+    # never end up in the committed settings.json. _atomic_import handles
+    # cross-FS staging + rollback for both files together.
+    base_settings_patch, local_settings_patch = _split_models_patch(
+        settings_patch
+    )
+    models_local_settings_path = (
+        _local_settings_path_for(models_settings_path)
+        if models_settings_path
+        else None
+    )
     try:
-        _atomic_import(to_import, settings_patch, target_dir, models_settings_path)
+        _atomic_import(
+            to_import,
+            base_settings_patch,
+            target_dir,
+            models_settings_path,
+            local_settings_patch=local_settings_patch,
+            local_settings_path=models_local_settings_path,
+        )
     except Exception as e:
         print(f"error: import failed: {e}", file=sys.stderr)
         raise SystemExit(1)
 
     if to_import and settings_patch:
+        local_note = (
+            f" — secrets / env in {models_local_settings_path}"
+            if local_settings_patch and models_local_settings_path
+            else ""
+        )
         print(
             f"info: templates, model aliases, and pricing all landed in "
-            f"{scope} scope ({target_dir}, {models_settings_path}).",
+            f"{scope} scope ({target_dir}, {models_settings_path}){local_note}.",
             file=sys.stderr,
         )
 
