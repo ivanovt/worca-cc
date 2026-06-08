@@ -669,6 +669,25 @@ function _invalidateEditorCacheIfImported(imported) {
     });
 }
 
+/**
+ * Refresh the cached models list after a successful template-bundle
+ * import. Bundles can carry `worca.models` + `worca.pricing.models`
+ * entries that land in settings.json / settings.local.json; without
+ * this refresh the Models page (which reads from `state.models`)
+ * doesn't show the new aliases until the user reloads the page or
+ * the 30s polling interval next fires.
+ */
+function _refreshModelsAfterImport(projectId) {
+  fetchModels(projectId)
+    .then((models) => {
+      store.setState({ models, modelsLoaded: true, modelsError: null });
+      rerender();
+    })
+    .catch(() => {
+      /* best-effort — next poll will catch up */
+    });
+}
+
 // ── Integrations state ──────────────────────────────────────────────────
 let integrationsStatus = null;
 let integrationsConfig = null;
@@ -3197,6 +3216,11 @@ async function _confirmTemplateActionDialog() {
           templates,
           defaultTemplate: templates.defaultTemplate,
         });
+        // Bundles can carry models + pricing too — refresh the Models
+        // list cache so the new alias shows up immediately when the
+        // user navigates to /#/models (otherwise the user has to
+        // refresh the page to see what just got imported).
+        _refreshModelsAfterImport(route.projectId || null);
         _invalidateEditorCacheIfImported(data.imported || []);
         _templateActionDialog = {
           ...dlg,
@@ -3211,6 +3235,7 @@ async function _confirmTemplateActionDialog() {
       _templateActionBusy = false;
       const templates = await fetchTemplates(route.projectId || null);
       store.setState({ templates, defaultTemplate: templates.defaultTemplate });
+      _refreshModelsAfterImport(route.projectId || null);
       _invalidateEditorCacheIfImported(data.imported || []);
       return;
     }

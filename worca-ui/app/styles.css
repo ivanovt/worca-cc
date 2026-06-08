@@ -10344,9 +10344,10 @@ body.help-mode-active sl-tab {
   padding: 0.1rem 0.4rem;
   border-radius: 3px;
 }
-.model-card-imported-badge::part(base) {
-  background: var(--bg-tertiary);
-}
+/* Imported-from badge — let Shoelace's neutral variant draw both bg and
+   text. The previous bg-tertiary override gave the badge a low-contrast
+   gray-on-gray look (text used the default light neutral text color on
+   a darker gray background and became unreadable). */
 
 /* Model duplicate dialog (tier picker + alias input) */
 .model-duplicate-form {
