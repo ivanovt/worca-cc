@@ -96,6 +96,10 @@ def project_dir(tmp_path, monkeypatch):
     isn't enough — the templates resolver uses Path.home() directly, while
     settings.py honors WORCA_HOME. Patching $HOME and exporting WORCA_HOME
     to the same root keeps both paths redirected.
+
+    On Windows, ``Path.home()`` resolves from ``USERPROFILE`` (not ``HOME``),
+    so without redirecting it too the user-scope write would land in the
+    runner's real profile and the strict-fs-isolation guard would fail.
     """
     project = tmp_path / "project"
     project.mkdir()
@@ -109,6 +113,7 @@ def project_dir(tmp_path, monkeypatch):
     worca_home.mkdir()
     (worca_home / "templates").mkdir()
     monkeypatch.setenv("HOME", str(fake_home))
+    monkeypatch.setenv("USERPROFILE", str(fake_home))
     monkeypatch.setenv("WORCA_HOME", str(worca_home))
 
     # cmd_templates_import resolves project settings against cwd → .git walk.

@@ -567,14 +567,21 @@ def _derive_bundle_label(source: str) -> str:
         /path/to/feature-fast-bundle.json -> "feature-fast-bundle.json"
         https://gist.github.com/.../bundle.json -> "bundle.json"
         gist:abcdef -> "gist:abcdef"
+        C:\\Users\\sd\\bundle.json -> "bundle.json"  (Windows backslash paths)
     """
     if not source:
         return ""
     # Strip any query/fragment.
     label = source.split("?")[0].split("#")[0]
-    # Take the last path segment; fall back to the whole string for non-paths.
-    tail = label.rstrip("/").rsplit("/", 1)[-1] if "/" in label else label
-    return tail or label[:64]
+    # Strip trailing path separators (both flavors) so a trailing slash
+    # doesn't reduce the basename to the empty string.
+    label = label.rstrip("/\\")
+    # Take the last path segment; honor both POSIX and Windows separators
+    # so a Windows absolute path doesn't survive whole as the "label".
+    sep_idx = max(label.rfind("/"), label.rfind("\\"))
+    if sep_idx >= 0:
+        return label[sep_idx + 1:] or label[:64]
+    return label
 
 
 def _find_settings_path(scope: str = "project") -> str | None:
