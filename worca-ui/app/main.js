@@ -1891,10 +1891,10 @@ function handleSaveSourceRepo(sourceRepo) {
 // --- Pipelines / Templates handlers ---
 
 async function handleSetDefaultTemplate(tid, tier) {
-  // Set Default is a project-level setting; the UI only exposes the
-  // toggle on project-tier templates, so tier defaults to 'project'
-  // when the caller doesn't supply one. Passing `tid: null` clears
-  // the pointer (Unset Default).
+  // Set Default is a project-level setting exposed for project-tier
+  // and builtin-tier templates. tier defaults to 'project' when the
+  // caller doesn't supply one. Passing `tid: null` clears the
+  // pointer (Unset Default).
   const clearing = tid == null;
   const useTier = clearing ? null : tier || 'project';
   try {
@@ -4792,11 +4792,15 @@ function contentHeaderView() {
       // Top-right Set/Unset Default toggle. Replaces the per-card
       // "Set Default" button — one canonical surface, and the user
       // can see whether the template they're looking at is the
-      // current default. Only meaningful for project-tier templates
-      // (default_template is a project-level setting that lives in
-      // settings.json and is shared with collaborators; pointing it
-      // at user or built-in scope doesn't make sense).
-      if (route.tier === 'project' && route.runId) {
+      // current default. Exposed for project-tier and builtin-tier
+      // templates (both are portable and available to all
+      // collaborators). User-tier is excluded because ~/.worca/
+      // templates are not in the repo and would break anyone who
+      // doesn't have that template installed locally.
+      if (
+        (route.tier === 'project' || route.tier === 'builtin') &&
+        route.runId
+      ) {
         const defaultRef = state.defaultTemplate;
         const defaultId =
           typeof defaultRef === 'string' ? defaultRef : defaultRef?.id || null;
