@@ -47,58 +47,64 @@ function makeRun({
   return { stages: { plan: stage } };
 }
 
-describe('stage-level Model / ID rendering', () => {
-  it('renders a single "Model:" label when no alias is recorded (backward-compatible)', () => {
+describe('stage-level Model Alias / Model ID rendering', () => {
+  it('renders a single "Model ID:" label when no alias is recorded (backward-compatible)', () => {
     const html = renderToString(runDetailView(makeRun({ stageModel: 'opus' })));
-    // Single Model: label, the resolved id appears next to it, no ID: label
-    // is added — old runs and plain-model configs are untouched.
-    const modelCount = (
-      html.match(/<span class="meta-label">Model:<\/span>/g) || []
+    const modelIdCount = (
+      html.match(/<span class="meta-label">Model ID:<\/span>/g) || []
     ).length;
-    const idCount = (html.match(/<span class="meta-label">ID:<\/span>/g) || [])
-      .length;
-    expect(modelCount).toBe(1);
-    expect(idCount).toBe(0);
+    const aliasCount = (
+      html.match(/<span class="meta-label">Model Alias:<\/span>/g) || []
+    ).length;
+    expect(modelIdCount).toBe(1);
+    expect(aliasCount).toBe(0);
     expect(html).toContain('>opus<');
   });
 
-  it('renders Model: <alias> + ID: <id> when alias differs from the resolved id', () => {
+  it('renders Model Alias: <alias> + Model ID: <id> when alias differs from the resolved id', () => {
     const html = renderToString(
       runDetailView(makeRun({ stageModel: 'opus', stageModelAlias: 'glm-ds' })),
     );
-    expect(html).toContain('<span class="meta-label">Model:</span>');
-    expect(html).toContain('<span class="meta-label">ID:</span>');
+    expect(html).toContain('<span class="meta-label">Model Alias:</span>');
+    expect(html).toContain('<span class="meta-label">Model ID:</span>');
     expect(html).toContain('>glm-ds<');
     expect(html).toContain('>opus<');
-    // The alias is what's surfaced as the primary value, not the resolved id.
     const aliasIdx = html.indexOf('>glm-ds<');
     const idIdx = html.indexOf('>opus<');
     expect(aliasIdx).toBeLessThan(idIdx);
   });
 
-  it('collapses to a single label when alias equals the resolved id (no churn)', () => {
-    // Defensive: even if the runner ever writes model_alias == model, the UI
-    // should NOT produce a redundant "Model: opus  ID: opus" pair.
+  it('renders Model Alias: + Model ID: for built-in shorthand aliases', () => {
+    const html = renderToString(
+      runDetailView(
+        makeRun({ stageModel: 'claude-opus-4-6', stageModelAlias: 'opus' }),
+      ),
+    );
+    expect(html).toContain('<span class="meta-label">Model Alias:</span>');
+    expect(html).toContain('<span class="meta-label">Model ID:</span>');
+    expect(html).toContain('>opus<');
+    expect(html).toContain('>claude-opus-4-6<');
+  });
+
+  it('collapses to a single "Model ID:" label when alias equals the resolved id', () => {
     const html = renderToString(
       runDetailView(makeRun({ stageModel: 'opus', stageModelAlias: 'opus' })),
     );
-    const idCount = (html.match(/<span class="meta-label">ID:<\/span>/g) || [])
-      .length;
-    expect(idCount).toBe(0);
+    const aliasCount = (
+      html.match(/<span class="meta-label">Model Alias:<\/span>/g) || []
+    ).length;
+    expect(aliasCount).toBe(0);
+    expect(html).toContain('<span class="meta-label">Model ID:</span>');
   });
 
-  it('does not render any Model row when no model is recorded', () => {
+  it('does not render any model row when no model is recorded', () => {
     const html = renderToString(runDetailView(makeRun({})));
-    expect(html).not.toContain('<span class="meta-label">Model:</span>');
-    expect(html).not.toContain('<span class="meta-label">ID:</span>');
+    expect(html).not.toContain('<span class="meta-label">Model ID:</span>');
+    expect(html).not.toContain('<span class="meta-label">Model Alias:</span>');
   });
 });
 
-describe('iteration-level Model / ID rendering (multi-iteration tab panel)', () => {
-  // The single-iteration path delegates to stageModel + stage.model_alias
-  // (covered above). Multi-iteration runs render per-iteration model info
-  // from iter.model + iter.model_alias — confirm the same alias/id semantics
-  // apply on that path.
+describe('iteration-level Model Alias / Model ID rendering (multi-iteration tab panel)', () => {
   function makeMultiIterRun(iters) {
     return {
       stages: {
@@ -107,7 +113,7 @@ describe('iteration-level Model / ID rendering (multi-iteration tab panel)', () 
     };
   }
 
-  it('renders Model: <alias> + ID: <id> on a per-iteration row when alias is set', () => {
+  it('renders Model Alias: <alias> + Model ID: <id> on a per-iteration row when alias is set', () => {
     const html = renderToString(
       runDetailView(
         makeMultiIterRun([
@@ -121,13 +127,12 @@ describe('iteration-level Model / ID rendering (multi-iteration tab panel)', () 
         ]),
       ),
     );
-    expect(html).toContain('<span class="meta-label">ID:</span>');
+    expect(html).toContain('<span class="meta-label">Model ID:</span>');
     expect(html).toContain('>glm-ds<');
-    // The second iter has no alias — only a single Model row for it.
-    // Count is at least 2 Model rows total (one per iter).
-    const modelCount = (
-      html.match(/<span class="meta-label">Model:<\/span>/g) || []
+    expect(html).toContain('<span class="meta-label">Model Alias:</span>');
+    const modelIdCount = (
+      html.match(/<span class="meta-label">Model ID:<\/span>/g) || []
     ).length;
-    expect(modelCount).toBeGreaterThanOrEqual(2);
+    expect(modelIdCount).toBeGreaterThanOrEqual(2);
   });
 });

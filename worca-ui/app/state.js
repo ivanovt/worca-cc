@@ -42,6 +42,16 @@ export function createStore(initial = {}) {
     },
     runsLoaded: initial.runsLoaded ?? false,
     addProjectDialogOpen: initial.addProjectDialogOpen ?? false,
+    // Gist-export dialog state. `open` controls the sl-dialog; `status` walks
+    // loading→done|error; `copied` drives the transient copy-button feedback.
+    gistDialog: initial.gistDialog ?? {
+      open: false,
+      status: 'loading',
+      url: null,
+      error: null,
+      templateName: '',
+      copied: false,
+    },
     worktrees: initial.worktrees ?? [],
     worktreesLoaded: initial.worktreesLoaded ?? false,
     fleets: initial.fleets ?? [],
@@ -102,6 +112,7 @@ export function createStore(initial = {}) {
         next.beads === state.beads &&
         next.webhookInbox === state.webhookInbox &&
         next.addProjectDialogOpen === state.addProjectDialogOpen &&
+        next.gistDialog === state.gistDialog &&
         next.worktrees === state.worktrees &&
         next.fleets === state.fleets &&
         next.fleetsLoaded === state.fleetsLoaded &&
@@ -113,7 +124,16 @@ export function createStore(initial = {}) {
         next.classifierModel === state.classifierModel &&
         next.cleanupPolicy === state.cleanupPolicy &&
         next.maxConcurrentPipelines === state.maxConcurrentPipelines &&
-        next.totalRunning === state.totalRunning
+        next.totalRunning === state.totalRunning &&
+        next.templates === state.templates &&
+        next.templatesLoaded === state.templatesLoaded &&
+        next.templatesError === state.templatesError &&
+        // defaultTemplate is the project's default_template pointer
+        // (bundled with /templates). Without this comparison the
+        // editor's Set Default ↔ Unset Default toggle would not
+        // re-render after a successful PUT because the no-op
+        // detector would treat the patch as unchanged.
+        next.defaultTemplate === state.defaultTemplate
       )
         return;
       state = next;

@@ -4,12 +4,18 @@ Provides functions to extract token usage from Claude CLI result events,
 aggregate usage across iterations/stages, and estimate costs from pricing tables.
 """
 
+import sys
 from typing import Optional
 
 from worca.utils.settings import load_settings
 
+_warned_aliases: set[str] = set()
 
-def extract_token_usage(raw_envelope: dict) -> dict:
+
+def extract_token_usage(
+    raw_envelope: dict,
+    settings_path: Optional[str] = None,
+) -> dict:
     """Extract a normalized token_usage dict from a Claude CLI result event.
 
     Pulls token fields from raw_envelope["usage"] and top-level fields
@@ -17,6 +23,7 @@ def extract_token_usage(raw_envelope: dict) -> dict:
 
     Args:
         raw_envelope: The full result event dict from Claude CLI.
+        settings_path: Optional path to settings.json for alias pricing lookup.
 
     Returns:
         A dict with normalized token usage fields. Missing fields default to 0.
@@ -28,7 +35,7 @@ def extract_token_usage(raw_envelope: dict) -> dict:
     server_tool_use = usage.get("server_tool_use") or {}
     cache_creation = usage.get("cache_creation") or {}
 
-    return {
+    result = {
         "input_tokens": usage.get("input_tokens", 0) or 0,
         "output_tokens": usage.get("output_tokens", 0) or 0,
         "cache_creation_input_tokens": usage.get("cache_creation_input_tokens", 0) or 0,
@@ -43,7 +50,39 @@ def extract_token_usage(raw_envelope: dict) -> dict:
         "cache_ephemeral_1h_tokens": cache_creation.get("ephemeral_1h_input_tokens", 0) or 0,
         "cache_ephemeral_5m_tokens": cache_creation.get("ephemeral_5m_input_tokens", 0) or 0,
         "speed": usage.get("speed", "") or "",
+        "context_final_pct": None,
     }
+
+    model_alias = raw_envelope.get("_model_alias")
+    final_context_pct = raw_envelope.get("_final_context_pct")
+    if final_context_pct is not None and not model_alias:
+        result["context_final_pct"] = final_context_pct
+
+    if model_alias:
+        result["model_alias"] = model_alias
+        if settings_path:
+            pricing_table = load_pricing(settings_path)
+            pricing_entry = pricing_table.get(model_alias)
+            if pricing_entry is not None:
+                settings = load_settings(settings_path)
+                server_tools_pricing = (
+                    settings.get("worca", {}).get("pricing", {}).get("server_tools")
+                )
+                result["total_cost_usd"] = estimate_cost(
+                    result, pricing_entry, server_tools_pricing
+                )
+            else:
+                result["total_cost_usd"] = 0
+                if model_alias not in _warned_aliases:
+                    _warned_aliases.add(model_alias)
+                    print(
+                        f"worca: no pricing entry for alias '{model_alias}' — cost recorded as $0. "
+                        f"Add worca.pricing.models.{model_alias} to settings.json.",
+                        file=sys.stderr,
+                    )
+            result["cost_source"] = "alias"
+
+    return result
 
 
 def _empty_token_usage() -> dict:
@@ -63,6 +102,7 @@ def _empty_token_usage() -> dict:
         "cache_ephemeral_1h_tokens": 0,
         "cache_ephemeral_5m_tokens": 0,
         "speed": "",
+        "context_final_pct": None,
     }
 
 
@@ -118,7 +158,7 @@ def aggregate_by_model(usages: list[dict]) -> dict:
     by_model: dict[str, dict] = {}
 
     for usage in usages:
-        model = usage.get("model", "") or "unknown"
+        model = usage.get("model_alias") or usage.get("model", "") or "unknown"
         if model not in by_model:
             by_model[model] = {
                 "input_tokens": 0,

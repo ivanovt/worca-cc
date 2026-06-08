@@ -358,6 +358,19 @@ describe('GET /api/versions', () => {
     expect(data.cachedAt).toBeDefined();
   });
 
+  it('GET /api/worca-cli returns the cached compat probe', async () => {
+    // startServer() seeds `app.locals.worcaVersion` with a known shape.
+    // The endpoint should return that payload verbatim — no network calls.
+    const realFetch = originalFetch;
+    globalThis.fetch = vi.fn(() => Promise.reject(new Error('no network')));
+
+    const res = await realFetch(`${base}/api/worca-cli`);
+    const data = await res.json();
+    expect(data.ok).toBe(true);
+    expect(data.installed).toBe('0.6.0rc7');
+    expect(data.minimum).toBe('0.6.0');
+  });
+
   it('respects force=1 to bypass cache', async () => {
     const realFetch = originalFetch;
     let callCount = 0;

@@ -11,11 +11,13 @@ import ArrowLeft from 'lucide/dist/esm/icons/arrow-left';
 import ArrowRight from 'lucide/dist/esm/icons/arrow-right';
 import Bell from 'lucide/dist/esm/icons/bell';
 import Boxes from 'lucide/dist/esm/icons/boxes';
+import BarChart3 from 'lucide/dist/esm/icons/chart-bar';
 import ChevronDown from 'lucide/dist/esm/icons/chevron-down';
 import ChevronRight from 'lucide/dist/esm/icons/chevron-right';
 import Circle from 'lucide/dist/esm/icons/circle';
 import CircleAlert from 'lucide/dist/esm/icons/circle-alert';
 import CircleCheck from 'lucide/dist/esm/icons/circle-check';
+import CircleHelp from 'lucide/dist/esm/icons/circle-question-mark';
 import CircleSlash from 'lucide/dist/esm/icons/circle-slash';
 import ClipboardCopy from 'lucide/dist/esm/icons/clipboard-copy';
 import ClipboardPaste from 'lucide/dist/esm/icons/clipboard-paste';
@@ -24,10 +26,12 @@ import Coins from 'lucide/dist/esm/icons/coins';
 import Copy from 'lucide/dist/esm/icons/copy';
 import Cpu from 'lucide/dist/esm/icons/cpu';
 import Database from 'lucide/dist/esm/icons/database';
+import Download from 'lucide/dist/esm/icons/download';
 import ExternalLink from 'lucide/dist/esm/icons/external-link';
 import FileText from 'lucide/dist/esm/icons/file-text';
 import Flag from 'lucide/dist/esm/icons/flag';
 import FolderOpen from 'lucide/dist/esm/icons/folder-open';
+import FolderTree from 'lucide/dist/esm/icons/folder-tree';
 import GitBranch from 'lucide/dist/esm/icons/git-branch';
 import GitPullRequest from 'lucide/dist/esm/icons/git-pull-request';
 import Hash from 'lucide/dist/esm/icons/hash';
@@ -36,6 +40,8 @@ import List from 'lucide/dist/esm/icons/list';
 import Loader from 'lucide/dist/esm/icons/loader';
 import Lock from 'lucide/dist/esm/icons/lock';
 import Moon from 'lucide/dist/esm/icons/moon';
+import PanelLeftClose from 'lucide/dist/esm/icons/panel-left-close';
+import PanelLeftOpen from 'lucide/dist/esm/icons/panel-left-open';
 import Pause from 'lucide/dist/esm/icons/pause';
 import Pencil from 'lucide/dist/esm/icons/pencil';
 import Play from 'lucide/dist/esm/icons/play';
@@ -54,10 +60,13 @@ import Sun from 'lucide/dist/esm/icons/sun';
 import Timer from 'lucide/dist/esm/icons/timer';
 import Trash2 from 'lucide/dist/esm/icons/trash-2';
 import AlertTriangle from 'lucide/dist/esm/icons/triangle-alert';
+import Upload from 'lucide/dist/esm/icons/upload';
 import Users from 'lucide/dist/esm/icons/users';
 import Workflow from 'lucide/dist/esm/icons/workflow';
 import X from 'lucide/dist/esm/icons/x';
 import Zap from 'lucide/dist/esm/icons/zap';
+import ZoomIn from 'lucide/dist/esm/icons/zoom-in';
+import ZoomOut from 'lucide/dist/esm/icons/zoom-out';
 
 function renderChildren(nodes) {
   return nodes
@@ -84,58 +93,67 @@ export function iconSvg(iconData, size = 16, className = '') {
 
 // Pre-exported icon data for convenience
 export {
-  Circle,
-  CircleCheck,
-  CircleAlert,
-  Loader,
-  Sun,
-  Moon,
-  Flag,
-  RefreshCw,
-  ArrowDown,
-  Pause,
-  Pencil,
-  Zap,
-  Clock,
-  AlertTriangle,
   Activity,
   Archive,
-  Search,
   ArrowLeft,
-  Square,
-  Play,
-  Users,
-  Shield,
-  ExternalLink,
-  GitBranch,
-  GitPullRequest,
-  ChevronDown,
-  ChevronRight,
-  Save,
-  Settings,
-  SlidersHorizontal,
-  Timer,
-  Cpu,
-  Star,
-  FileText,
-  ClipboardCopy,
-  ClipboardPaste,
-  Copy,
-  Coins,
+  BarChart3,
+  ArrowRight,
+  ArrowDown,
   Bell,
   Boxes,
-  Plus,
-  RotateCcw,
-  List,
-  Lock,
-  ArrowRight,
-  Database,
-  X,
-  Lightbulb,
-  Trash2,
-  RotateCw,
+  ChevronDown,
+  ChevronRight,
+  Circle,
+  CircleAlert,
+  CircleCheck,
+  CircleHelp,
   CircleSlash,
-  Hash,
+  ClipboardCopy,
+  ClipboardPaste,
+  Clock,
+  Coins,
+  Copy,
+  Cpu,
+  Database,
+  Download,
+  ExternalLink,
+  FileText,
+  Flag,
   FolderOpen,
+  FolderTree,
+  GitBranch,
+  GitPullRequest,
+  Hash,
+  Lightbulb,
+  List,
+  Loader,
+  Lock,
+  Moon,
+  PanelLeftClose,
+  PanelLeftOpen,
+  Pause,
+  Pencil,
+  Play,
+  Plus,
+  RefreshCw,
+  RotateCcw,
+  RotateCw,
+  Save,
+  Search,
+  Settings,
+  Shield,
+  SlidersHorizontal,
+  Square,
+  Star,
+  Sun,
+  Timer,
+  Trash2,
+  AlertTriangle,
+  Upload,
+  Users,
   Workflow,
+  X,
+  Zap,
+  ZoomIn,
+  ZoomOut,
 };

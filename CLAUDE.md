@@ -31,6 +31,8 @@ python .claude/scripts/run_worktree.py --prompt "Add user auth" [--branch main] 
 
 Plan Review and Learn are disabled by default; enable via `worca.stages.plan_review.enabled` / `worca.stages.learn.enabled` in settings.json.
 
+PR creation can be deferred to an operator (e.g. promoted from the UI) via `worca.stages.pr.defer: true` in settings.json (default `false`). This is a template-driven key — templates own it when in play. The workspace DAG executor also sets `WORCA_DEFER_PR=1` in child runs; the two producers compose monotonically (either can defer, neither can un-defer). When deferred, the guardian stage emits `pipeline.git.pr_deferred` instead of creating a PR.
+
 All governance enforced via Python hooks in `src/worca/claude_hooks/`.
 
 The rationale behind major architectural choices — UI stack, state model, governance, modularity, webhooks — is consolidated in [`docs/design-principles.md`](./docs/design-principles.md). Read it before proposing structural changes.
@@ -118,13 +120,17 @@ Skills and subagents in this repo split into two scopes:
 ## Configuration
 
 Agent config in `.claude/settings.json` under the `worca` namespace. Key sections:
+- `worca.default_template` — optional template id pinned as the project default; every run uses it unless `--template` overrides at launch
 - `worca.stages` — enable/disable stages, override agents
-- `worca.agents` — model, max_turns, and effort per agent
+- `worca.agents` — model, max_turns, effort, and max_beads per agent (coordinator only for max_beads)
+- `worca.agents.coordinator.max_beads` — bead decomposition cap: `0` = auto (default, current behavior), `1` = single-bead mandate, `>1` = advisory budget. Enforcement is soft (logs on deviation, run proceeds). Suppressed when PR-revision mode is active (review comments drive bead count). Precedence: per-run `--max-beads` override → template config → `0`. The `quick-fix` template ships with `max_beads: 1` (entire fix as one atomic bead).
 - `worca.effort` — auto_mode, auto_cap for adaptive effort levels (see [`docs/effort.md`](./docs/effort.md))
 - `worca.models` — shorthand→full model ID mapping (supports per-model env vars)
 - `worca.loops` — max iterations for test/review/planning retry loops
 - `worca.circuit_breaker` — error classification and halt thresholds
 - `worca.governance` — hook guards and dispatch rules (see [`docs/governance.md`](./docs/governance.md) for the full reference)
+
+**Template-driven keys.** When a template is in play at run launch (explicit or via `worca.default_template`), these are stripped from the project-Settings merge base before the template's `config` applies: `worca.agents`, `worca.stages`, `worca.loops`, `worca.circuit_breaker`, `worca.effort`, `worca.governance.dispatch`. The template owns them outright. Cross-template keys (`models`, `webhooks`, `pricing`, `governance.guards`, `graphify`, `code_review_graph`, preflight definitions) keep applying. Full precedence reference: [`docs/configuration-precedence.md`](./docs/configuration-precedence.md).
 
 ### Model Profiles (`worca.models`)
 
@@ -136,6 +142,7 @@ Key gotchas:
 - **Reserved keys** matching `WORCA_*`, `PATH`, or `CLAUDECODE` are silently stripped with a stderr warning. Denylist shared between Python (`src/worca/utils/env.py`) and JS (`worca-ui/server/reserved-env-keys.json`).
 - **Worktree materialization:** parent's `settings.local.json` secrets are materialized into the worktree's `settings.json` (gitignored). Same on-disk plaintext exposure model as `~/.aws/credentials`.
 - **`work_request.py` haiku coupling:** `extract_work_request` resolves its hardcoded `--model haiku` through `resolve_model()`, so customizing the `haiku` entry also retargets work-request title generation. Intentional.
+- **Cost source per alias:** if an alias's `env` block sets `ANTHROPIC_BASE_URL` (alt-endpoint routing), worca overrides Claude CLI's `total_cost_usd` using `worca.pricing.models.<alias>`. Otherwise Claude CLI's number is authoritative and the Pricing tab is informational/fallback. The trigger set lives in `_ALT_ENDPOINT_ENV_KEYS` in `src/worca/orchestrator/stages.py`.
 
 ### Effort Levels (`worca.effort`)
 

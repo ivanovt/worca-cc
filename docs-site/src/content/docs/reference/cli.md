@@ -65,7 +65,10 @@ Manage pipeline templates. See [Authoring templates](/advanced/authoring-templat
 | `list [--json]` | List all resolvable templates. |
 | `show <id>` | Show one template's definition. |
 | `save <id> [--description ...] [--global]` | Snapshot current settings as a template. |
-| `delete <id>` | Delete a project or user template. |
+| `create --from-file <path> [--global]` | Create a template from a JSON file (use `-` for stdin). |
+| `delete <id> [--global]` | Delete a project or user template. |
+| `export --to <dest> [--templates <ids>] [--include-models] [--include-pricing]` | Export templates as a portable bundle. `<dest>` is a file path, `gist` (secret), or `gist:public`. Secrets are redacted before write. See [Share via export/import bundles](/advanced/authoring-templates/#share-via-exportimport-bundles). |
+| `import --from <src> [--scope project\|user] [--non-interactive]` | Import templates from a bundle. `<src>` is a file path, HTTPS URL, or gist URL/ID. Collisions prompt interactively; import is atomic with rollback. |
 
 ## cleanup
 

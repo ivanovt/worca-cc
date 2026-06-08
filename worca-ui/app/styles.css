@@ -10,6 +10,16 @@
   --bg: #ffffff;
   --bg-secondary: #f8fafc;
   --bg-tertiary: #f1f5f9;
+  /* Card / panel surface. `--surface` was used in several places
+   * (`.run-card`, sidebar widgets, settings cards) without ever
+   * being defined, so it silently resolved to `unset` → no
+   * background. That was invisible while the page background and
+   * cards were both white, but the moment a parent panel tinted
+   * itself gray (e.g. `.pipelines-tier-section` → `--bg-secondary`)
+   * the cards turned transparent. Alias it to `--bg` so cards
+   * always render on a white (light) / dark-slate (dark) surface
+   * regardless of what's behind them. */
+  --surface: var(--bg);
   --border: #e2e8f0;
   --border-subtle: rgba(226, 232, 240, 0.6);
   --muted: #94a3b8;
@@ -145,15 +155,50 @@ h1, h2, h3, h4, h5, h6 {
 }
 
 .sidebar.collapsed .sidebar-section-header,
-.sidebar.collapsed .sidebar-item span,
+/* `.sidebar-item-left > span` targets only label spans — the outer
+   `.sidebar-item-left` is itself a span and would have been swept up
+   by the broader `.sidebar-item span` selector, hiding the icon too. */
+.sidebar.collapsed .sidebar-item-left > span,
 .sidebar.collapsed .conn-label,
-.sidebar.collapsed .logo-text {
+.sidebar.collapsed .logo-text,
+.sidebar.collapsed .sidebar-project-section,
+.sidebar.collapsed .sidebar-new-run-chevron-dropdown {
   display: none;
 }
 
+/* In the collapsed rail, nav items become icon-only — center them so they
+   sit under the toggle button rather than floating against the left edge. */
+.sidebar.collapsed .sidebar-item {
+  justify-content: center;
+  margin: 2px 6px;
+  padding: 8px 6px;
+}
+.sidebar.collapsed .sidebar-item-left {
+  gap: 0;
+}
+.sidebar.collapsed .sidebar-new-run {
+  padding: 4px 6px;
+}
+.sidebar.collapsed .sidebar-new-run-split {
+  width: auto;
+}
+.sidebar.collapsed .sidebar-footer {
+  justify-content: center;
+  padding: 12px 6px;
+}
+
 .sidebar-logo {
-  padding: 20px 16px 12px;
+  padding: 16px 12px 12px 16px;
   border-bottom: 1px solid var(--border-subtle);
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+}
+
+.sidebar.collapsed .sidebar-logo {
+  justify-content: center;
+  padding: 16px 6px 12px;
 }
 
 .logo-text {
@@ -162,6 +207,35 @@ h1, h2, h3, h4, h5, h6 {
   font-weight: 700;
   letter-spacing: 0.08em;
   color: var(--fg);
+}
+
+.sidebar-toggle-btn {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 28px;
+  height: 28px;
+  padding: 0;
+  border: 1px solid transparent;
+  border-radius: var(--radius);
+  background: transparent;
+  color: var(--muted);
+  cursor: pointer;
+  flex-shrink: 0;
+  transition:
+    background var(--transition-fast),
+    color var(--transition-fast),
+    border-color var(--transition-fast);
+}
+
+.sidebar-toggle-btn:hover {
+  background: var(--border);
+  color: var(--fg);
+}
+
+.sidebar-toggle-btn:focus-visible {
+  outline: none;
+  border-color: var(--accent);
 }
 
 /* --- 6. Sidebar Sections --- */
@@ -400,9 +474,546 @@ h1, h2, h3, h4, h5, h6 {
   color: #ffffff;
 }
 
+.action-btn--ghost {
+  border-color: transparent;
+  color: var(--text-muted);
+}
+
+.action-btn--ghost:hover {
+  border-color: var(--border);
+  color: var(--text);
+}
+
 .action-btn:disabled {
   opacity: 0.6;
   cursor: not-allowed;
+}
+
+.run-stage-actions {
+  display: flex;
+  align-items: center;
+  justify-content: flex-end;
+  gap: 6px;
+  padding: 0 0 4px;
+  flex-wrap: wrap;
+}
+
+/* --- Run Timeline ---
+   Local tokens layered on the global palette. --text-strong gives a
+   WCAG-AA-safe muted color for labels (4.5:1 on white at 12-13px), avoiding
+   the very pale --muted (#94a3b8). All other colors route through brand vars
+   so dark mode and theme tweaks land for free. */
+.run-timeline {
+  --tl-text-strong: #475569;
+  --tl-row-alt-bg: rgba(15, 23, 42, 0.04);
+  --tl-row-divider: rgba(15, 23, 42, 0.08);
+  --tl-grid-line: rgba(15, 23, 42, 0.05);
+  --tl-axis-line: rgba(15, 23, 42, 0.18);
+  --tl-axis-tick: rgba(15, 23, 42, 0.28);
+  --tl-axis-label: rgba(15, 23, 42, 0.62);
+  --tl-row-label: rgba(15, 23, 42, 0.78);
+  --tl-row-label-count: rgba(15, 23, 42, 0.45);
+  --tl-loopback-default-opacity: 0.7;
+  --tl-loopback-hint: rgba(15, 23, 42, 0.4);
+  --tl-bar-stroke: rgba(15, 23, 42, 0.22);
+  --tl-bar-shadow: rgba(15, 23, 42, 0.22);
+  --timeline-gap-fill: rgba(15, 23, 42, 0.04);
+  --timeline-gap-dot: rgba(15, 23, 42, 0.32);
+
+  padding: 16px 20px 24px;
+  background: var(--bg, #fff);
+  border: 1px solid var(--border-subtle, rgba(226, 232, 240, 0.6));
+  border-radius: 10px;
+  overflow-x: auto;
+  position: relative;
+}
+
+/* worca-ui drives dark mode via [data-theme="dark"] on the html element,
+   not via prefers-color-scheme. Both selectors here so the timeline tokens
+   flip with the rest of the chrome. */
+[data-theme="dark"] .run-timeline,
+.run-timeline[data-theme="dark"] {
+  --tl-text-strong: #cbd5e1;
+  --tl-row-alt-bg: rgba(255, 255, 255, 0.04);
+  --tl-row-divider: rgba(255, 255, 255, 0.1);
+  --tl-grid-line: rgba(255, 255, 255, 0.07);
+  --tl-axis-line: rgba(255, 255, 255, 0.22);
+  --tl-axis-tick: rgba(255, 255, 255, 0.35);
+  --tl-axis-label: rgba(255, 255, 255, 0.7);
+  --tl-row-label: rgba(255, 255, 255, 0.9);
+  --tl-row-label-count: rgba(255, 255, 255, 0.55);
+  --tl-loopback-hint: rgba(255, 255, 255, 0.5);
+  --tl-bar-stroke: rgba(255, 255, 255, 0.32);
+  --tl-bar-shadow: rgba(0, 0, 0, 0.45);
+  --timeline-gap-fill: rgba(255, 255, 255, 0.06);
+  --timeline-gap-dot: rgba(255, 255, 255, 0.4);
+}
+
+/* Top stats summary */
+.timeline-summary {
+  display: flex;
+  align-items: center;
+  gap: 28px;
+  /* Right-padding reserves space for the absolutely-positioned .timeline-toolbar
+     anchored at top:16px / right:20px so the stats never run under the buttons. */
+  padding: 4px 260px 16px 0;
+  flex-wrap: wrap;
+}
+.summary-stat {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  min-width: 64px;
+}
+.summary-stat-label {
+  font-size: 11px;
+  text-transform: uppercase;
+  letter-spacing: 0.04em;
+  color: var(--tl-text-strong);
+  font-weight: 500;
+}
+.summary-stat-value {
+  font-size: 18px;
+  font-weight: 600;
+  color: var(--fg, #0f172a);
+  font-variant-numeric: tabular-nums;
+}
+.summary-spacer {
+  flex: 1;
+}
+
+/* Toolbar — anchored to the top-right corner of the timeline box.
+   Stacks the zoom button group above the keyboard-hint text, both right-aligned. */
+.timeline-toolbar {
+  position: absolute;
+  top: 16px;
+  right: 20px;
+  z-index: 2;
+  display: flex;
+  flex-direction: column;
+  align-items: flex-end;
+  gap: 6px;
+}
+.timeline-toolbar-group {
+  display: inline-flex;
+  border: 1px solid var(--border, #e2e8f0);
+  border-radius: 6px;
+  overflow: hidden;
+  background: var(--bg, #fff);
+}
+.timeline-zoom-btn {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  min-width: 30px;
+  height: 28px;
+  padding: 0 8px;
+  border: none;
+  background: transparent;
+  color: var(--tl-text-strong);
+  cursor: pointer;
+  user-select: none;
+  border-right: 1px solid var(--border, #e2e8f0);
+}
+.timeline-zoom-btn:last-child {
+  border-right: none;
+}
+.timeline-zoom-btn:hover {
+  background: var(--bg-secondary, #f8fafc);
+  color: var(--fg, #0f172a);
+}
+.timeline-zoom-btn:active {
+  background: var(--bg-tertiary, #f1f5f9);
+}
+.timeline-zoom-btn:focus-visible {
+  outline: 2px solid var(--accent, #3b82f6);
+  outline-offset: -2px;
+  z-index: 1;
+}
+.timeline-toolbar-hint {
+  font-size: 11px;
+  color: var(--tl-text-strong);
+  text-align: right;
+}
+
+/* SVG wrapper */
+.timeline-svg-wrap {
+  position: relative;
+  overflow: visible;
+}
+
+/* Row backgrounds */
+.row-bg-alt {
+  fill: var(--tl-row-alt-bg);
+}
+.row-divider {
+  stroke: var(--tl-row-divider);
+  stroke-width: 1;
+  shape-rendering: crispEdges;
+}
+.grid-line {
+  stroke: var(--tl-grid-line);
+  stroke-width: 1;
+  shape-rendering: crispEdges;
+}
+
+/* Row labels — match the uppercase tracking used by .pipeline-stage-name so
+   timeline rows read like the stage section headers elsewhere in the UI. */
+.row-label {
+  font-size: 12px;
+  font-weight: 600;
+  fill: var(--tl-row-label);
+  font-family: var(--sl-font-sans, system-ui, sans-serif);
+  text-transform: uppercase;
+  letter-spacing: 0.03em;
+}
+.row-label-count {
+  font-size: 11px;
+  font-weight: 500;
+  fill: var(--tl-row-label-count);
+  text-transform: none;
+  letter-spacing: 0;
+}
+.loopback-hint {
+  font-size: 10px;
+  fill: var(--tl-loopback-hint);
+  pointer-events: none;
+}
+
+/* Bars
+   Default: thin contrasting hairline stroke so bar edges read clearly without
+   any per-bar divider. Hover/active: lift via translateY + drop-shadow so the
+   bar "raises" off the chart. Active state persists while the iteration drawer
+   is open (driven by the .is-active class). Reduced-motion drops the lift. */
+.timeline-bar {
+  cursor: pointer;
+  stroke: var(--tl-bar-stroke);
+  stroke-width: 1;
+  transition:
+    filter 130ms ease,
+    transform 130ms ease,
+    stroke-width 130ms ease;
+  /* SVG rect transforms relative to the SVG viewport origin, not the rect
+     itself — fine for translateY since we want a small vertical lift. */
+}
+.timeline-bar:hover,
+.timeline-bar.is-active {
+  filter: drop-shadow(0 3px 6px var(--tl-bar-shadow));
+  transform: translateY(-1px);
+  stroke-width: 1.25;
+}
+.timeline-bar:focus-visible {
+  /* Subtle keyboard-focus indicator — no bold ring. The raised+shadow state
+     above also kicks in on focus via :focus-visible :is() below. */
+  outline: 1.5px dashed var(--accent, #3b82f6);
+  outline-offset: 2px;
+}
+.timeline-bar:focus-visible {
+  filter: drop-shadow(0 3px 6px var(--tl-bar-shadow));
+  transform: translateY(-1px);
+}
+@media (prefers-reduced-motion: reduce) {
+  .timeline-bar,
+  .timeline-bar:hover,
+  .timeline-bar.is-active,
+  .timeline-bar:focus-visible {
+    transform: none;
+  }
+}
+.bar-label {
+  font-size: 10px;
+  font-weight: 600;
+  fill: #fff;
+  font-family: var(--sl-font-sans, system-ui, sans-serif);
+  font-variant-numeric: tabular-nums;
+  letter-spacing: 0.02em;
+}
+
+/* Gaps */
+.timeline-gap {
+  cursor: default;
+}
+.timeline-gap:focus-visible {
+  outline: 2px solid var(--accent, #3b82f6);
+  outline-offset: 1px;
+}
+.gap-bg {
+  fill: var(--timeline-gap-fill);
+}
+.gap-dot {
+  fill: var(--timeline-gap-dot);
+}
+
+/* Loopbacks */
+.loopback {
+  stroke-opacity: var(--tl-loopback-default-opacity);
+  transition: stroke-opacity 120ms ease, stroke-width 120ms ease;
+}
+.loopback.highlight {
+  stroke-opacity: 1;
+  stroke-width: 2.5;
+}
+
+/* Time axis */
+.axis-baseline {
+  stroke: var(--tl-axis-line);
+  stroke-width: 1;
+  shape-rendering: crispEdges;
+}
+.axis-tick {
+  stroke: var(--tl-axis-tick);
+  stroke-width: 1;
+  shape-rendering: crispEdges;
+}
+.axis-label {
+  font-size: 11px;
+  fill: var(--tl-axis-label);
+  font-family: var(--sl-font-sans, system-ui, sans-serif);
+  font-variant-numeric: tabular-nums;
+}
+
+/* Legend */
+.timeline-legend {
+  display: flex;
+  align-items: center;
+  gap: 18px;
+  padding: 14px 0 4px;
+  margin-top: 8px;
+  border-top: 1px solid var(--border-subtle, rgba(226, 232, 240, 0.6));
+  flex-wrap: wrap;
+}
+.legend-item {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  font-size: 11px;
+  color: var(--tl-text-strong);
+}
+.legend-swatch {
+  display: inline-block;
+  width: 12px;
+  height: 12px;
+  border-radius: 3px;
+  background: var(--muted);
+}
+.legend-swatch--gap {
+  background:
+    radial-gradient(circle, var(--timeline-gap-dot) 0.6px, transparent 1.2px),
+    var(--timeline-gap-fill);
+  background-size: 5px 5px;
+  border: 1px solid var(--tl-row-divider);
+}
+.legend-loopback {
+  /* Inline SVG arc + chevron; inherits color from the legend-item color, so
+     it tracks the rest of the legend chrome in both themes. */
+  color: var(--accent, #3b82f6);
+  flex-shrink: 0;
+}
+
+/* Tooltip */
+.timeline-tooltip {
+  position: fixed;
+  z-index: 1000;
+  background: var(--bg, #fff);
+  border: 1px solid var(--border, #e2e8f0);
+  border-radius: 8px;
+  box-shadow: 0 10px 28px rgba(15, 23, 42, 0.12), 0 2px 6px rgba(15, 23, 42, 0.08);
+  padding: 10px 12px;
+  pointer-events: none;
+  min-width: 200px;
+  max-width: 280px;
+  font-size: 12px;
+  line-height: 1.55;
+  color: var(--fg, #0f172a);
+}
+.tooltip-header {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  font-weight: 600;
+  margin-bottom: 6px;
+  padding-bottom: 6px;
+  border-bottom: 1px solid var(--border-subtle, rgba(226, 232, 240, 0.6));
+}
+.tooltip-hue-dot {
+  display: inline-block;
+  width: 8px;
+  height: 8px;
+  border-radius: 50%;
+  flex-shrink: 0;
+}
+.tooltip-header-sub {
+  font-weight: 400;
+  color: var(--tl-text-strong);
+  font-size: 11px;
+}
+.tooltip-bead-sub {
+  font-size: 11px;
+  color: var(--tl-text-strong);
+  margin-top: -2px;
+  margin-bottom: 4px;
+  line-height: 1.35;
+}
+.tooltip-bead-id {
+  font-family: var(--sl-font-mono, ui-monospace, SFMono-Regular, Menlo, monospace);
+  font-size: 10.5px;
+  background: var(--tl-row-alt, rgba(148, 163, 184, 0.12));
+  padding: 1px 5px;
+  border-radius: 3px;
+  margin-right: 4px;
+}
+.tooltip-row {
+  display: flex;
+  justify-content: space-between;
+  gap: 14px;
+}
+.tooltip-label {
+  color: var(--tl-text-strong);
+  font-weight: 500;
+}
+.tooltip-value {
+  font-family: var(--sl-font-mono, ui-monospace, SFMono-Regular, Menlo, monospace);
+  font-variant-numeric: tabular-nums;
+  color: var(--fg, #0f172a);
+}
+.tooltip-status {
+  text-transform: capitalize;
+}
+.tooltip-status.status-completed { color: var(--status-completed); }
+.tooltip-status.status-running, .tooltip-status.status-in_progress { color: var(--status-running); }
+.tooltip-status.status-failed { color: var(--status-failed); }
+.tooltip-status.status-paused { color: var(--status-paused); }
+.tooltip-status.status-interrupted { color: var(--status-interrupted); }
+
+/* --- Iteration drawer --- */
+.iteration-drawer::part(panel) {
+  width: 420px;
+  max-width: 90vw;
+}
+.iteration-drawer::part(header) {
+  border-bottom: 1px solid var(--border-subtle, rgba(226, 232, 240, 0.6));
+}
+.drawer-body {
+  display: flex;
+  flex-direction: column;
+  gap: 14px;
+  font-size: 13px;
+  color: var(--fg, #0f172a);
+}
+.drawer-title {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  margin: 0 0 4px;
+  font-size: 16px;
+  font-weight: 600;
+  color: var(--fg, #0f172a);
+  outline: none;
+}
+.drawer-hue-dot {
+  display: inline-block;
+  width: 10px;
+  height: 10px;
+  border-radius: 50%;
+}
+.drawer-title-sub {
+  font-weight: 400;
+  color: var(--tl-text-strong);
+  font-size: 13px;
+}
+.drawer-status-row {
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
+  padding: 6px 12px;
+  border-radius: 999px;
+  background: var(--bg-secondary, #f8fafc);
+  align-self: flex-start;
+}
+.drawer-status-pill {
+  display: inline-block;
+  width: 8px;
+  height: 8px;
+  border-radius: 50%;
+}
+.drawer-status-text {
+  font-size: 12px;
+  font-weight: 600;
+  text-transform: capitalize;
+}
+.drawer-status-text.status-completed { color: var(--status-completed); }
+.drawer-status-text.status-running, .drawer-status-text.status-in_progress { color: var(--status-running); }
+.drawer-status-text.status-failed { color: var(--status-failed); }
+.drawer-fields {
+  display: grid;
+  grid-template-columns: max-content 1fr;
+  gap: 8px 18px;
+  margin: 0;
+}
+.drawer-label {
+  color: var(--tl-text-strong);
+  font-weight: 500;
+  font-size: 12px;
+  text-transform: uppercase;
+  letter-spacing: 0.04em;
+  align-self: center;
+}
+.drawer-value {
+  margin: 0;
+  font-family: var(--sl-font-mono, ui-monospace, SFMono-Regular, Menlo, monospace);
+  font-variant-numeric: tabular-nums;
+  color: var(--fg, #0f172a);
+}
+.drawer-bead {
+  font-family: inherit;
+  display: flex;
+  align-items: baseline;
+  gap: 6px;
+  flex-wrap: wrap;
+}
+.drawer-bead-id {
+  font-family: var(--sl-font-mono, ui-monospace, SFMono-Regular, Menlo, monospace);
+  font-size: 11px;
+  background: var(--tl-row-alt, rgba(148, 163, 184, 0.12));
+  padding: 1px 6px;
+  border-radius: 3px;
+}
+.drawer-raw-json {
+  margin-top: 4px;
+}
+.drawer-raw-json summary {
+  cursor: pointer;
+  color: var(--tl-text-strong);
+  font-size: 12px;
+  user-select: none;
+}
+.drawer-raw-json pre {
+  font-size: 11px;
+  font-family: var(--sl-font-mono, ui-monospace, SFMono-Regular, Menlo, monospace);
+  background: var(--bg-secondary, #f8fafc);
+  border: 1px solid var(--border, #e2e8f0);
+  border-radius: 6px;
+  padding: 10px;
+  overflow-x: auto;
+  white-space: pre;
+  margin-top: 6px;
+  max-height: 280px;
+}
+.drawer-run-detail-link {
+  color: var(--accent, #3b82f6);
+  text-decoration: none;
+  font-size: 13px;
+  font-weight: 500;
+}
+.drawer-run-detail-link:hover {
+  text-decoration: underline;
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .timeline-bar,
+  .loopback {
+    transition: none;
+  }
 }
 
 .action-btn:disabled:hover {
@@ -525,6 +1136,15 @@ h1, h2, h3, h4, h5, h6 {
   border-bottom: 1px solid var(--border);
 }
 
+/* Pending stage: placeholder line shown until the stage starts (then replaced
+   by the real Started/Finished/Duration strip). Keeps the body non-empty so
+   the absolute Copy button aligns to content instead of the divider. */
+.timing-strip--pending .timing-strip-pending {
+  font-size: 12px;
+  font-style: italic;
+  color: var(--fg-muted);
+}
+
 .run-info-section {
   padding: 12px 16px;
   background: var(--bg-hover);
@@ -540,6 +1160,8 @@ h1, h2, h3, h4, h5, h6 {
    block reads as a uniform stack. Mirror .run-group below it. */
 .run-project,
 .run-branch,
+.run-target-branch,
+.run-source,
 .run-template,
 .run-worktree {
   display: flex;
@@ -558,6 +1180,13 @@ h1, h2, h3, h4, h5, h6 {
 }
 
 /* Pipeline timing bar */
+.pipeline-timing-bar-actions {
+  display: flex;
+  justify-content: flex-end;
+  gap: 8px;
+  margin-bottom: 8px;
+}
+
 .pipeline-timing-bar-container {
   margin-top: 8px;
 }
@@ -1330,6 +1959,12 @@ sl-input [slot="prefix"] {
   color: var(--muted);
 }
 
+/* Align the "Revising PR #N" badge with the meta rows above/below it
+   (which carry the same 26px left indent past the status icon). */
+.run-card-revises-pr {
+  padding-left: 26px;
+}
+
 .run-card-stages {
   display: flex;
   flex-wrap: wrap;
@@ -1734,6 +2369,28 @@ sl-input [slot="prefix"] {
   font-size: 11px;
   color: var(--muted);
   margin-top: 2px;
+}
+
+/* Export-mode picker (standalone vs delta): roomy rows, with each option's
+   description on its own line aligned under the option title (not the radio). */
+.export-mode-group sl-radio::part(base) {
+  align-items: flex-start;
+}
+.export-mode-group sl-radio:not(:last-of-type) {
+  margin-block-end: 16px;
+}
+.export-mode-option {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+}
+.export-mode-title {
+  line-height: 1.3;
+}
+.export-mode-hint {
+  font-size: 12px;
+  color: var(--muted);
+  line-height: 1.45;
 }
 
 .settings-grid {
@@ -2202,7 +2859,6 @@ sl-details.dispatch-section-details::part(content) {
 
 .pricing-model-name {
   font-weight: 500;
-  text-transform: uppercase;
 }
 
 .pricing-table sl-input {
@@ -2224,6 +2880,28 @@ sl-input.pricing-input::part(input) {
   display: flex;
   gap: 16px;
   margin-bottom: 8px;
+}
+
+/* Inline explainer that distinguishes alt-endpoint overrides from default
+   Anthropic runs (where Claude CLI's total_cost_usd remains authoritative). */
+.pricing-source-note {
+  display: block;
+  margin: 12px 0;
+  font-size: 13px;
+  line-height: 1.5;
+}
+
+.pricing-source-note strong {
+  display: block;
+  margin-bottom: 4px;
+}
+
+.pricing-source-note code {
+  font-family: var(--sl-font-mono, ui-monospace, SFMono-Regular, monospace);
+  font-size: 0.92em;
+  padding: 1px 4px;
+  background: var(--sl-color-neutral-100, rgba(127, 127, 127, 0.12));
+  border-radius: 3px;
 }
 
 /* Settings toast overlay */
@@ -2921,7 +3599,18 @@ sl-option.template-grouped::part(label) {
   font-weight: 500;
 }
 
-/* Description wraps below name, aligned with label */
+/* Description wraps below name, aligned with the label's left edge.
+ * Shoelace renders the option as `[checked-icon] [prefix] [label] [suffix]`
+ * on a single flex row. With `flex-wrap: wrap`, the suffix lands on
+ * a new line — but at the parent's left edge, NOT under the label.
+ * We push it back so "ID: foo" sits directly under "Foo" instead of
+ * indented to the prefix slot. Shoelace's prefix slot is ~24px wide
+ * by default; we use the same offset as the label's apparent x.
+ *
+ * The 14px is empirical: 24px ::part(base) padding-left minus the
+ * ~10px the prefix slot is currently empty (no checkmark on
+ * non-selected items). Adjust if Shoelace changes its inner spacing.
+ */
 sl-option.template-grouped::part(suffix) {
   flex-basis: 100%;
   font-size: 11px;
@@ -2930,7 +3619,7 @@ sl-option.template-grouped::part(suffix) {
   white-space: nowrap;
   overflow: hidden;
   text-overflow: ellipsis;
-  padding: 0 0 4px;
+  padding: 0 0 4px 14px;
 }
 
 /* Fix contrast on selected/current option description */
@@ -3091,6 +3780,9 @@ sl-option.template-grouped:focus::part(suffix) {
 
 .sidebar.collapsed .sidebar-new-run-btn-primary {
   padding: 8px;
+  /* Chevron half is hidden — drop the divider so the button reads as a
+     single icon control, not a button with a stray edge. */
+  border-right: 0;
 }
 
 /* Stage restart button */
@@ -3969,11 +4661,6 @@ sl-details.learnings-panel::part(content) {
   margin-top: 10px;
 }
 
-.preflight-summary {
-  font-size: 0.8rem;
-  color: var(--muted);
-  margin-bottom: 8px;
-}
 
 .preflight-table {
   width: 100%;
@@ -4005,6 +4692,12 @@ sl-details.learnings-panel::part(content) {
 
 .preflight-check-message {
   color: var(--muted);
+}
+
+/* Secondary pill on the preflight params row (e.g. the Max Beads source:
+   "explicit" / "template"). Same font as the value pill, visually subordinated. */
+.preflight-param-source-badge {
+  opacity: 0.72;
 }
 
 .circuit-breaker-banner {
@@ -4909,6 +5602,44 @@ sl-tooltip.bead-tooltip::part(body) {
 }
 
 /* ─── Add Project / Worca Setup dialog shared styles ─────────────────── */
+/* Gist-export dialog (template "Export (gist)" flow). */
+.gist-export-label {
+  display: flex;
+  align-items: center;
+  gap: 0.5rem;
+}
+
+.gist-export-spinner {
+  font-size: 1rem;
+}
+
+.gist-export-body {
+  display: flex;
+  flex-direction: column;
+  gap: 0.4rem;
+}
+
+.gist-export-url-row {
+  display: flex;
+  align-items: center;
+  gap: 0.5rem;
+}
+
+.gist-export-copy-btn {
+  font-size: 1.15rem;
+  flex: 0 0 auto;
+}
+
+.gist-export-copy-btn.is-copied {
+  color: var(--status-completed, var(--sl-color-success-600));
+}
+
+.gist-export-footer {
+  display: flex;
+  justify-content: flex-end;
+  width: 100%;
+}
+
 .dialog-meta-row {
   display: flex;
   align-items: center;
@@ -5299,13 +6030,24 @@ sl-tooltip.bead-tooltip::part(body) {
 
 /* ─── Models tab — model cards + env rows ──────────────────────────── */
 .models-cards {
-  grid-template-columns: repeat(auto-fill, minmax(440px, 1fr));
+  /* Single column: a model card's action row carries six controls
+     (Rename/Duplicate/Copy/Delete + Discard/Save) that need ~620px to sit on
+     one line, so full-width cards stay roomy and never overflow. (Was a
+     multi-column auto-fill grid at minmax(440px) — too narrow for the row.)
+     For a capped two-column layout instead, use:
+       repeat(auto-fill, minmax(640px, 1fr));
+     .model-card-actions also wraps as a safety net for the dirty-state status. */
+  grid-template-columns: 1fr;
 }
 
 .model-card {
   display: flex;
   flex-direction: column;
   transition: border-color 0.15s ease, box-shadow 0.15s ease;
+}
+
+.model-card .settings-card-title {
+  text-transform: none;
 }
 
 .model-card.is-dirty {
@@ -5442,6 +6184,7 @@ sl-tooltip.bead-tooltip::part(body) {
 .model-card-actions {
   display: flex;
   align-items: center;
+  flex-wrap: wrap;
   gap: 8px;
   margin-top: 14px;
   padding-top: 12px;
@@ -5454,6 +6197,16 @@ sl-tooltip.bead-tooltip::part(body) {
   color: var(--muted);
   font-style: italic;
   text-align: center;
+}
+
+/* Transient "Saved" pill after a successful per-card save — kept subtle.
+   Uses the green design-token rather than red/orange because save is a
+   non-destructive confirmation; matches the badge-color-language guide
+   (worca-ui/docs/badge-color-language.md): green = done. */
+.model-card-status--saved {
+  color: var(--success, #22c55e);
+  font-style: normal;
+  font-weight: 500;
 }
 
 .settings-tab-description {
@@ -6703,4 +7456,2632 @@ sl-dialog.markdown-dialog::part(body) {
   font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
   font-size: 0.8rem;
   word-break: break-all;
+}
+
+/* --- Pipelines view --- */
+
+.pipelines-view {
+  padding: 24px 0;
+}
+
+.pipelines-content {
+  display: flex;
+  flex-direction: column;
+  gap: 24px;
+}
+
+.pipelines-loading-spinner {
+  display: flex;
+  justify-content: center;
+  padding: 48px;
+  font-size: 32px;
+}
+
+/*
+ * Tier sections are sl-details collapsibles. The summary slot holds a
+ * 2-row grid: top row [icon | TITLE | count | spacer], bottom row a
+ * one-line description that wraps under the title. Shoelace's own
+ * chevron sits to the right of our summary content.
+ */
+.pipelines-tier-section {
+  margin-bottom: 0;
+}
+.pipelines-tier-section::part(base) {
+  border: 1px solid var(--border-subtle, var(--border));
+  border-radius: var(--radius-lg);
+  /* Match the new-run-section panel chrome so the tier sections
+   * read as the same kind of grouping (gray-tinted surface holding
+   * a heading + a stack of items). Previously these were on the
+   * default `--surface`, which left the cards floating with no
+   * visual hierarchy against the page background. */
+  background: var(--bg-secondary);
+}
+.pipelines-tier-section::part(header) {
+  padding: 12px 16px;
+}
+.pipelines-tier-section::part(content) {
+  padding: 12px 16px 16px;
+}
+
+/* The summary's flex container: lay out icon + title + count + desc. */
+.tier-section-header {
+  display: grid;
+  grid-template-columns: auto auto auto 1fr;
+  grid-template-rows: auto auto;
+  align-items: center;
+  gap: 4px 10px;
+  width: 100%;
+}
+.tier-section-icon {
+  display: inline-flex;
+  align-items: center;
+  color: var(--fg-muted);
+  grid-row: 1;
+}
+.tier-section-title {
+  font-size: 12px;
+  font-weight: 600;
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+  color: var(--fg-muted);
+  grid-row: 1;
+}
+.tier-section-count {
+  grid-row: 1;
+  font-size: 11px;
+  justify-self: start;
+}
+.tier-section-desc {
+  grid-row: 2;
+  grid-column: 2 / -1;
+  margin: 0;
+  color: var(--fg-muted);
+  font-size: 13px;
+  line-height: 1.4;
+  font-weight: 400;
+  text-transform: none;
+  letter-spacing: 0;
+}
+
+/*
+ * Empty-tier placeholder — sits inside an otherwise normal
+ * .pipelines-tier-section so the page never collapses around an empty
+ * tier. Uses the dashed Settings-style border to read as "absence,
+ * not error".
+ */
+.tier-section-empty {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  padding: 18px 20px;
+  border: 1px dashed var(--border-subtle, var(--border));
+  border-radius: var(--radius-lg);
+  background: var(--surface);
+}
+.tier-section-empty-title {
+  font-weight: 600;
+  font-size: 13px;
+  color: var(--fg);
+}
+.tier-section-empty-desc {
+  margin: 0;
+  font-size: 13px;
+  line-height: 1.4;
+  color: var(--fg-muted);
+}
+
+.pipelines-grid {
+  display: grid;
+  /* Cards 50% wider than the original 320px min — fewer per row, more
+     room for the description text and tag chips to breathe. The gap
+     scales with the new width so the grid still feels balanced. */
+  grid-template-columns: repeat(auto-fill, minmax(480px, 1fr));
+  gap: 20px;
+}
+
+.template-card {
+  /* +50% on the original 140px to stay proportional with the wider
+     grid track; longer descriptions now have headroom before the card
+     needs to grow further. */
+  min-height: 210px;
+}
+
+/*
+ * "ID: <slug>" badge — pill-shaped with a subtle gray background to
+ * read as a handle/identifier chip rather than incidental text. Sits
+ * inline with the file-text icon, name, and Default badge on the
+ * card's top row (mirrors the tier section header layout). Uses
+ * Settings-style tokens (--bg-secondary, --border-subtle) so it
+ * lands in the same visual family as our other chips and badges.
+ */
+.template-card-id-badge {
+  display: inline-flex;
+  align-items: baseline;
+  gap: 4px;
+  padding: 2px 8px;
+  border-radius: 9999px;
+  background: var(--bg-secondary);
+  border: 1px solid var(--border-subtle, var(--border));
+  max-width: max-content;
+  min-width: 0;
+}
+.template-card-id-label {
+  font-size: 10px;
+  font-weight: 600;
+  letter-spacing: 0.06em;
+  text-transform: uppercase;
+  color: var(--fg-muted);
+  flex-shrink: 0;
+}
+.template-card-id {
+  font-family: var(--sl-font-mono);
+  font-size: 12px;
+  color: var(--fg);
+  background: transparent;
+  padding: 0;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+/*
+ * Template cards inherit `cursor: pointer` and a hover lift from the
+ * base `.run-card` rule. The `--clickable` modifier is added by the
+ * view only when an edit/duplicate handler is wired up; in the degraded
+ * read-only state we strip those affordances so the card looks (and
+ * feels) inert.
+ */
+.template-card:not(.template-card--clickable) {
+  cursor: default;
+}
+.template-card:not(.template-card--clickable):hover {
+  background: var(--surface);
+  box-shadow: none;
+  transform: none;
+}
+.template-card--clickable:focus-visible {
+  outline: 2px solid var(--accent, #4f9eff);
+  outline-offset: 2px;
+}
+
+.template-default-badge {
+  margin-right: 8px;
+  font-weight: 600;
+}
+
+/*
+ * Top row is just icon + name + (optional) ★ Default. The shared
+ * `.run-card-title { flex: 1 }` rule does the right thing here:
+ * the title soaks up the horizontal space and pushes the Default
+ * badge to the right edge.
+ *
+ * The "ID:slug" handle and the description below it are both
+ * indented to align with the title's left edge (i.e. past the
+ * icon's column). The icon is 16px wide and the .run-card-top
+ * gap is 10px, so 26px of left padding aligns subsequent rows
+ * with the title.
+ */
+.template-card-id-row {
+  display: flex;
+  margin-top: 6px;
+  padding-left: 26px;
+}
+.template-card .run-card-meta {
+  padding-left: 26px;
+}
+
+/*
+ * Buttons pin to the card's bottom so cards of varying heights
+ * (description length, badge presence) line their action rows up
+ * with each other in a tier-section grid. `margin-top: auto` on
+ * the last child of a column-flex container absorbs the extra
+ * vertical space.
+ */
+.template-card .run-card-actions {
+  margin-top: auto;
+  /*
+   * Left-align the action cluster (Duplicate + Export buttons) and push
+   * Delete to the far right via `margin-left:auto` on the button itself
+   * (see .template-card-delete-push). Scoped to template cards so run cards
+   * keep the global flex-end alignment. nowrap keeps Delete on the same row
+   * as the other buttons instead of wrapping it to its own line.
+   */
+  justify-content: flex-start;
+  flex-wrap: nowrap;
+}
+
+/*
+ * Delete is always pinned to the far right of the template card's
+ * action row, regardless of how many left-cluster buttons precede it
+ * (count varies with has_overlays / builtin). `margin-left:auto`
+ * absorbs the free space so it never relies on :last-child.
+ */
+.template-card .run-card-actions .template-card-delete-push {
+  margin-left: auto;
+}
+
+.template-tier-badge {
+  font-size: 12px;
+  text-transform: uppercase;
+  letter-spacing: 0.04em;
+}
+
+.template-card .run-card-stages sl-tag {
+  margin-right: 4px;
+  margin-bottom: 4px;
+}
+
+.pipelines-empty {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  text-align: center;
+  padding: 64px 24px;
+  gap: 16px;
+  color: var(--fg-muted);
+}
+
+.pipelines-empty .empty-state-icon {
+  color: var(--fg-muted);
+  opacity: 0.5;
+  margin-bottom: 8px;
+}
+
+.pipelines-empty h2 {
+  margin: 0;
+  color: var(--fg);
+  font-size: 20px;
+  font-weight: 600;
+}
+
+.pipelines-empty p {
+  max-width: 480px;
+  margin: 0 0 16px;
+  line-height: 1.5;
+  color: var(--fg-muted);
+}
+
+.pipelines-empty .empty-state-actions {
+  display: flex;
+  gap: 8px;
+  margin-bottom: 8px;
+}
+
+.pipelines-empty .empty-state-hint {
+  font-size: 13px;
+  color: var(--fg-muted);
+  border-top: 1px solid var(--border);
+  padding-top: 16px;
+}
+
+/* Deep-link card for template-driven settings (W-062 Phase 6) */
+.pipelines-deep-link-card {
+  border: 1px solid var(--border-subtle);
+  border-radius: var(--radius-lg);
+  background: var(--bg-secondary);
+  padding: 16px;
+  margin-bottom: 24px;
+  box-shadow: var(--shadow-sm);
+}
+
+.pipelines-deep-link-content {
+  display: flex;
+  align-items: center;
+  gap: 16px;
+}
+
+.pipelines-deep-link-icon {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  width: 40px;
+  height: 40px;
+  background: var(--bg-tertiary);
+  border-radius: var(--radius);
+  color: var(--accent);
+  flex-shrink: 0;
+}
+
+.pipelines-deep-link-text {
+  flex: 1;
+}
+
+.pipelines-deep-link-title {
+  font-size: 14px;
+  font-weight: 600;
+  color: var(--fg);
+  margin-bottom: 4px;
+}
+
+.pipelines-deep-link-desc {
+  font-size: 13px;
+  color: var(--muted);
+  line-height: 1.4;
+}
+
+.pipelines-deep-link-btn {
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
+  padding: 8px 16px;
+  font-size: 13px;
+  font-weight: 500;
+  color: var(--fg);
+  background: var(--bg-tertiary);
+  border: 1px solid var(--border);
+  border-radius: var(--radius);
+  text-decoration: none;
+  cursor: pointer;
+  transition: var(--transition-fast);
+  white-space: nowrap;
+}
+
+.pipelines-deep-link-btn:hover {
+  background: var(--bg);
+  border-color: var(--border-subtle);
+  color: var(--fg-active);
+}
+
+
+/* ─── Pipelines Editor ─────────────────────────────────────────────── */
+
+.pipelines-editor {
+  display: flex;
+  flex-direction: column;
+  height: 100%;
+  max-height: calc(100vh - 120px);
+}
+
+/*
+ * Editor sub-header: lives below the page chrome's "Edit Template" title.
+ * Shows the template name + scope badge on the left, view-mode toggle on
+ * the right. No back button here — the page chrome already provides one.
+ */
+.editor-subheader {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  padding: 12px 16px;
+  border-bottom: 1px solid var(--border);
+  background: var(--bg);
+  position: sticky;
+  top: 0;
+  z-index: 10;
+}
+
+.editor-subheader-title-group {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  flex: 1;
+  min-width: 0;
+}
+
+/*
+ * Inline editable Name + ID + read-only Storage in the editor
+ * subheader. All three share the same gray-pill chassis
+ * (`.editor-field-pill`) so the row reads as a single field group;
+ * size/weight variants live on the per-pill modifier class.
+ *
+ * Name is the widest (flex-grow), ID is mid-width with a monospace
+ * input, Storage is a fixed compact pill showing the tier.
+ */
+.editor-field-pill {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  padding: 2px 4px 2px 8px;
+  border-radius: 9999px;
+  background: var(--bg-secondary);
+  border: 1px solid var(--border-subtle, var(--border));
+  min-width: 0;
+}
+.editor-field-pill-label {
+  font-size: 10px;
+  font-weight: 600;
+  letter-spacing: 0.06em;
+  text-transform: uppercase;
+  color: var(--fg-muted);
+  flex-shrink: 0;
+}
+
+.editor-name-pill {
+  flex: 1 1 240px;
+  padding-right: 4px;
+}
+.editor-name-input {
+  flex: 1;
+  min-width: 0;
+}
+.editor-name-input::part(form-control-input) {
+  font-weight: 600;
+}
+.editor-name-input::part(base) {
+  border: none;
+  background: transparent;
+  box-shadow: none;
+  min-height: 22px;
+}
+
+.editor-id-badge {
+  flex: 0 1 240px;
+}
+.editor-id-input {
+  flex: 1;
+  min-width: 0;
+}
+.editor-id-input::part(form-control-input) {
+  font-family: var(--sl-font-mono);
+  font-size: 12px;
+  padding: 0 6px;
+}
+.editor-id-input::part(base) {
+  border: none;
+  background: transparent;
+  box-shadow: none;
+  min-height: 22px;
+}
+
+.editor-storage-pill {
+  flex: 0 0 auto;
+  padding: 2px 10px 2px 8px;
+}
+
+/*
+ * Description section sits above the tab group inside the scroll
+ * area — outside any tab so it always shows. Matches the
+ * settings-section header style (h3.settings-section-title +
+ * settings-field + label + textarea) so the editor reads like
+ * the rest of the app.
+ */
+.editor-description-section {
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+  padding-bottom: 16px;
+  margin-bottom: 4px;
+}
+.editor-description-input {
+  width: 100%;
+}
+.editor-description-input::part(textarea) {
+  font-size: 13px;
+  line-height: 1.5;
+  color: var(--fg);
+}
+.editor-storage-value {
+  font-size: 12px;
+  font-weight: 500;
+  color: var(--fg);
+  text-transform: capitalize;
+}
+
+/*
+ * Visual error state on a field pill — used when the ID collides
+ * with an existing template in the same tier. The border turns
+ * warning-amber to match the inline badge that appears next to
+ * the input and the disabled Save button.
+ */
+.editor-field-pill--invalid {
+  border-color: var(--sl-color-warning-600, #d97706);
+}
+.editor-id-collision-badge {
+  flex-shrink: 0;
+}
+
+.editor-subheader-title {
+  font-size: 16px;
+  font-weight: 600;
+  margin: 0;
+  color: var(--fg);
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.icon-btn {
+  background: none;
+  border: none;
+  padding: 4px;
+  border-radius: 4px;
+  cursor: pointer;
+  color: var(--fg-muted);
+  transition: var(--transition-fast);
+}
+
+.icon-btn:hover {
+  background: var(--bg-secondary);
+  color: var(--fg);
+}
+
+.editor-mode-toggle {
+  margin-left: auto;
+}
+
+/*
+ * Read-only badge in the editor subheader. Sits next to the tier
+ * badge whenever we're viewing a built-in template; visually warns
+ * the user that nothing they type here will save.
+ */
+.editor-readonly-badge {
+  margin-left: 4px;
+}
+
+/*
+ * Editor content gate: when readOnly, the form controls inside each
+ * tab panel (and the JSON view) become non-interactive — but the
+ * tab nav stays clickable so users can move between Models /
+ * Stages / Agents / etc. to inspect the whole template. We scope
+ * pointer-events:none to the panels (not the whole content) so the
+ * `<sl-tab slot="nav">` items still take clicks.
+ *
+ * `aria-disabled="true"` on the wrapper tells assistive tech the
+ * surface is locked; the per-panel muted opacity signals "look,
+ * don't touch". Inputs visually keep their value so users can still
+ * read and copy from them.
+ *
+ * Cheaper than threading a `disabled` flag through every section
+ * and every input; tradeoff is screen readers won't announce each
+ * control as disabled — only the panel container. Acceptable for a
+ * read-only inspector mode.
+ */
+.editor-content--readonly sl-tab-panel,
+.editor-content--readonly .editor-section--json {
+  pointer-events: none;
+  opacity: 0.7;
+  user-select: text; /* let users still highlight + copy values */
+}
+.editor-content--readonly sl-tab-panel *,
+.editor-content--readonly .editor-section--json * {
+  cursor: default !important;
+}
+/*
+ * Exception: the Prompts tab is itself a read-only viewer, not an editor —
+ * scrolling a prompt, expanding a stage's <sl-details>, and switching the
+ * per-stage Agent/User sub-tabs are all read actions. The panel-wide
+ * pointer-events:none + opacity:0.7 above would (a) swallow wheel events so
+ * the inner 480px `.prompt-file-content` scroll pane can't be scrolled and
+ * (b) bleach the prompt text, which is hard to read on a text-heavy surface.
+ *
+ * Exempt the Prompts panel entirely (it has no editable controls, so
+ * re-enabling pointer-events can't allow edits). Both the outer panel and
+ * the nested per-stage sub-tab panels are covered — the nested
+ * `sl-tab-panel`s would otherwise re-match the base rule above. opacity is
+ * reset on both levels because it compounds (0.7 × 0.7) and isn't inherited.
+ */
+.editor-content--readonly sl-tab-panel[name="prompts"],
+.editor-content--readonly sl-tab-panel[name="prompts"] sl-tab-panel {
+  pointer-events: auto;
+  opacity: 1;
+}
+.editor-content--readonly sl-tab-panel[name="prompts"] * {
+  cursor: auto !important;
+}
+
+/*
+ * Editor uses the same .settings-tab-content / .settings-section-title /
+ * .settings-cards primitives as Project Settings — define one supporting
+ * helper here (the lead-in paragraph under a section title) and a few
+ * tab-group tweaks so the editor's tab nav sits naturally inside its
+ * scroll container.
+ */
+.settings-section-desc {
+  margin: -2px 0 14px;
+  color: var(--fg-muted);
+  font-size: 13px;
+  line-height: 1.5;
+}
+.settings-section-desc code {
+  background: var(--bg-secondary);
+  padding: 1px 5px;
+  border-radius: 4px;
+  font-size: 12px;
+}
+
+.editor-tab-group {
+  --indicator-color: var(--accent, var(--sl-color-primary-600, #4f9eff));
+  /* Keep Shoelace's default track color (subtle border under the tab
+   * row) so the editor matches the Project Settings convention of a
+   * horizontal line between the nav and the panel content. Used to
+   * be `transparent` which suppressed that divider. */
+}
+.editor-tab-group::part(base) {
+  /* Hand the scroll to .editor-content so the tab nav stays sticky. */
+  height: 100%;
+}
+/*
+ * Tab nav style mirrors the project Settings tabs: 13px medium,
+ * 10/16 padding, and a clear gap between the icon and the label
+ * so the icon doesn't visually fuse with the first letter.
+ */
+.editor-tab-group sl-tab::part(base) {
+  font-size: 13px;
+  font-weight: 500;
+  padding: 10px 16px;
+  gap: 6px;
+  display: flex;
+  align-items: center;
+}
+.editor-tab-group sl-tab svg {
+  width: 14px;
+  height: 14px;
+  flex-shrink: 0;
+}
+.editor-tab-group sl-tab-panel::part(base) {
+  padding: 16px 4px 0;
+}
+
+/*
+ * Pipeline tab holds three sections (Stage configuration, Loop
+ * limits, Circuit breaker) on one panel — the same shape as the
+ * Project Settings → Pipeline tab. Each section is its own
+ * `.settings-tab-content` flex column with gap:20px between fields
+ * but no margin above the section heading, so without an explicit
+ * separator they jam right up against each other. Give the three
+ * direct children real vertical breathing room.
+ */
+.editor-pipeline-tab {
+  display: flex;
+  flex-direction: column;
+  gap: 32px;
+}
+.editor-pipeline-tab > .settings-tab-content + .settings-tab-content {
+  /* Visual separator on top of the gap so it reads as a fresh
+   * section rather than a continuation of the previous one. */
+  border-top: 1px solid var(--border-subtle, var(--border));
+  padding-top: 24px;
+}
+
+/*
+ * Shared chrome for the template action dialogs (Create / Duplicate /
+ * Rename / Import). Wraps the Settings-style form primitives so the
+ * dialog body looks like a one-screen mini Settings tab.
+ */
+.template-action-dialog::part(panel) {
+  min-width: min(520px, 100vw - 32px);
+}
+.template-action-dialog .dialog-lead {
+  margin: 0 0 14px;
+  color: var(--fg-muted);
+  font-size: 13px;
+  line-height: 1.5;
+}
+.template-action-dialog .dialog-lead code {
+  background: var(--bg-secondary);
+  padding: 1px 5px;
+  border-radius: 4px;
+  font-size: 12px;
+}
+.template-action-dialog .settings-field {
+  margin-bottom: 14px;
+}
+.template-action-dialog .dialog-error {
+  margin-top: 8px;
+}
+.template-action-dialog .dialog-bundle-list {
+  margin: 4px 0 0;
+  padding-left: 18px;
+  font-size: 13px;
+  color: var(--fg-muted);
+}
+.template-action-dialog .dialog-bundle-list code {
+  font-family: var(--sl-font-mono);
+  color: var(--fg);
+}
+
+.template-action-dialog .dialog-collisions {
+  border-left: 3px solid var(--sl-color-warning-500, #f59e0b);
+  padding: 10px 12px;
+  background: var(--sl-color-warning-50, rgba(245, 158, 11, 0.05));
+  border-radius: 4px;
+  min-width: 0;
+}
+.template-action-dialog .dialog-collisions-header {
+  margin-bottom: 6px;
+}
+.template-action-dialog .dialog-collision-list {
+  list-style: none;
+  margin: 10px 0 0;
+  padding: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+}
+.template-action-dialog .dialog-collision-row {
+  display: grid;
+  grid-template-columns: minmax(90px, 140px) minmax(0, 1fr) minmax(0, 1fr);
+  align-items: center;
+  gap: 8px;
+  min-width: 0;
+}
+.template-action-dialog .dialog-collision-alias {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.template-action-dialog .dialog-collision-alias code {
+  font-family: var(--sl-font-mono);
+  font-size: 13px;
+  color: var(--fg);
+}
+.template-action-dialog .collision-action-select,
+.template-action-dialog .collision-rename-input {
+  width: 100%;
+  min-width: 0;
+}
+.template-action-dialog .dialog-collision-row[data-rename="false"] .collision-action-select {
+  grid-column: 2 / span 2;
+}
+.template-action-dialog .dialog-new-aliases-hint {
+  margin-top: 8px;
+}
+.template-action-dialog .dialog-new-aliases-hint code {
+  font-family: var(--sl-font-mono);
+  font-size: 12px;
+  color: var(--fg);
+  margin-right: 4px;
+}
+
+.editor-content {
+  flex: 1;
+  overflow-y: auto;
+  padding: 16px;
+  display: flex;
+  flex-direction: column;
+  gap: 24px;
+}
+
+/* Editor Sections */
+
+.editor-section {
+  max-width: 900px;
+}
+
+.editor-section--json {
+  max-width: 1000px;
+}
+
+.section-header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  margin-bottom: 12px;
+}
+
+.section-title {
+  font-size: 15px;
+  font-weight: 600;
+  margin: 0;
+  color: var(--fg);
+}
+
+/* Stages List */
+
+.stages-list {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+}
+
+.stage-row {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  padding: 12px;
+  background: var(--bg-secondary);
+  border: 1px solid var(--border);
+  border-radius: var(--radius);
+  transition: var(--transition-fast);
+}
+
+.stage-row--disabled {
+  opacity: 0.5;
+}
+
+.stage-row-info {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  flex: 1;
+}
+
+.stage-name {
+  font-weight: 500;
+  font-family: var(--sl-font-mono);
+}
+
+.stage-row.disabled .stage-name {
+  text-decoration: line-through;
+}
+
+.stage-row-agent {
+  width: 200px;
+}
+
+/* Agents Matrix */
+
+.agents-matrix {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+}
+
+.agent-row {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  padding: 10px 12px;
+  background: var(--bg-secondary);
+  border: 1px solid var(--border);
+  border-radius: var(--radius);
+}
+
+.agent-name {
+  flex: 0 0 100px;
+  font-weight: 500;
+  font-family: var(--sl-font-mono);
+}
+
+.agent-fields {
+  display: grid;
+  grid-template-columns: 1fr 1fr 1fr;
+  gap: 8px;
+  flex: 1;
+}
+
+.agent-field {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+}
+
+/* Loops Grid */
+
+.loops-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(180px, 1fr));
+  gap: 12px;
+}
+
+.loop-field {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+}
+
+/* Circuit Breaker Grid */
+
+.circuit-breaker-grid {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: 16px;
+}
+
+.cb-field {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+}
+
+.cb-field-row {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+
+/* Governance */
+
+.governance-content {
+  display: flex;
+  flex-direction: column;
+  gap: 24px;
+}
+
+/* JSON Editor */
+
+.json-editor-wrapper {
+  background: var(--bg-secondary);
+  border: 1px solid var(--border);
+  border-radius: var(--radius);
+  padding: 4px;
+}
+
+.json-editor {
+  font-family: var(--sl-font-mono);
+  font-size: 13px;
+  line-height: 1.5;
+  min-height: 300px;
+  resize: vertical;
+}
+
+.json-editor-hint {
+  font-size: 12px;
+  color: var(--fg-muted);
+  margin-top: 8px;
+}
+
+/* Diff view styles */
+.diff-hint {
+  font-size: 13px;
+  color: var(--fg-muted);
+  margin-bottom: 16px;
+  line-height: 1.5;
+}
+
+.diff-reset-icon {
+  display: inline-block;
+  vertical-align: middle;
+  margin: 0 4px;
+  color: var(--accent);
+}
+
+.diff-no-changes {
+  text-align: center;
+  padding: 48px 24px;
+  color: var(--status-completed);
+}
+
+.diff-no-changes svg {
+  margin-bottom: 16px;
+  color: var(--status-completed);
+}
+
+.diff-no-changes h3 {
+  margin: 0 0 8px 0;
+  font-size: 16px;
+  font-weight: 600;
+}
+
+.diff-no-changes p {
+  margin: 0;
+  color: var(--fg-muted);
+}
+
+.diff-empty,
+.diff-loading {
+  padding: 24px;
+  text-align: center;
+  color: var(--fg-muted);
+}
+
+.diff-loading {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  gap: 12px;
+}
+
+.diff-table-container {
+  overflow-x: auto;
+  border: 1px solid var(--border);
+  border-radius: var(--radius);
+}
+
+.diff-table {
+  width: 100%;
+  border-collapse: collapse;
+  font-size: 13px;
+}
+
+.diff-table th {
+  text-align: left;
+  padding: 10px 12px;
+  background: var(--bg-secondary);
+  border-bottom: 2px solid var(--border);
+  font-weight: 600;
+  color: var(--fg);
+  position: sticky;
+  top: 0;
+}
+
+.diff-table td {
+  padding: 10px 12px;
+  border-bottom: 1px solid var(--border-subtle);
+  vertical-align: top;
+}
+
+.diff-row--changed {
+  background: rgba(251, 191, 36, 0.05);
+}
+
+.diff-row--changed .diff-path {
+  font-weight: 600;
+}
+
+.diff-path code {
+  display: block;
+  font-family: ui-monospace, 'SF Mono', 'Menlo', monospace;
+  font-size: 11px;
+  color: var(--fg-muted);
+  margin-bottom: 4px;
+}
+
+.diff-label {
+  display: block;
+  font-size: 12px;
+  color: var(--fg);
+}
+
+.diff-value {
+  font-family: ui-monospace, 'SF Mono', 'Menlo', monospace;
+  font-size: 12px;
+  max-width: 300px;
+  overflow-x: auto;
+  white-space: pre-wrap;
+  word-break: break-all;
+}
+
+.diff-value--builtin {
+  color: var(--fg-muted);
+  background: var(--bg-tertiary);
+  padding: 4px 8px;
+  border-radius: 4px;
+}
+
+.diff-value--current {
+  color: var(--fg);
+  background: rgba(59, 130, 246, 0.1);
+  padding: 4px 8px;
+  border-radius: 4px;
+}
+
+.diff-actions {
+  white-space: nowrap;
+}
+
+/* Common field styles */
+
+.field-label {
+  font-size: 12px;
+  font-weight: 500;
+  color: var(--fg-muted);
+}
+
+.field-hint {
+  font-size: 12px;
+  color: var(--fg-muted);
+}
+
+/* Footer */
+
+.editor-footer {
+  display: flex;
+  align-items: center;
+  justify-content: flex-end;
+  gap: 8px;
+  padding: 12px 16px;
+  border-top: 1px solid var(--border);
+  background: var(--bg);
+  position: sticky;
+  bottom: 0;
+  z-index: 10;
+}
+
+/* Save alert */
+
+.editor-save-alert {
+  margin-bottom: 16px;
+}
+
+.editor-validation-alert {
+  margin-bottom: 16px;
+}
+
+.validation-list {
+  margin: 8px 0 0 16px;
+  padding-left: 20px;
+  font-size: 13px;
+}
+
+.validation-list li {
+  margin-bottom: 4px;
+}
+
+.validation-list code {
+  font-family: var(--sl-font-mono);
+  background: var(--bg-tertiary);
+  padding: 2px 4px;
+  border-radius: 3px;
+}
+
+/* Loading state */
+
+.editor-loading {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  padding: 40px;
+  font-size: 14px;
+  color: var(--fg-muted);
+  gap: 8px;
+}
+
+/* ===========================================================================
+ * Help mode (W-061 prototype, prototype/W-061-help-mode-toggle)
+ *
+ * Two concerns:
+ *   1. The right-edge "Docs" tab (.help-edge-tab) — always visible at 75%
+ *      opacity, fully opaque on hover/active.
+ *   2. Per-surface "?" badges (.help-badge) — hidden until body has the
+ *      .help-mode-active class.
+ *
+ * Colour: violet (~#7c3aed) — deliberately chosen so help mode reads as
+ * "informational / secondary" and never competes with the blue used for
+ * primary actions + running state, the green used for completed, the
+ * orange used for caution, or the red used for failed.
+ *
+ * Animation: each badge radiates a slow sonar wave outward and fades to
+ * transparent, like a discoverability signal. `prefers-reduced-motion`
+ * collapses the wave to a static dim halo.
+ * ===========================================================================
+ */
+
+/* --- Edge tab --------------------------------------------------------- */
+
+.help-edge-tab-root {
+  position: fixed;
+  inset: 0;
+  pointer-events: none;
+  z-index: 1000;
+}
+
+/* Vertical pill anchored ~100px from the top of the viewport (deliberately
+   off-centre so it sits above the eye line and doesn't compete with
+   sidebar/main content for the visual centre). */
+.help-edge-tab {
+  position: fixed;
+  right: 0;
+  top: 100px;
+  transform: translateX(0);
+  transform-origin: right center;
+  pointer-events: auto;
+
+  display: inline-flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  /* Sized to wrap the rotated content (icon ~20px + 10px gap + "Docs"
+     label ~38px ≈ 68px length, 20px max thickness). Height bumped +25%
+     (84 → 105) per the user's request to give the rotated content more
+     padding at the top and bottom of the tab. */
+  width: 30px;
+  height: 105px;
+  padding: 0;
+  border: 1px solid #c4b5fd; /* violet-300 */
+  border-right: none;
+  border-top-left-radius: 8px;
+  border-bottom-left-radius: 8px;
+  background: rgba(124, 58, 237, 0.1); /* violet-600 @ 10% */
+  color: #5b21b6; /* violet-800 */
+  font-size: 16px;
+  font-weight: 600;
+  letter-spacing: 0.04em;
+  cursor: pointer;
+  opacity: 0.75;
+  box-shadow: -2px 0 8px rgba(0, 0, 0, 0.06);
+  transition: opacity 160ms ease, background-color 120ms ease, color 120ms ease,
+    transform 180ms ease, box-shadow 180ms ease;
+}
+
+.help-edge-tab:hover,
+.help-edge-tab:focus-visible {
+  opacity: 1;
+  color: #4c1d95; /* violet-900 */
+  background: rgba(124, 58, 237, 0.18);
+  transform: translateX(-2px);
+  box-shadow: -4px 0 12px rgba(0, 0, 0, 0.08);
+  outline: none;
+}
+
+.help-edge-tab:focus-visible {
+  box-shadow: -4px 0 12px rgba(0, 0, 0, 0.08), 0 0 0 2px #7c3aed;
+}
+
+.help-edge-tab--active {
+  opacity: 1;
+  background: #7c3aed; /* violet-600 */
+  color: #fff;
+  border-color: #6d28d9; /* violet-700 */
+}
+
+.help-edge-tab--active:hover,
+.help-edge-tab--active:focus-visible {
+  background: #6d28d9;
+  color: #fff;
+}
+
+/* Inner row is icon + "Docs". Rotating the entire row -90deg (counter-
+   clockwise) makes both the icon and the label share the same rotation,
+   reading bottom-to-top along the right edge (head tilted left). */
+.help-edge-tab__inner {
+  display: inline-flex;
+  flex-direction: row;
+  align-items: center;
+  gap: 10px;
+  transform: rotate(-90deg);
+  transform-origin: center center;
+  white-space: nowrap;
+}
+
+.help-edge-tab__icon {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+}
+
+.help-edge-tab__label {
+  /* Matches the sidebar's WORCA wordmark (.logo-text) — JetBrains Mono
+     family + bold weight + wide letter-spacing — so the affordance reads
+     as part of the brand vocabulary rather than a generic side tab. */
+  font-family: 'JetBrains Mono', 'SF Mono', 'Fira Code', monospace;
+  font-weight: 700;
+  letter-spacing: 0.08em;
+  line-height: 1;
+}
+
+/* --- Per-surface help badge ------------------------------------------- */
+
+/* Hidden by default. Once help-mode-active flips on the body, every badge
+   reveals at the top-right of its parent and emits a slow sonar wave that
+   radiates outward then fades.
+
+   The badge is a real <a> — keyboard reachable when visible, opens the
+   doc in a new tab, never depends on JS for click handling. */
+.help-badge {
+  display: none;
+  position: absolute;
+  /* Vertically centred on the host's right edge — gives the sonar wave
+     equal headroom above and below the badge so it doesn't overflow
+     the host's bounding box. With disc 27px and wave max scale 1.5,
+     max wave diameter is ~40px → fits inside any host ≥ 40px tall
+     (typical sl-tab ~40px, panel headers larger). */
+  top: 50%;
+  right: 6px;
+  transform: translateY(-50%);
+  z-index: 5;
+
+  align-items: center;
+  justify-content: center;
+  /* Solid disc 27×27 — entire badge scaled up 50% (18 → 27). Icon, wave
+     base, and clickable hit target all grow proportionally. */
+  width: 27px;
+  height: 27px;
+  border-radius: 50%;
+  /* Solid disc at 75% opacity — rgba on the background only so the
+     ::after sonar wave's own opacity animation (0.55 → 0) isn't dimmed
+     by parent inheritance. The white glyph stays fully visible. */
+  background: rgba(124, 58, 237, 0.75); /* violet-600 @ 75% */
+  color: #fff;
+  text-decoration: none;
+  transition: transform 120ms ease, background-color 120ms ease;
+}
+
+/* Plain text "?" glyph — no container artifact (lucide's question-mark
+   variants all wrap the ? in some outline shape). Sized + weighted to
+   fill the 27px disc with a comfortable optical balance. */
+.help-badge__glyph {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  font-family: var(--sl-font-sans, system-ui, sans-serif);
+  font-size: 18px;
+  font-weight: 700;
+  line-height: 1;
+  /* Most "?" glyphs sit slightly above the optical centre of their
+     em-box because of the descender-free shape. Nudge down 1px so it
+     reads centred in the disc. */
+  margin-top: 1px;
+}
+
+/* The sonar wave — a same-colour pseudo-element behind the badge that
+   slowly grows outward and fades. Sits at z-index 0 (badge itself is
+   at z-index 5) so it appears under the badge during expansion. */
+.help-badge::after {
+  content: '';
+  position: absolute;
+  inset: 0;
+  border-radius: 50%;
+  background: #7c3aed;
+  opacity: 0;
+  z-index: -1;
+  pointer-events: none;
+}
+
+body.help-mode-active .help-badge {
+  display: inline-flex;
+}
+
+body.help-mode-active .help-badge::after {
+  animation: help-badge-sonar 2.4s ease-out infinite;
+}
+
+/* Auto-relative any direct parent of a badge so absolute positioning has
+   a containing block. Modern browsers (Chrome 105+, Safari 15.4+,
+   Firefox 121+) all support :has(). For sl-tab specifically, also force
+   overflow: visible so the badge (and especially the sonar wave) isn't
+   clipped against the tab strip's edge. */
+body.help-mode-active *:has(> .help-badge) {
+  position: relative;
+}
+
+body.help-mode-active sl-tab {
+  overflow: visible;
+}
+
+.help-badge:hover,
+.help-badge:focus-visible {
+  /* Compose the hover lift with the vertical-centre translate so the
+     badge doesn't jump when hovered. */
+  transform: translateY(-50%) scale(1.1);
+  /* Full opacity on hover so the affordance reads stronger. */
+  background: #6d28d9; /* violet-700, opaque */
+  outline: none;
+}
+
+/* Sonar wave: scale 1 → 1.5 from the 27px badge → max diameter ~40px,
+   centred on a badge that's vertically centred on the host. Wave fits
+   the host's bounding box on any host ≥ 40px tall (typical sl-tab
+   ~40px, panel headers larger; thin inline hosts may graze the edge). */
+@keyframes help-badge-sonar {
+  0% {
+    transform: scale(1);
+    opacity: 0.55;
+  }
+  100% {
+    transform: scale(1.5);
+    opacity: 0;
+  }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  body.help-mode-active .help-badge::after {
+    animation: none;
+    opacity: 0.22;
+    transform: scale(1.3);
+  }
+  .help-edge-tab {
+    transition: none;
+  }
+}
+
+/* Dark-mode — violet stays violet, but we lift the idle background so it
+   doesn't blend into dark panels. */
+:root[data-theme='dark'] .help-edge-tab,
+.sl-theme-dark .help-edge-tab {
+  background: rgba(124, 58, 237, 0.22);
+  color: #e9d5ff; /* violet-200 */
+  border-color: #6d28d9;
+  box-shadow: -2px 0 8px rgba(0, 0, 0, 0.4);
+}
+
+:root[data-theme='dark'] .help-edge-tab:hover,
+:root[data-theme='dark'] .help-edge-tab:focus-visible,
+.sl-theme-dark .help-edge-tab:hover,
+.sl-theme-dark .help-edge-tab:focus-visible {
+  background: rgba(124, 58, 237, 0.35);
+  color: #f5f3ff;
+}
+
+/* ── Overlays tab (pipelines-editor) ────────────────────────────────────── */
+
+.overlay-stages {
+  display: flex;
+  flex-direction: column;
+  gap: var(--sl-spacing-small);
+  padding: var(--sl-spacing-medium);
+}
+
+.overlay-stage-card {
+  border-radius: var(--sl-border-radius-medium);
+}
+
+.overlay-stage-card--disabled {
+  padding: var(--sl-spacing-small) var(--sl-spacing-medium);
+  border: 1px solid var(--sl-color-neutral-200);
+  border-radius: var(--sl-border-radius-medium);
+  opacity: 0.5;
+  cursor: default;
+}
+
+.overlay-stage-label {
+  font-size: var(--sl-font-size-small);
+  color: var(--sl-color-neutral-600);
+  font-weight: var(--sl-font-weight-semibold);
+}
+
+.overlay-file-label {
+  font-size: var(--sl-font-size-x-small);
+  color: var(--sl-color-neutral-500);
+  margin-left: var(--sl-spacing-x-small);
+}
+
+.overlay-stage-tabs {
+  --track-color: transparent;
+}
+
+.overlay-file-content.markdown-body {
+  padding: var(--sl-spacing-medium);
+  max-height: 480px;
+  overflow-y: auto;
+  font-size: var(--sl-font-size-small);
+}
+
+.overlay-empty {
+  color: var(--sl-color-neutral-500);
+  font-size: var(--sl-font-size-small);
+  padding: var(--sl-spacing-medium);
+}
+
+/* ── Prompts tab (pipelines-editor-overlays.js) ─────────────────────────── */
+
+.prompt-file-content.markdown-body {
+  padding: var(--sl-spacing-medium);
+  max-height: 480px;
+  overflow-y: auto;
+  font-size: var(--sl-font-size-small);
+}
+
+.prompt-legend {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 6px;
+  font-size: var(--sl-font-size-x-small);
+  color: var(--sl-color-neutral-500);
+  padding: 0 var(--sl-spacing-x-small) var(--sl-spacing-small);
+}
+
+.prompt-source-badge {
+  margin-left: var(--sl-spacing-x-small);
+}
+
+.prompt-base-label,
+.prompt-customizations-label {
+  font-size: var(--sl-font-size-x-small);
+  font-weight: 600;
+  text-transform: uppercase;
+  letter-spacing: 0.04em;
+  color: var(--sl-color-neutral-500);
+  padding: var(--sl-spacing-small) var(--sl-spacing-medium) 0;
+}
+
+.prompt-customizations-label {
+  display: flex;
+  align-items: center;
+  gap: 4px;
+  margin-top: var(--sl-spacing-small);
+}
+
+.prompt-help-dot {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 14px;
+  height: 14px;
+  border-radius: 50%;
+  background: var(--sl-color-neutral-300);
+  color: var(--sl-color-neutral-700);
+  font-size: 10px;
+  font-weight: 700;
+  cursor: help;
+}
+
+/* Merge contributions: green = appended (additive), amber = overwrites a
+   built-in section (caution). Follows the badge color language. */
+.prompt-merge-block {
+  margin: var(--sl-spacing-x-small) var(--sl-spacing-medium);
+  border-left: 3px solid var(--sl-color-neutral-300);
+  border-radius: 0 var(--sl-border-radius-medium) var(--sl-border-radius-medium) 0;
+  padding: var(--sl-spacing-x-small) var(--sl-spacing-small);
+}
+
+.prompt-merge-block .prompt-file-content.markdown-body {
+  padding: var(--sl-spacing-x-small) 0 0;
+  max-height: none;
+}
+
+.prompt-merge-append {
+  background: var(--sl-color-success-50);
+  border-left-color: var(--sl-color-success-500);
+}
+
+.prompt-merge-overwrite {
+  background: var(--sl-color-warning-50);
+  border-left-color: var(--sl-color-warning-500);
+}
+
+.prompt-merge-tag {
+  font-size: var(--sl-font-size-x-small);
+  color: var(--sl-color-neutral-600);
+}
+
+.prompt-merge-tag code {
+  font-size: var(--sl-font-size-x-small);
+}
+
+.prompt-merge-verb {
+  font-weight: 700;
+  text-transform: uppercase;
+  letter-spacing: 0.03em;
+  cursor: help;
+}
+
+/* ── File Access view (run-file-access.js) ──────────────────────────────── */
+
+.run-file-access {
+  --fa-file-col-width: 220px;
+  --fa-cell-width: 80px;
+  --fa-cell-height: 32px;
+
+  display: flex;
+  flex-direction: column;
+  gap: 16px;
+  padding: 16px 20px;
+}
+
+/* ── Loading / empty states ─────────────────────────────────────────────── */
+
+.access-loading {
+  color: var(--text-muted, #94a3b8);
+  font-size: 13px;
+  padding: 40px;
+  text-align: center;
+}
+
+.access-empty-state {
+  padding: 40px;
+  text-align: center;
+  color: var(--fg, #0f172a);
+}
+
+.access-empty-hint {
+  font-size: 13px;
+  color: var(--text-muted, #94a3b8);
+}
+
+/* ── KPI strip ──────────────────────────────────────────────────────────── */
+
+.access-kpi-strip {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 12px;
+}
+
+.access-kpi-card {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  padding: 10px 16px;
+  background: var(--bg-secondary, #f8fafc);
+  border: 1px solid var(--border, #e2e8f0);
+  border-radius: var(--radius, 6px);
+  min-width: 100px;
+}
+
+.access-kpi-card--amber {
+  border-color: #f59e0b;
+  background: rgba(245, 158, 11, 0.06);
+}
+
+/* Read = green, Written = blue — same semantics as the matrix op pills. */
+.access-kpi-card--read {
+  border-color: rgba(34, 197, 94, 0.4);
+  background: rgba(34, 197, 94, 0.06);
+}
+
+.access-kpi-card--read .access-kpi-label {
+  color: #15803d;
+}
+
+.access-kpi-card--write {
+  border-color: rgba(59, 130, 246, 0.4);
+  background: rgba(59, 130, 246, 0.06);
+}
+
+.access-kpi-card--write .access-kpi-label {
+  color: #1d4ed8;
+}
+
+.access-kpi-label {
+  font-size: 11px;
+  text-transform: uppercase;
+  letter-spacing: 0.04em;
+  color: var(--text-muted, #94a3b8);
+  font-weight: 500;
+}
+
+.access-kpi-value {
+  font-size: 15px;
+  font-weight: 600;
+  color: var(--fg, #0f172a);
+  font-variant-numeric: tabular-nums;
+}
+
+/* ── Controls bar ───────────────────────────────────────────────────────── */
+
+.access-controls {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  flex-wrap: wrap;
+}
+
+.access-heatmap-toggle {
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
+  padding: 4px 10px;
+  border: 1px solid var(--border, #e2e8f0);
+  border-radius: var(--radius, 6px);
+  background: var(--bg-secondary, #f8fafc);
+  color: var(--text-muted, #94a3b8);
+  font-size: 12px;
+  cursor: pointer;
+  transition: background var(--transition-fast, 150ms ease),
+    color var(--transition-fast, 150ms ease),
+    border-color var(--transition-fast, 150ms ease);
+}
+
+.access-heatmap-toggle--active {
+  background: rgba(249, 115, 22, 0.12);
+  border-color: #f97316;
+  color: #c2410c;
+}
+
+.access-chips {
+  display: flex;
+  gap: 6px;
+}
+
+.access-chip {
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
+  padding: 4px 10px;
+  border: 1px solid var(--border, #e2e8f0);
+  border-radius: 20px;
+  background: var(--bg-secondary, #f8fafc);
+  color: var(--text-muted, #94a3b8);
+  font-size: 12px;
+  cursor: pointer;
+  transition: background var(--transition-fast, 150ms ease),
+    color var(--transition-fast, 150ms ease),
+    border-color var(--transition-fast, 150ms ease);
+}
+
+.access-chip--active.access-chip--reads {
+  background: rgba(34, 197, 94, 0.1);
+  border-color: #22c55e;
+  color: #15803d;
+}
+
+.access-chip--active.access-chip--writes {
+  background: rgba(59, 130, 246, 0.1);
+  border-color: #3b82f6;
+  color: #3b82f6;
+}
+
+.access-path-filter {
+  flex: 1;
+  min-width: 140px;
+  max-width: 260px;
+  padding: 4px 10px;
+  border: 1px solid var(--border, #e2e8f0);
+  border-radius: var(--radius, 6px);
+  background: var(--bg, #fff);
+  color: var(--fg, #0f172a);
+  font-size: 12px;
+}
+
+.access-path-filter:focus {
+  outline: none;
+  border-color: var(--accent, #3b82f6);
+  box-shadow: 0 0 0 2px rgba(59, 130, 246, 0.15);
+}
+
+.access-sort-select {
+  padding: 4px 8px;
+  border: 1px solid var(--border, #e2e8f0);
+  border-radius: var(--radius, 6px);
+  background: var(--bg-secondary, #f8fafc);
+  color: var(--fg, #0f172a);
+  font-size: 12px;
+  cursor: pointer;
+}
+
+/* ── Treetable container ────────────────────────────────────────────────── */
+
+.access-treetable {
+  overflow-x: auto;
+  overflow-y: auto;
+  max-height: 540px;
+  border: 1px solid var(--border, #e2e8f0);
+  border-radius: var(--radius, 6px);
+  background: var(--bg, #fff);
+  font-size: 12px;
+}
+
+/* ── Table header (sticky top) ──────────────────────────────────────────── */
+
+.access-table-header {
+  position: sticky;
+  top: 0;
+  z-index: 3;
+  background: var(--bg-secondary, #f8fafc);
+  border-bottom: 1px solid var(--border, #e2e8f0);
+}
+
+/* Stage group label row — a grid that shares the table's column template so
+   each stage label spans exactly its data columns. Empty spacers hold the
+   file and Σ tracks. */
+.access-stage-groups {
+  display: grid;
+  grid-template-columns: var(--fa-grid);
+  width: max-content;
+  border-bottom: 1px solid var(--border, #e2e8f0);
+}
+
+/* Empty spacer cells over the file and Σ columns of the stage-label row. */
+.access-stage-spacer {
+  min-height: 0;
+}
+
+.access-stage-group-header {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  gap: 4px;
+  min-width: 0;
+  padding: 4px 8px;
+  background: transparent;
+  border: none;
+  border-right: 1px solid var(--border, #e2e8f0);
+  color: var(--fg, #0f172a);
+  font-size: 11px;
+  font-weight: 600;
+  text-transform: uppercase;
+  letter-spacing: 0.04em;
+  cursor: pointer;
+  white-space: nowrap;
+  overflow: hidden;
+}
+
+.access-stage-group-header .access-stage-name {
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.access-stage-group-header:hover {
+  background: var(--border, #e2e8f0);
+}
+
+.access-stage-group-header--collapsed {
+  background: rgba(59, 130, 246, 0.06);
+  color: #3b82f6;
+}
+
+/* Column headers row — same grid template as the stage-label and body rows. */
+.access-col-headers {
+  display: grid;
+  grid-template-columns: var(--fa-grid);
+  width: max-content;
+}
+
+.access-col-header {
+  min-width: 0;
+  min-height: var(--fa-cell-height, 32px);
+  padding: 4px 6px;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  font-size: 11px;
+  color: var(--text-muted, #94a3b8);
+  border-right: 1px solid rgba(226, 232, 240, 0.5);
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.access-col-agent {
+  max-width: 100%;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.access-col-header:last-child {
+  border-right: none;
+}
+
+/* File column header — sticky left, wider than data cells.
+   ``position: relative`` so the drag handle (.access-col-file-resizer)
+   can pin to the right edge with position:absolute. ``sticky`` already
+   establishes a containing block for absolute children. */
+.access-col-file-header {
+  position: sticky;
+  left: 0;
+  z-index: 4;
+  width: var(--fa-file-col-width, 220px);
+  background: var(--bg-secondary, #f8fafc);
+  font-weight: 600;
+  color: var(--fg, #0f172a);
+  justify-content: flex-start;
+  border-right: 2px solid var(--border, #e2e8f0);
+}
+
+/* Drag handle for resizing the file column. Pinned to the right edge of
+   the header; on pointerdown it captures the pointer and rewrites the
+   shared --fa-file-col-width CSS var on the .run-file-access root, which
+   the grid template + sticky cells both read so they move in lockstep. */
+.access-col-file-resizer {
+  position: absolute;
+  top: 0;
+  right: -3px;
+  width: 7px;
+  height: 100%;
+  cursor: col-resize;
+  user-select: none;
+  touch-action: none;
+  z-index: 5;
+  background: transparent;
+}
+
+.access-col-file-resizer:hover,
+.access-col-file-resizer--active {
+  background: rgba(59, 130, 246, 0.35);
+}
+
+/* Body-level cursor lock during a drag (set via JS) — keeps the cursor as
+   col-resize even when the pointer leaves the handle's 7px hit area, which
+   is otherwise easy to do at faster drag speeds. */
+.access-col-file-resizing,
+.access-col-file-resizing * {
+  cursor: col-resize !important;
+  user-select: none !important;
+}
+
+.access-col-header--collapsed {
+  background: rgba(59, 130, 246, 0.06);
+  color: #3b82f6;
+  font-style: italic;
+}
+
+.access-sigma-header {
+  font-weight: 600;
+  color: var(--fg, #0f172a);
+  background: var(--bg-secondary, #f8fafc);
+}
+
+.access-col-iter {
+  font-size: 10px;
+  color: var(--text-muted, #94a3b8);
+}
+
+/* ── Table body rows ────────────────────────────────────────────────────── */
+
+.access-table-body {
+  display: flex;
+  flex-direction: column;
+  width: max-content;
+}
+
+/* Each row is its own grid sharing the table column template, so cells line up
+   with the header columns exactly (no per-stage width drift). */
+.access-row {
+  display: grid;
+  grid-template-columns: var(--fa-grid);
+  width: max-content;
+  align-items: stretch;
+  min-height: var(--fa-cell-height, 32px);
+  border-bottom: 1px solid rgba(226, 232, 240, 0.5);
+}
+
+.access-row:last-child {
+  border-bottom: none;
+}
+
+.access-row--dir {
+  background: var(--bg-secondary, #f8fafc);
+  font-weight: 500;
+}
+
+.access-row--file {
+  background: var(--bg, #fff);
+}
+
+.access-row--file:hover {
+  background: rgba(59, 130, 246, 0.04);
+}
+
+/* ── Cells ──────────────────────────────────────────────────────────────── */
+
+.access-cell {
+  min-width: 0;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  padding: 3px 6px;
+  border-right: 1px solid rgba(226, 232, 240, 0.5);
+}
+
+/* Aggregated Σ cell shown for a collapsed stage — holds the same op pills. */
+.access-cell--stage-agg {
+  flex-wrap: wrap;
+  gap: 3px;
+  background: rgba(59, 130, 246, 0.04);
+}
+
+.access-cell:last-child {
+  border-right: none;
+}
+
+/* Sticky file name column — left:0, inherits row background */
+.access-cell--file {
+  position: sticky;
+  left: 0;
+  z-index: 1;
+  width: var(--fa-file-col-width, 220px);
+  justify-content: flex-start;
+  gap: 6px;
+  padding: 3px 8px;
+  /* One indent step == the full chevron + folder-icon prefix on a dir row:
+     chevron 18px + gap 6px + folder-icon 14px + gap 6px = 44px. A child file
+     row (no chevron/folder prefix) lands its name at exactly the x-position
+     of its parent folder's name, and a nested dir row's text aligns with
+     its grandparent's text — what a treegrid is supposed to look like. */
+  padding-left: calc(8px + var(--depth, 0) * 44px);
+  background: inherit;
+  border-right: 2px solid var(--border, #e2e8f0);
+}
+
+.access-row--dir .access-cell--file {
+  background: var(--bg-secondary, #f8fafc);
+}
+
+.access-row--file .access-cell--file {
+  background: var(--bg, #fff);
+}
+
+.access-row--file:hover .access-cell--file {
+  background: rgba(59, 130, 246, 0.04);
+}
+
+.access-cell--empty {
+  color: var(--text-muted, #94a3b8);
+  font-size: 16px;
+  line-height: 1;
+}
+
+.access-cell--clickable {
+  cursor: pointer;
+}
+
+.access-cell--clickable:focus-visible {
+  outline: 2px solid var(--sl-color-primary-600, #2563eb);
+  outline-offset: -2px;
+  border-radius: 2px;
+}
+
+.access-cell--sigma {
+  flex-wrap: wrap;
+  gap: 3px;
+  background: var(--bg-secondary, #f8fafc);
+}
+
+/* ── Dir toggle button ──────────────────────────────────────────────────── */
+
+.access-dir-toggle {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 18px;
+  height: 18px;
+  flex-shrink: 0;
+  padding: 0;
+  border: none;
+  background: transparent;
+  color: var(--text-muted, #94a3b8);
+  cursor: pointer;
+  border-radius: 3px;
+}
+
+.access-dir-toggle:hover {
+  background: var(--border, #e2e8f0);
+  color: var(--fg, #0f172a);
+}
+
+/* ── File name + category colors ────────────────────────────────────────── */
+
+.access-file-name {
+  font-size: 12px;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  max-width: 100%;
+}
+
+/* read → blue (informational, no change) */
+.access-file-name--read {
+  color: #3b82f6;
+}
+
+/* write → green (positive, modified) */
+.access-file-name--write {
+  color: #22c55e;
+}
+
+/* leaked → amber (caution, untracked write) */
+.access-file-name--leaked {
+  color: #f59e0b;
+}
+
+/* ✎ git-tracked write decoration */
+.access-tracked-icon {
+  font-size: 11px;
+  color: var(--text-muted, #94a3b8);
+  margin-left: 3px;
+  flex-shrink: 0;
+}
+
+/* ── Heatmap shading ────────────────────────────────────────────────────── */
+
+/* When heatmap mode is active, shade non-empty data cells by op-count density.
+   --heat (0..1) is set per-cell by the view when _heatmap is true. */
+.access-treetable--heatmap
+  .access-cell:not(.access-cell--empty):not(.access-cell--file):not(.access-cell--sigma):not(.access-cell--stage-agg) {
+  background-color: rgba(249, 115, 22, calc(var(--heat, 0) * 0.28));
+}
+
+/* ── Operation badges (R / W / RW) ─────────────────────────────────────── */
+
+.access-badge {
+  display: inline-flex;
+  align-items: center;
+  gap: 2px;
+  padding: 1px 6px;
+  border-radius: 4px;
+  font-size: 10px;
+  font-weight: 700;
+  letter-spacing: 0.02em;
+  line-height: 1.4;
+  white-space: nowrap;
+  border: 1px solid transparent;
+  font-variant-numeric: tabular-nums;
+}
+
+/* R = green (read) */
+.access-badge--read {
+  background: rgba(34, 197, 94, 0.12);
+  color: #15803d;
+  border-color: rgba(34, 197, 94, 0.3);
+}
+
+/* W = blue (write) */
+.access-badge--write {
+  background: rgba(59, 130, 246, 0.12);
+  color: #1d4ed8;
+  border-color: rgba(59, 130, 246, 0.3);
+}
+
+/* broad scan — amber caution */
+.access-badge--broad {
+  background: rgba(245, 158, 11, 0.12);
+  color: #b45309;
+  border-color: rgba(245, 158, 11, 0.3);
+}
+
+/* zero-hit search — red */
+.access-badge--zero-hit {
+  background: rgba(239, 68, 68, 0.1);
+  color: #b91c1c;
+  border-color: rgba(239, 68, 68, 0.3);
+}
+
+.access-op-count {
+  font-size: 8px;
+  font-weight: 500;
+  vertical-align: super;
+  line-height: 1;
+  opacity: 0.85;
+}
+
+/* ── Sigma (Σ) column ───────────────────────────────────────────────────── */
+
+.access-sigma-read {
+  color: #1d4ed8;
+  font-weight: 600;
+  font-size: 11px;
+}
+
+.access-sigma-write {
+  color: #15803d;
+  font-weight: 600;
+  font-size: 11px;
+}
+
+/* ── Searches lane ──────────────────────────────────────────────────────── */
+
+.access-searches {
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+}
+
+.access-searches-title {
+  font-size: 13px;
+  font-weight: 600;
+  color: var(--fg, #0f172a);
+  margin: 0;
+}
+
+.access-searches-empty {
+  font-size: 13px;
+  color: var(--text-muted, #94a3b8);
+  margin: 0;
+}
+
+.access-searches-table {
+  width: 100%;
+  border-collapse: collapse;
+  font-size: 12px;
+  /* Fixed layout + explicit column widths so the per-stage grouped tables all
+     line up with each other (and with the ungrouped table). Pattern is the one
+     unsized column, so it absorbs the remaining width. */
+  table-layout: fixed;
+}
+
+.access-searches-table th:nth-child(1),
+.access-searches-table td:nth-child(1) {
+  width: 130px;
+}
+
+.access-searches-table th:nth-child(2),
+.access-searches-table td:nth-child(2) {
+  width: 90px;
+}
+
+.access-searches-table th:nth-child(4),
+.access-searches-table td:nth-child(4) {
+  width: 200px;
+}
+
+.access-searches-table th:nth-child(5),
+.access-searches-table td:nth-child(5) {
+  width: 70px;
+}
+
+.access-searches-table th:nth-child(6),
+.access-searches-table td:nth-child(6) {
+  width: 150px;
+}
+
+/* Long scope paths shouldn't break the fixed columns. */
+.access-searches-table td:nth-child(4) {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.access-searches-table th {
+  text-align: left;
+  padding: 6px 10px;
+  font-size: 11px;
+  text-transform: uppercase;
+  letter-spacing: 0.04em;
+  color: var(--text-muted, #94a3b8);
+  font-weight: 500;
+  border-bottom: 2px solid var(--border, #e2e8f0);
+}
+
+.access-searches-table td {
+  padding: 6px 10px;
+  border-bottom: 1px solid rgba(226, 232, 240, 0.6);
+  vertical-align: middle;
+}
+
+.access-search-row:last-child td {
+  border-bottom: none;
+}
+
+.access-search-pattern {
+  font-family: var(--sl-font-mono, monospace);
+  font-size: 11px;
+  color: var(--fg, #0f172a);
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+/* ── Graph-queries lane (graphify / CRG) ────────────────────────────────── */
+
+.access-graph-lane {
+  margin-top: 18px;
+}
+
+/* Graph table columns: Stage · Engine · Op · Query(flex). Only fields both
+   engines reliably expose. Override the searches widths (higher specificity
+   via the doubled class). */
+.access-searches-table.access-graph-table td:nth-child(3),
+.access-searches-table.access-graph-table th:nth-child(3) {
+  width: 120px;
+}
+
+.access-searches-table.access-graph-table td:nth-child(4),
+.access-searches-table.access-graph-table th:nth-child(4) {
+  width: auto;
+}
+
+.access-engine-badge {
+  display: inline-flex;
+  align-items: center;
+  padding: 1px 7px;
+  border-radius: 4px;
+  font-size: 10px;
+  font-weight: 600;
+  border: 1px solid transparent;
+}
+
+.access-engine-badge--graphify {
+  background: rgba(8, 145, 178, 0.12);
+  color: #0e7490;
+  border-color: rgba(8, 145, 178, 0.3);
+}
+
+.access-engine-badge--crg {
+  background: rgba(99, 102, 241, 0.12);
+  color: #4338ca;
+  border-color: rgba(99, 102, 241, 0.3);
+}
+
+.access-searches-header {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+}
+
+.access-searches-group-toggle {
+  padding: 2px 8px;
+  font-size: 11px;
+  border: 1px solid var(--border, #e2e8f0);
+  border-radius: 4px;
+  background: var(--bg-secondary, #f8fafc);
+  color: var(--text-muted, #94a3b8);
+  cursor: pointer;
+}
+
+.access-searches-group-toggle--active {
+  background: rgba(234, 179, 8, 0.12);
+  border-color: rgba(234, 179, 8, 0.4);
+  color: #854d0e;
+}
+
+.access-searches-groups {
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+}
+
+.access-searches-stage-group {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+}
+
+.access-searches-stage-header {
+  font-size: 11px;
+  font-weight: 600;
+  text-transform: uppercase;
+  letter-spacing: 0.05em;
+  color: var(--text-muted, #94a3b8);
+  padding: 4px 10px;
+  background: var(--bg-secondary, #f8fafc);
+  border-radius: 4px;
+}
+
+/* ── Scope-dot: yellow hint on dir rows that appear as a search scope ──── */
+
+.access-scope-dot {
+  display: inline-block;
+  width: 6px;
+  height: 6px;
+  border-radius: 50%;
+  background: #eab308;
+  margin-left: 4px;
+  flex-shrink: 0;
+  vertical-align: middle;
+}
+
+/* ── Capture integrity strip ────────────────────────────────────────────── */
+
+.access-capture-strip {
+  display: flex;
+  align-items: center;
+  gap: 16px;
+  padding: 8px 14px;
+  background: var(--bg-secondary, #f8fafc);
+  border: 1px solid var(--border, #e2e8f0);
+  border-radius: var(--radius, 6px);
+  font-size: 12px;
+  color: var(--text-muted, #94a3b8);
+}
+
+.access-capture-strip--degraded {
+  border-color: #f59e0b;
+  background: rgba(245, 158, 11, 0.06);
+  color: #b45309;
+}
+
+.access-capture-label {
+  font-weight: 600;
+  text-transform: uppercase;
+  letter-spacing: 0.04em;
+  font-size: 11px;
+}
+
+.access-capture-leakage {
+  font-variant-numeric: tabular-nums;
+}
+
+.access-capture-oracle {
+  display: flex;
+  align-items: center;
+  gap: 4px;
+}
+
+/* ── Dark mode ──────────────────────────────────────────────────────────── */
+
+[data-theme="dark"] .access-file-name--read {
+  color: #93c5fd; /* blue-300 */
+}
+
+[data-theme="dark"] .access-file-name--write {
+  color: #86efac; /* green-300 */
+}
+
+[data-theme="dark"] .access-file-name--leaked {
+  color: #fcd34d; /* amber-300 */
+}
+
+[data-theme="dark"] .access-badge--read {
+  background: rgba(59, 130, 246, 0.2);
+  color: #93c5fd;
+  border-color: rgba(59, 130, 246, 0.4);
+}
+
+[data-theme="dark"] .access-badge--write {
+  background: rgba(34, 197, 94, 0.2);
+  color: #86efac;
+  border-color: rgba(34, 197, 94, 0.4);
+}
+
+[data-theme="dark"] .access-badge--rw {
+  background: rgba(20, 184, 166, 0.2);
+  color: #5eead4;
+  border-color: rgba(20, 184, 166, 0.4);
+}
+
+[data-theme="dark"] .access-sigma-read {
+  color: #93c5fd;
+}
+
+[data-theme="dark"] .access-sigma-write {
+  color: #86efac;
+}
+
+/* ── File name button (reset) ────────────────────────────────────────────── */
+
+.access-file-name-btn {
+  appearance: none;
+  -webkit-appearance: none;
+  background: none;
+  border: none;
+  padding: 0;
+  cursor: pointer;
+  font: inherit;
+  text-align: left;
+  color: inherit;
+}
+
+
+/* ── Drawer panels (file-history / cell-detail) ─────────────────────────── */
+
+.access-file-drawer,
+.access-cell-drawer {
+  position: fixed;
+  top: 0;
+  right: 0;
+  bottom: 0;
+  width: 360px;
+  display: flex;
+  flex-direction: column;
+  background: var(--surface);
+  border-left: 1px solid var(--border);
+  box-shadow: var(--shadow-lg), -2px 0 16px rgba(0, 0, 0, 0.08);
+  z-index: 200;
+  overflow: hidden;
+}
+
+.access-drawer-header {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  padding: 12px 16px;
+  border-bottom: 1px solid var(--border);
+  flex-shrink: 0;
+}
+
+.access-drawer-title {
+  flex: 1;
+  min-width: 0;
+  font-size: 13px;
+  font-weight: 600;
+  color: var(--fg);
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.access-drawer-close {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  flex-shrink: 0;
+  width: 28px;
+  height: 28px;
+  border: none;
+  background: transparent;
+  color: var(--muted);
+  cursor: pointer;
+  border-radius: 4px;
+  font-size: 14px;
+  line-height: 1;
+}
+
+.access-drawer-close:hover {
+  background: var(--bg-secondary);
+  color: var(--fg);
+}
+
+.access-drawer-body {
+  flex: 1;
+  overflow-y: auto;
+  padding: 16px;
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+}
+
+.access-drawer-section-label {
+  margin: 0 0 8px;
+  font-size: 11px;
+  font-weight: 600;
+  text-transform: uppercase;
+  letter-spacing: 0.05em;
+  color: var(--muted);
+}
+
+.access-drawer-empty {
+  margin: 0;
+  font-size: 13px;
+  color: var(--muted);
+}
+
+/* ── File history list ───────────────────────────────────────────────────── */
+
+.access-file-history-list {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+}
+
+.access-file-history-item {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 4px;
+  padding: 8px 10px;
+  border: 1px solid var(--border);
+  border-radius: 6px;
+  background: var(--bg-secondary);
+  font-size: 12px;
+}
+
+.access-history-stage {
+  font-weight: 600;
+  color: var(--fg);
+}
+
+.access-history-iter {
+  color: var(--muted);
+}
+
+.access-history-bead {
+  font-family: 'JetBrains Mono', 'SF Mono', 'Fira Code', monospace;
+  font-size: 11px;
+  padding: 1px 5px;
+  border-radius: 3px;
+  background: var(--bg-tertiary);
+  color: var(--muted);
+}
+
+.access-history-agent {
+  flex: 1;
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  color: var(--fg);
+}
+
+.access-history-read {
+  font-size: 11px;
+  font-weight: 600;
+  padding: 1px 5px;
+  border-radius: 3px;
+  background: rgba(59, 130, 246, 0.12);
+  color: #1d4ed8;
+}
+
+.access-history-write {
+  font-size: 11px;
+  font-weight: 600;
+  padding: 1px 5px;
+  border-radius: 3px;
+  background: rgba(34, 197, 94, 0.12);
+  color: #15803d;
+}
+
+/* ── Timeline link ──────────────────────────────────────────────────────── */
+
+.access-timeline-link {
+  align-self: flex-start;
+  border: none;
+  background: transparent;
+  padding: 0;
+  font-size: 12px;
+  color: var(--accent);
+  cursor: pointer;
+  text-decoration: underline;
+  text-underline-offset: 2px;
+}
+
+.access-timeline-link:hover {
+  color: var(--accent-hover);
+}
+
+/* ── Cell detail definition list ────────────────────────────────────────── */
+
+.access-cell-detail {
+  display: grid;
+  grid-template-columns: auto 1fr;
+  gap: 4px 12px;
+  margin: 0;
+  font-size: 13px;
+}
+
+.access-cell-detail dt {
+  font-weight: 600;
+  color: var(--muted);
+  white-space: nowrap;
+}
+
+.access-cell-detail dd {
+  margin: 0;
+  color: var(--fg);
+  word-break: break-all;
+}
+
+[data-theme="dark"] .access-history-read {
+  background: rgba(59, 130, 246, 0.2);
+  color: #93c5fd;
+}
+
+[data-theme="dark"] .access-history-write {
+  background: rgba(34, 197, 94, 0.2);
+  color: #86efac;
 }

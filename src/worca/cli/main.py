@@ -189,6 +189,12 @@ def create_parser() -> argparse.ArgumentParser:
     run_parser.add_argument("--resume", action="store_true", help="Resume from last checkpoint")
     run_parser.add_argument("--source", dest="source_arg", default=None, help="Work source")
     run_parser.add_argument("--template", default=None, help="Template ID to apply before running")
+    run_parser.add_argument(
+        "--force-template-change",
+        action="store_true",
+        default=False,
+        help="Allow switching to a different template when resuming a run",
+    )
     run_parser.add_argument("--param", action="append", metavar="KEY=VALUE", help="Template parameter override (repeatable)")
     run_parser.add_argument(
         "--worktree",
@@ -243,6 +249,10 @@ def create_parser() -> argparse.ArgumentParser:
     # crg (code-review-graph)
     from worca.cli.crg_cmd import register_subcommand as register_crg
     register_crg(sub)
+
+    # pr (PR lifecycle)
+    from worca.cli.pr import register_subcommand as register_pr
+    register_pr(sub)
 
     return parser
 
@@ -300,6 +310,9 @@ def main(argv=None):
     elif args.command == "crg":
         from worca.cli.crg_cmd import cmd_crg
         cmd_crg(args)
+    elif args.command == "pr":
+        from worca.cli.pr import cmd_pr
+        cmd_pr(args)
     else:
         print(f"error: unknown command {args.command!r}", file=sys.stderr)
         raise SystemExit(1)

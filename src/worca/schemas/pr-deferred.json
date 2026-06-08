@@ -22,12 +22,15 @@
     "review_status": {
       "type": "string",
       "enum": ["pending", "approved", "changes_requested", "rejected"]
-    }
+    },
+    "pr_title": { "type": "string" },
+    "pr_body": { "type": "string" },
+    "base_branch": { "type": "string" }
   },
   "if": {
     "properties": { "outcome": { "const": "success" } }
   },
   "then": {
-    "required": ["deferred", "commit_sha"]
+    "required": ["deferred", "commit_sha", "pr_title", "pr_body", "base_branch"]
   }
 }

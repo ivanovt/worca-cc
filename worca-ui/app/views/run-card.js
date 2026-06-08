@@ -233,9 +233,15 @@ export function runCardView(
       `
       : nothing;
 
+  // Display tier alignment: the resolver tier is "builtin" (the long-
+  // standing Python convention) and the Pipeline Templates page uses
+  // the same word. Old `status.json` files written before we landed
+  // the rename still say "worca:<id>" on disk — translate those to
+  // "builtin:<id>" at display time so the run card matches the rest
+  // of the UI without rewriting historical run records.
   const pipelineTemplate = run.pipeline_template
-    ? run.pipeline_template.startsWith('builtin:')
-      ? `worca:${run.pipeline_template.slice('builtin:'.length)}`
+    ? run.pipeline_template.startsWith('worca:')
+      ? `builtin:${run.pipeline_template.slice('worca:'.length)}`
       : run.pipeline_template
     : null;
 
@@ -290,6 +296,7 @@ export function runCardView(
       })()}
       ${sourceBranch ? html`<div class="run-card-meta"><span class="run-card-meta-item"><span class="meta-label">Source Branch:</span> <span class="meta-value">${sourceBranch}</span></span>${targetBranch && targetBranch !== defaultBranch ? html`<span class="run-card-meta-item"><span class="meta-label">Target Branch:</span> <span class="meta-value">${targetBranch}</span></span>` : nothing}</div>` : nothing}
       ${pipelineTemplate ? html`<div class="run-card-template"><span class="meta-label">Pipeline:</span> <span class="meta-value">${pipelineTemplate}</span></div>` : nothing}
+      ${run.revises_pr ? html`<div class="run-card-revises-pr"><sl-badge variant="warning" pill class="run-card-revises-pr-badge">Revising PR #${run.revises_pr}</sl-badge></div>` : nothing}
       <div class="run-card-meta">
         <span class="run-card-meta-item"><span class="meta-label">Started:</span> <span class="meta-value">${formatTimestamp(run.started_at)}</span></span>
         <span class="run-card-meta-item"><span class="meta-label">Finished:</span> <span class="meta-value">${formatTimestamp(endTime)}</span></span>

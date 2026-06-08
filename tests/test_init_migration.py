@@ -13,10 +13,12 @@ import os
 from pathlib import Path
 
 from worca.cli.init import (
+    _BUILTIN_MODEL_ALIASES,
     _deep_merge,
     _migrate_dispatch_governance,
     _migrate_global_keys_to_preferences,
     _migrate_settings_paths,
+    _reconcile_builtin_models,
     _strip_inert_milestone_keys,
 )
 from worca.hooks.tracking import _DISPATCH_DEFAULTS
@@ -561,6 +563,208 @@ class TestSkillHookRegistration:
         assert not any("PreToolUse[Skill]" in c for c in changes)
 
 
+class TestPostToolUseMatcherWidening:
+    """W-064: the worca-owned PostToolUse matcher must be widened on upgrade.
+
+    Pre-W-064 projects shipped a "Bash"-only matcher. _deep_merge preserves
+    the existing list verbatim (lists are treated as scalars), so the
+    file-access recorder never fires for Read/Write/Edit/MultiEdit/
+    NotebookEdit/Grep/Glob — nothing lands in .worca/runs/<id>/access/ and
+    the Access Map stays empty. The migration self-heals the matcher so the
+    fix propagates to in-place runs and (via copy_claude_config) to worktrees.
+    """
+
+    def _worca_post_matcher(self, settings):
+        for entry in settings.get("hooks", {}).get("PostToolUse", []):
+            if any(
+                "post_tool_use.py" in h.get("command", "")
+                for h in entry.get("hooks", [])
+            ):
+                return entry.get("matcher", "")
+        return None
+
+    def _stale_settings(self):
+        return {
+            "hooks": {
+                "PostToolUse": [
+                    {
+                        "matcher": "Bash",
+                        "hooks": [
+                            {"type": "command", "command": "python3 .../post_tool_use.py"}
+                        ],
+                    }
+                ]
+            }
+        }
+
+    def test_bash_only_matcher_is_widened(self):
+        from worca.claude_hooks.post_tool_use import (
+            CRG_MATCHER_PATTERNS,
+            FILE_ACCESS_TOOLS,
+        )
+
+        migrated, changes = _migrate_settings_paths(self._stale_settings())
+        matcher = self._worca_post_matcher(migrated)
+        tokens = {t for t in matcher.split("|") if t}
+        assert "Bash" in tokens, "Bash must survive (test-gate + graph queries)"
+        for tool in FILE_ACCESS_TOOLS:
+            assert tool in tokens, f"matcher must cover recorded tool {tool}"
+        for pat in CRG_MATCHER_PATTERNS:
+            assert pat in tokens, f"matcher must cover CRG MCP pattern {pat}"
+        assert any("PostToolUse matcher" in c and "W-064" in c for c in changes)
+
+    def test_widens_file_only_matcher_to_add_crg(self):
+        """A matcher that already covers the file tools but predates the CRG
+        patterns is still widened — CRG graph queries would otherwise be
+        dropped from the access ledger while the badge counts them."""
+        from worca.claude_hooks.post_tool_use import CRG_MATCHER_PATTERNS
+
+        settings = {
+            "hooks": {
+                "PostToolUse": [
+                    {
+                        "matcher": "Bash|Read|Write|Edit|MultiEdit|NotebookEdit|Grep|Glob",
+                        "hooks": [
+                            {"type": "command", "command": "python3 .../post_tool_use.py"}
+                        ],
+                    }
+                ]
+            }
+        }
+        migrated, changes = _migrate_settings_paths(settings)
+        tokens = {t for t in self._worca_post_matcher(migrated).split("|") if t}
+        for pat in CRG_MATCHER_PATTERNS:
+            assert pat in tokens, f"matcher must gain CRG MCP pattern {pat}"
+        assert any("PostToolUse matcher" in c for c in changes)
+
+    def test_already_broad_matcher_is_noop(self):
+        from worca.claude_hooks.post_tool_use import (
+            CRG_MATCHER_PATTERNS,
+            FILE_ACCESS_TOOLS,
+        )
+
+        full = "|".join(["Bash", *FILE_ACCESS_TOOLS, *CRG_MATCHER_PATTERNS])
+        settings = {
+            "hooks": {
+                "PostToolUse": [
+                    {
+                        "matcher": full,
+                        "hooks": [
+                            {"type": "command", "command": "python3 .../post_tool_use.py"}
+                        ],
+                    }
+                ]
+            }
+        }
+        _migrated, changes = _migrate_settings_paths(settings)
+        assert not any("PostToolUse matcher" in c for c in changes), (
+            "already-broad matcher (incl. CRG patterns) must not trigger a change"
+        )
+
+    def test_idempotent_rerun(self):
+        first, _ = _migrate_settings_paths(self._stale_settings())
+        _second, second_changes = _migrate_settings_paths(first)
+        assert not any("PostToolUse matcher" in c for c in second_changes), (
+            "second upgrade must be a no-op for the PostToolUse matcher"
+        )
+
+    def test_non_worca_posttooluse_entry_untouched(self):
+        """A user's own PostToolUse hook (different command) is left alone."""
+        settings = {
+            "hooks": {
+                "PostToolUse": [
+                    {
+                        "matcher": "Write",
+                        "hooks": [
+                            {"type": "command", "command": "python3 /my/custom/linter.py"}
+                        ],
+                    }
+                ]
+            }
+        }
+        _migrated, changes = _migrate_settings_paths(settings)
+        assert not any("PostToolUse matcher" in c for c in changes)
+
+    def test_matches_shipped_template_matcher(self):
+        """The widened matcher equals the matcher in the shipped template, so a
+        migrated project and a freshly-init'd project capture identically."""
+        template_path = Path(__file__).parent.parent / "src" / "worca" / "settings.json"
+        with open(template_path, encoding="utf-8") as f:
+            template = json.load(f)
+        template_matcher = self._worca_post_matcher(template)
+        migrated, _ = _migrate_settings_paths(self._stale_settings())
+        assert self._worca_post_matcher(migrated) == template_matcher
+
+
+# ── §11a2: permissions.allow native Glob/Grep grant ────────────────
+
+
+class TestPermissionsAllowGlobGrep:
+    """The worca-owned permissions.allow list must grant native Glob/Grep.
+
+    The allowlist carries the Bash equivalents + Read(*) but omitted the native
+    Glob/Grep tools. Subagents (which don't inherit the parent's
+    --dangerously-skip-permissions) are bound by permissions.allow, so their
+    Glob/Grep calls are denied. _deep_merge preserves the existing allow LIST
+    verbatim on upgrade, so the migration must inject the tools explicitly.
+    """
+
+    def _allow(self, settings):
+        return settings.get("permissions", {}).get("allow")
+
+    def _stale_settings(self):
+        return {
+            "permissions": {
+                "allow": ["Read(*)", "Bash(grep:*)", "Bash(find:*)"]
+            }
+        }
+
+    def test_adds_native_glob_and_grep(self):
+        migrated, changes = _migrate_settings_paths(self._stale_settings())
+        allow = self._allow(migrated)
+        assert "Glob" in allow
+        assert "Grep" in allow
+        # Existing entries are preserved.
+        assert "Read(*)" in allow
+        assert "Bash(grep:*)" in allow
+        assert any("permissions.allow" in c and "Glob" in c for c in changes)
+        assert any("permissions.allow" in c and "Grep" in c for c in changes)
+
+    def test_noop_when_already_present(self):
+        settings = {
+            "permissions": {"allow": ["Read(*)", "Glob", "Grep"]}
+        }
+        _migrated, changes = _migrate_settings_paths(settings)
+        assert not any("permissions.allow" in c for c in changes)
+
+    def test_idempotent_rerun(self):
+        first, _ = _migrate_settings_paths(self._stale_settings())
+        _second, second_changes = _migrate_settings_paths(first)
+        assert not any("permissions.allow" in c for c in second_changes)
+
+    def test_skipped_when_no_permissions_block(self):
+        """A project without a permissions block is left untouched (no allowlist
+        means no allowlist enforcement to repair)."""
+        _migrated, changes = _migrate_settings_paths({"hooks": {}})
+        assert not any("permissions.allow" in c for c in changes)
+
+    def test_skipped_when_allow_not_a_list(self):
+        settings = {"permissions": {"allow": "not-a-list"}}
+        _migrated, changes = _migrate_settings_paths(settings)
+        assert not any("permissions.allow" in c for c in changes)
+
+    def test_matches_shipped_template(self):
+        """After migration a stale project's allowlist contains the same native
+        search tools the shipped template grants."""
+        template_path = Path(__file__).parent.parent / "src" / "worca" / "settings.json"
+        with open(template_path, encoding="utf-8") as f:
+            shipped_allow = json.load(f)["permissions"]["allow"]
+        assert "Glob" in shipped_allow and "Grep" in shipped_allow
+        migrated, _ = _migrate_settings_paths(self._stale_settings())
+        allow = self._allow(migrated)
+        assert "Glob" in allow and "Grep" in allow
+
+
 # ── §11b: _migrate_global_keys_to_preferences ──────────────────────
 
 
@@ -768,3 +972,233 @@ class TestStripInertMilestoneKeys:
             ms = json.load(f)["worca"]["milestones"]
         assert ms["pr_approval"] == "always"
         assert ms["deploy_approval"] == 1
+
+
+class TestMigrateToLegacyTemplate:
+    """Phase 1: on `worca init --upgrade`, snapshot customized template-owned
+    keys into a `_legacy-settings` template and set worca.default_template."""
+
+    def _write_settings(self, git_root: Path, worca_cfg: dict):
+        claude_dir = git_root / ".claude"
+        claude_dir.mkdir(parents=True, exist_ok=True)
+        settings_path = claude_dir / "settings.json"
+        settings_path.write_text(json.dumps({"worca": worca_cfg}))
+        return settings_path
+
+    def test_skips_when_no_settings_file(self, tmp_path):
+        from worca.cli.init import _migrate_to_legacy_template
+        assert _migrate_to_legacy_template(tmp_path) is None
+
+    def test_skips_when_no_template_owned_customizations(self, tmp_path):
+        from worca.cli.init import _migrate_to_legacy_template
+        self._write_settings(tmp_path, {"models": {"opus": "claude-opus-4-7"}})
+        assert _migrate_to_legacy_template(tmp_path) is None
+        assert not (tmp_path / ".claude" / "templates" / "_legacy-settings").exists()
+
+    def test_skips_when_default_template_already_set(self, tmp_path):
+        from worca.cli.init import _migrate_to_legacy_template
+        self._write_settings(tmp_path, {
+            "default_template": "feature",
+            "loops": {"implement_test": 5},  # would otherwise be captured
+        })
+        assert _migrate_to_legacy_template(tmp_path) is None
+
+    def test_captures_customized_keys_into_template(self, tmp_path):
+        from worca.cli.init import _migrate_to_legacy_template
+        self._write_settings(tmp_path, {
+            "agents": {"implementer": {"model": "sonnet", "max_turns": 80}},
+            "loops": {"implement_test": 5},
+            "circuit_breaker": {"max_consecutive_failures": 7},
+            "effort": {"auto_mode": "reactive"},
+            "governance": {
+                "dispatch": {"_defaults": {"tools": ["Bash"]}},
+                "guards": {"block_graphify_mutation": True},  # NOT template-owned
+            },
+            # cross-template; must NOT be captured
+            "models": {"opus": "claude-opus-4-7"},
+        })
+
+        result = _migrate_to_legacy_template(tmp_path)
+        assert result == "_legacy-settings"
+
+        tmpl_path = tmp_path / ".claude" / "templates" / "_legacy-settings" / "template.json"
+        assert tmpl_path.exists()
+        tmpl = json.loads(tmpl_path.read_text())
+
+        assert tmpl["id"] == "_legacy-settings"
+        assert tmpl["auto_generated"] is True
+        assert tmpl["builtin"] is False
+        assert "auto-migrated" in tmpl["tags"]
+
+        cfg = tmpl["config"]
+        # Template-owned keys captured
+        assert cfg["agents"] == {"implementer": {"model": "sonnet", "max_turns": 80}}
+        assert cfg["loops"] == {"implement_test": 5}
+        assert cfg["circuit_breaker"] == {"max_consecutive_failures": 7}
+        assert cfg["effort"] == {"auto_mode": "reactive"}
+        assert cfg["governance"] == {"dispatch": {"_defaults": {"tools": ["Bash"]}}}
+        # Cross-template keys NOT captured
+        assert "models" not in cfg
+        assert "guards" not in cfg.get("governance", {})
+
+    def test_sets_default_template_in_settings(self, tmp_path):
+        from worca.cli.init import _migrate_to_legacy_template
+        settings_path = self._write_settings(tmp_path, {
+            "loops": {"implement_test": 5},
+        })
+        _migrate_to_legacy_template(tmp_path)
+        merged = json.loads(settings_path.read_text())
+        assert merged["worca"]["default_template"] == "_legacy-settings"
+        # Original keys NOT removed from settings.json — strip happens at run launch
+        assert merged["worca"]["loops"] == {"implement_test": 5}
+
+    def test_idempotent_on_second_run(self, tmp_path):
+        from worca.cli.init import _migrate_to_legacy_template
+        self._write_settings(tmp_path, {"loops": {"implement_test": 5}})
+        first = _migrate_to_legacy_template(tmp_path)
+        assert first == "_legacy-settings"
+        second = _migrate_to_legacy_template(tmp_path)
+        assert second is None  # default_template now set, so skipped
+
+    def test_migration_skips_stages_preflight_carveout(self, tmp_path):
+        """stages.preflight is cross-template — the auto-generated template
+        must not snapshot it, otherwise later edits to preflight in Settings
+        would never take effect (the template would freeze the snapshot)."""
+        from worca.cli.init import _migrate_to_legacy_template
+        self._write_settings(tmp_path, {
+            "stages": {
+                "preflight": {"enabled": True, "require": ["ruff check"]},
+                "plan_review": {"enabled": True},
+                "learn": {"enabled": True},
+            },
+        })
+
+        result = _migrate_to_legacy_template(tmp_path)
+        assert result is not None
+
+        tmpl_path = tmp_path / ".claude" / "templates" / result / "template.json"
+        tmpl = json.loads(tmpl_path.read_text())
+        cfg = tmpl["config"]
+
+        # Non-preflight stages captured
+        assert cfg["stages"].get("plan_review") == {"enabled": True}
+        assert cfg["stages"].get("learn") == {"enabled": True}
+        # preflight NOT in the snapshot — stays cross-template
+        assert "preflight" not in cfg["stages"]
+
+    def test_migration_drops_empty_stages_block_after_carveout(self, tmp_path):
+        """If the only thing in stages was preflight, dropping it should drop
+        the whole stages block from the snapshot (no hollow {})."""
+        from worca.cli.init import _migrate_to_legacy_template
+        self._write_settings(tmp_path, {
+            "stages": {"preflight": {"enabled": True, "require": []}},
+            "loops": {"implement_test": 5},
+        })
+
+        result = _migrate_to_legacy_template(tmp_path)
+        assert result is not None
+
+        tmpl = json.loads(
+            (tmp_path / ".claude" / "templates" / result / "template.json").read_text()
+        )
+        assert "stages" not in tmpl["config"]
+        assert tmpl["config"]["loops"] == {"implement_test": 5}
+
+    def test_collision_renames_with_timestamp(self, tmp_path):
+        """User already has a project template literally named _legacy-settings."""
+        from worca.cli.init import _migrate_to_legacy_template
+
+        # Pre-existing user-authored _legacy-settings template
+        existing = tmp_path / ".claude" / "templates" / "_legacy-settings"
+        existing.mkdir(parents=True)
+        (existing / "template.json").write_text(json.dumps({
+            "id": "_legacy-settings",
+            "name": "User's existing thing",
+            "config": {"loops": {"implement_test": 99}},
+        }))
+
+        self._write_settings(tmp_path, {"loops": {"implement_test": 5}})
+
+        result = _migrate_to_legacy_template(tmp_path)
+        assert result is not None
+        assert result.startswith("_legacy-settings-")
+        assert result != "_legacy-settings"
+
+        # Existing template untouched
+        kept = json.loads((existing / "template.json").read_text())
+        assert kept["name"] == "User's existing thing"
+
+        # New template written under timestamped name
+        new_path = tmp_path / ".claude" / "templates" / result / "template.json"
+        assert new_path.exists()
+
+
+# --- Built-in model alias reconciliation (force-sync opus/sonnet/haiku) ---
+
+_TEMPLATE_MODELS = {
+    "worca": {
+        "models": {
+            "opus": "claude-opus-4-7",
+            "sonnet": "claude-sonnet-4-6",
+            "haiku": "claude-haiku-4-5-20251001",
+        }
+    }
+}
+
+
+def test_reconcile_overwrites_stale_string_aliases():
+    """A project pinned to an older built-in model string is bumped to the
+    installation's value, and the change is reported."""
+    settings = {"worca": {"models": {"opus": "claude-opus-4-6"}}}
+    changes = _reconcile_builtin_models(settings, _TEMPLATE_MODELS)
+    assert settings["worca"]["models"]["opus"] == "claude-opus-4-7"
+    assert any("worca.models.opus" in c for c in changes)
+
+
+def test_reconcile_overwrites_id_env_block_wholesale():
+    """An {id, env} alt-endpoint customization on a built-in alias is replaced
+    wholesale (env wiped) — these three aliases are worca-owned."""
+    settings = {
+        "worca": {
+            "models": {
+                "opus": {"id": "some/alt-model", "env": {"ANTHROPIC_BASE_URL": "x"}},
+            }
+        }
+    }
+    changes = _reconcile_builtin_models(settings, _TEMPLATE_MODELS)
+    assert settings["worca"]["models"]["opus"] == "claude-opus-4-7"
+    assert any("worca.models.opus" in c for c in changes)
+
+
+def test_reconcile_preserves_custom_aliases():
+    """Aliases the project added under different names are left untouched."""
+    settings = {
+        "worca": {
+            "models": {
+                "opus": "claude-opus-4-6",
+                "opus-alt": {"id": "x", "env": {"ANTHROPIC_BASE_URL": "y"}},
+                "fast": "claude-haiku-4-5-20251001",
+            }
+        }
+    }
+    _reconcile_builtin_models(settings, _TEMPLATE_MODELS)
+    assert settings["worca"]["models"]["opus-alt"] == {
+        "id": "x",
+        "env": {"ANTHROPIC_BASE_URL": "y"},
+    }
+    assert settings["worca"]["models"]["fast"] == "claude-haiku-4-5-20251001"
+
+
+def test_reconcile_noop_when_already_synced():
+    """No changes reported when the built-ins already match the installation."""
+    settings = copy.deepcopy(_TEMPLATE_MODELS)
+    changes = _reconcile_builtin_models(settings, _TEMPLATE_MODELS)
+    assert changes == []
+
+
+def test_reconcile_seeds_missing_models_block():
+    """A project with no models block gets the built-ins seeded."""
+    settings = {"worca": {}}
+    _reconcile_builtin_models(settings, _TEMPLATE_MODELS)
+    for alias in _BUILTIN_MODEL_ALIASES:
+        assert settings["worca"]["models"][alias] == _TEMPLATE_MODELS["worca"]["models"][alias]

@@ -132,7 +132,10 @@ def test_update_pipeline_writes_status(tmp_path):
     assert update_pipeline(run_id, status="interrupted", base=str(tmp_path)) is True
     after = json.load(open(path))
     assert after["status"] == "interrupted"
-    assert after["updated_at"] != before["updated_at"]
+    # Weak monotonicity — `update_pipeline` writes `datetime.now()`, which on
+    # fast Windows clocks can return the same microsecond as the seed call.
+    # Strict `!=` was a Linux-biased assertion; `>=` matches the real contract.
+    assert after["updated_at"] >= before["updated_at"]
 
 
 def test_update_pipeline_no_op_for_local_run(tmp_path):

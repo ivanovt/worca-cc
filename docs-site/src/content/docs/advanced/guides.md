@@ -11,9 +11,7 @@ A **guide** is a reference document — a migration spec, an RFC, a compliance r
 
 Every launcher — single run, fleet, and workspace — has a **guide upload** field. Drop one or more files there and they're attached to the run; the run-detail view renders the attached guide so you can confirm what the agents are working against.
 
-:::note[Screenshot — coming soon]
-The Run Pipeline launcher's guide-upload field with a migration spec attached.
-:::
+![The Run Pipeline launcher's guide-upload field with a migration spec attached.](/screenshots/guides/01-guide-upload.png)
 
 Guide content is capped at 64 KB combined; exceeding the cap aborts the launch before any work starts. Adjust the cap in **Settings → Fleet & guide** (it writes `worca.guide.max_bytes`).
 

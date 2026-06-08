@@ -335,7 +335,16 @@ def test_multiple_handlers_each_receive_same_event_json(tmp_path, hooked_ctx):
     emit_event(ctx, "pipeline.run.started", {"resume": False, "started_at": "2026-03-20T00:00:00Z"})
 
     deadline = time.time() + 3.0
-    while (not out1.exists() or not out2.exists()) and time.time() < deadline:
+    # Wait for content, not just existence: `cat > file` creates the file
+    # before writing, so reading on existence alone races to an empty file
+    # (flaky JSONDecodeError, esp. on slower Windows IO). Same fix applied
+    # in commit a8ddee1 for sibling tests; this one was missed.
+    def _both_filled():
+        return (
+            out1.exists() and out1.stat().st_size > 0
+            and out2.exists() and out2.stat().st_size > 0
+        )
+    while not _both_filled() and time.time() < deadline:
         time.sleep(0.05)
 
     data1 = json.loads(out1.read_text())
@@ -366,7 +375,10 @@ def test_three_handlers_wildcard_plus_two_specific(tmp_path):
     dispatch_shell_hooks(event, hooks)
 
     deadline = time.time() + 3.0
-    while not all(f.exists() for f in (out1, out2, out_wc)) and time.time() < deadline:
+    # Same empty-file read race fix as above (commit a8ddee1).
+    while time.time() < deadline:
+        if all(f.exists() and f.stat().st_size > 0 for f in (out1, out2, out_wc)):
+            break
         time.sleep(0.05)
 
     assert out1.exists(), "First specific handler not invoked"

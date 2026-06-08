@@ -617,10 +617,14 @@ def test_bead_limit_derived_from_coordinator(tmp_path):
             return {"files_changed": [], "tests_added": []}, {"type": "result"}
         return {}, {"type": "result"}
 
-    # Always return a bead — the max_beads counter should be the limit
+    # Return beads until the queue drains after len(bead_ids) implementations.
+    # Each bead requires 2 calls (claim + after-implement check); the last
+    # after-implement check returns None to signal the queue is empty.
     call_count = [0]
     def mock_query_ready(allowed_ids=None, run_id=None):
         call_count[0] += 1
+        if call_count[0] >= 2 * len(bead_ids):
+            return None
         return {"id": f"beads-{call_count[0]:03d}", "title": f"Bead {call_count[0]}"}
 
     with patch("worca.orchestrator.runner.run_stage", side_effect=mock_run_stage):
@@ -1042,7 +1046,14 @@ def test_run_pipeline_gh_issue_complete_called_after_completed_at_set(tmp_path):
 
 
 def test_bead_limit_warns_on_stale_beads(tmp_path, capsys):
-    """Warning is logged when bd ready returns beads beyond expected count."""
+    """When bd ready re-surfaces an already-implemented bead, the runner
+    drains the queue and advances rather than looping or halting.
+
+    This is the realistic stale-bead scenario: bd_close succeeded but the
+    next bd_ready call still returns the same bead (slow daemon, stateless
+    test stub, or a bd_close that quietly failed). Re-implementing is never
+    correct — the runner must treat the queue as drained and move on.
+    """
     from worca.orchestrator.work_request import WorkRequest
 
     plan = tmp_path / "plan.md"
@@ -1072,7 +1083,6 @@ def test_bead_limit_warns_on_stale_beads(tmp_path, capsys):
     status_path = str(worca_dir / "status.json")
     wr = WorkRequest(source_type="prompt", title="Test stale beads")
 
-    # Coordinator returns 2 beads
     bead_ids = ["beads-aaa", "beads-bbb"]
 
     def mock_run_stage(stage, context, settings_path, msize=1, iteration=1, prompt_override=None, **kwargs):
@@ -1082,7 +1092,8 @@ def test_bead_limit_warns_on_stale_beads(tmp_path, capsys):
             return {"files_changed": [], "tests_added": []}, {"type": "result"}
         return {}, {"type": "result"}
 
-    # Mock _query_ready_bead to always return a bead (simulating stale beads)
+    # Mock _query_ready_bead to always return the same bead — simulating bd
+    # state that doesn't reflect our closures.
     def mock_query_ready(allowed_ids=None, run_id=None):
         return {"id": "beads-stale", "title": "Stale bead"}
 
@@ -1104,9 +1115,11 @@ def test_bead_limit_warns_on_stale_beads(tmp_path, capsys):
                                                     status_path=status_path,
                                                 )
 
-    # Check that the stale bead warning was printed to stderr
     captured = capsys.readouterr()
-    assert "stale beads" in captured.err.lower()
+    assert "already-implemented bead beads-stale" in captured.err, (
+        "runner must log the already-implemented drain message when bd_ready "
+        f"re-surfaces a closed bead; stderr was:\n{captured.err}"
+    )
 
 
 # --- gh_issue_fail integration (run_pipeline.py exception handlers) ---
@@ -1136,10 +1149,13 @@ def test_run_pipeline_main_calls_gh_issue_fail_on_loop_exhausted(tmp_path, monke
 
     error_msg = "Loop implement_test exhausted after 5 iterations"
 
+    settings_file = tmp_path / "settings.json"
+    settings_file.write_text("{}")
     monkeypatch.setattr(
         "sys.argv",
         ["run_pipeline.py", "--source", "gh:issue:42",
-         "--status-dir", str(worca_dir)],
+         "--status-dir", str(worca_dir),
+         "--settings", str(settings_file)],
     )
     with patch.object(mod, "run_pipeline", side_effect=LoopExhaustedError(error_msg)):
         with patch.object(mod, "normalize") as mock_normalize:
@@ -1184,10 +1200,13 @@ def test_run_pipeline_main_calls_gh_issue_fail_on_pipeline_error(tmp_path, monke
 
     error_msg = "Guardian rejected changes after 3 review cycles"
 
+    settings_file = tmp_path / "settings.json"
+    settings_file.write_text("{}")
     monkeypatch.setattr(
         "sys.argv",
         ["run_pipeline.py", "--source", "gh:issue:99",
-         "--status-dir", str(worca_dir)],
+         "--status-dir", str(worca_dir),
+         "--settings", str(settings_file)],
     )
     with patch.object(mod, "run_pipeline", side_effect=PipelineError(error_msg)):
         with patch.object(mod, "normalize") as mock_normalize:
@@ -1224,10 +1243,13 @@ def test_run_pipeline_main_gh_issue_fail_noop_for_non_github(tmp_path, monkeypat
     with open(status_path, "w") as f:
         json.dump(status_data, f)
 
+    settings_file = tmp_path / "settings.json"
+    settings_file.write_text("{}")
     monkeypatch.setattr(
         "sys.argv",
         ["run_pipeline.py", "--prompt", "do something",
-         "--status-dir", str(worca_dir)],
+         "--status-dir", str(worca_dir),
+         "--settings", str(settings_file)],
     )
     with patch.object(mod, "run_pipeline", side_effect=PipelineError("fail")):
         with patch.object(mod, "normalize") as mock_normalize:
@@ -1261,10 +1283,13 @@ def test_run_pipeline_main_gh_issue_fail_never_crashes_pipeline(tmp_path, monkey
     with open(str(worca_dir / "status.json"), "w") as f:
         json.dump(status_data, f)
 
+    settings_file = tmp_path / "settings.json"
+    settings_file.write_text("{}")
     monkeypatch.setattr(
         "sys.argv",
         ["run_pipeline.py", "--source", "gh:issue:42",
-         "--status-dir", str(worca_dir)],
+         "--status-dir", str(worca_dir),
+         "--settings", str(settings_file)],
     )
     with patch.object(mod, "run_pipeline", side_effect=LoopExhaustedError("exhausted")):
         with patch.object(mod, "normalize") as mock_normalize:
@@ -4524,3 +4549,283 @@ def test_wr_dict_includes_plan_path(tmp_path, monkeypatch):
         )
 
     assert result["work_request"]["plan_path"] == plan_path
+
+
+class TestExtractTokenUsageSettingsPath:
+    """extract_token_usage receives settings_path from the runner."""
+
+    def test_learn_stage_passes_settings_path(self, tmp_path):
+        """_run_learn_stage passes settings_path to extract_token_usage."""
+        from worca.orchestrator.runner import _run_learn_stage
+
+        settings = tmp_path / ".claude" / "settings.json"
+        settings.parent.mkdir(parents=True)
+        settings.write_text(json.dumps({"worca": {"stages": {"learn": {"enabled": True}}}}))
+
+        raw_envelope = {"model": "claude-sonnet-4-6", "input_tokens": 100, "output_tokens": 50}
+
+        with patch("worca.orchestrator.runner.is_learn_enabled", return_value=True), \
+             patch("worca.orchestrator.runner.run_stage", return_value=("learned", raw_envelope)), \
+             patch("worca.orchestrator.runner.extract_token_usage") as mock_extract, \
+             patch("worca.orchestrator.runner.complete_iteration"), \
+             patch("worca.orchestrator.runner.update_cumulative_stats"), \
+             patch("worca.orchestrator.runner.emit_event"), \
+             patch("worca.orchestrator.runner.save_status"):
+            mock_extract.return_value = {"model": "claude-sonnet-4-6", "input_tokens": 100, "output_tokens": 50}
+            status = MagicMock()
+            status.get.return_value = {}
+
+            _run_learn_stage(
+                status=status,
+                prompt_builder=MagicMock(),
+                settings_path=str(settings),
+                run_dir=str(tmp_path),
+                termination_type="completed",
+                termination_reason="done",
+                msize="100k",
+                logs_dir=str(tmp_path),
+            )
+
+            mock_extract.assert_called_once()
+            call_kwargs = mock_extract.call_args
+            assert call_kwargs[1].get("settings_path") == str(settings) or \
+                (len(call_kwargs[0]) > 1 and call_kwargs[0][1] == str(settings)), \
+                f"extract_token_usage not called with settings_path, got: {call_kwargs}"
+
+
+class TestLogStageMetricsCostOverride:
+    """_log_stage_metrics prefers the override-aware cost over the raw envelope.
+
+    Regression test for the spawn-log vs status.json cost-mismatch wart in
+    PR #255 — confirmed on a real GLM-DS run: 16 iterations each logging
+    Claude CLI's raw Anthropic-priced number (~$42 cumulative) while
+    status.json correctly carried the overridden $0 from the alt-endpoint
+    pricing path. With the override plumbed through, both surfaces agree.
+    """
+
+    def test_log_stage_metrics_uses_cost_override_when_provided(self, capsys):
+        from worca.orchestrator.runner import _log_stage_metrics
+
+        raw_envelope = {
+            "total_cost_usd": 4.09,  # Claude CLI's raw number (alt-endpoint)
+            "num_turns": 30,
+            "duration_ms": 156_000,
+            "usage": {"output_tokens": 6841},
+        }
+        _log_stage_metrics("PLAN", {}, raw_envelope, cost_override=0)
+
+        out = capsys.readouterr().err
+        # The override (0) suppresses the cost line entirely — matching the
+        # `if cost:` guard. The raw $4.09 must NOT appear in the log.
+        assert "$4.09" not in out, f"raw envelope cost leaked into log: {out}"
+
+    def test_log_stage_metrics_falls_back_to_raw_when_no_override(self, capsys):
+        from worca.orchestrator.runner import _log_stage_metrics
+
+        raw_envelope = {
+            "total_cost_usd": 4.09,
+            "num_turns": 30,
+            "duration_ms": 156_000,
+            "usage": {"output_tokens": 6841},
+        }
+        _log_stage_metrics("PLAN", {}, raw_envelope)
+
+        out = capsys.readouterr().err
+        # No override → preserve the historical behavior of printing the
+        # envelope's number, so vanilla Anthropic-endpoint runs are unchanged.
+        assert "cost=$4.09" in out, f"raw envelope cost missing from log: {out}"
+
+    def test_log_stage_metrics_uses_nonzero_override(self, capsys):
+        """When the alias has a configured pricing entry, the override is a
+        positive number computed locally — that's what should land in the
+        log, not the (different) Claude CLI figure."""
+        from worca.orchestrator.runner import _log_stage_metrics
+
+        raw_envelope = {
+            "total_cost_usd": 4.09,
+            "num_turns": 30,
+            "duration_ms": 156_000,
+            "usage": {"output_tokens": 6841},
+        }
+        _log_stage_metrics("PLAN", {}, raw_envelope, cost_override=2.50)
+
+        out = capsys.readouterr().err
+        assert "cost=$2.50" in out, f"override cost not in log: {out}"
+        assert "$4.09" not in out, f"raw envelope cost leaked into log: {out}"
+
+
+# --- Template lifecycle events ---
+
+def _make_template_event_settings(tmp_path):
+    """Minimal settings with only coordinate stage enabled (no plan needed)."""
+    cfg = {
+        "worca": {
+            "stages": {
+                "plan": {"agent": "planner", "enabled": False},
+                "coordinate": {"agent": "coordinator", "enabled": True},
+                "implement": {"agent": "implementer", "enabled": False},
+                "test": {"agent": "tester", "enabled": False},
+                "review": {"agent": "guardian", "enabled": False},
+                "pr": {"agent": "guardian", "enabled": False},
+            },
+            "agents": {"coordinator": {"model": "opus", "max_turns": 10}},
+            "loops": {},
+        }
+    }
+    p = tmp_path / "settings.json"
+    p.write_text(json.dumps(cfg))
+    return str(p)
+
+
+def _run_pipeline_with_template(tmp_path, pipeline_template=None, resume=False,
+                                 resume_status=None):
+    """Helper: run_pipeline with optional pipeline_template and resume support."""
+    from worca.orchestrator.work_request import WorkRequest
+
+    plan = tmp_path / "plan.md"
+    plan.write_text("# Plan\n")
+    wr = WorkRequest(source_type="prompt", title="Template event test")
+    settings_path = _make_template_event_settings(tmp_path)
+    worca_dir = tmp_path / ".worca"
+    worca_dir.mkdir(exist_ok=True)
+    status_path = str(worca_dir / "status.json")
+
+    if resume_status:
+        # Write status directly into per-run dir (resume reads from runs/<id>/)
+        run_id = resume_status["run_id"]
+        run_dir = worca_dir / "runs" / run_id
+        run_dir.mkdir(parents=True, exist_ok=True)
+        (run_dir / "status.json").write_text(json.dumps(resume_status))
+
+    def mock_run_stage(stage, context, settings_path, msize=1, iteration=1,
+                       prompt_override=None, **kwargs):
+        return {"beads_ids": [], "dependency_graph": {}}, {"type": "result"}
+
+    with patch("worca.orchestrator.runner.run_stage", side_effect=mock_run_stage), \
+         patch("worca.orchestrator.runner.create_branch"), \
+         patch("worca.orchestrator.runner._write_pid"), \
+         patch("worca.orchestrator.runner._remove_pid"):
+        return run_pipeline(
+            wr,
+            plan_file=str(plan),
+            settings_path=settings_path,
+            status_path=status_path,
+            pipeline_template=pipeline_template,
+            resume=resume,
+        )
+
+
+def _read_events(tmp_path, run_id):
+    """Read all events from events.jsonl for a run."""
+    events_path = tmp_path / ".worca" / "runs" / run_id / "events.jsonl"
+    return [json.loads(line) for line in events_path.read_text().strip().split("\n") if line.strip()]
+
+
+def test_run_pipeline_emits_template_applied_on_fresh_start(tmp_path, monkeypatch):
+    """pipeline.template.applied is emitted on fresh start when pipeline_template is set."""
+    monkeypatch.chdir(tmp_path)
+    result = _run_pipeline_with_template(tmp_path, pipeline_template="project:my-template")
+    events = _read_events(tmp_path, result["run_id"])
+    event_types = [e["event_type"] for e in events]
+    assert "pipeline.template.applied" in event_types
+
+
+def test_run_pipeline_template_applied_payload_launch_source(tmp_path, monkeypatch):
+    """TEMPLATE_APPLIED payload has source='launch' on fresh start."""
+    monkeypatch.chdir(tmp_path)
+    result = _run_pipeline_with_template(tmp_path, pipeline_template="project:my-template")
+    events = _read_events(tmp_path, result["run_id"])
+    evt = next(e for e in events if e["event_type"] == "pipeline.template.applied")
+    assert evt["payload"]["source"] == "launch"
+
+
+def test_run_pipeline_template_applied_payload_template_id_and_tier(tmp_path, monkeypatch):
+    """TEMPLATE_APPLIED payload correctly splits 'tier:id' into template_id and tier."""
+    monkeypatch.chdir(tmp_path)
+    result = _run_pipeline_with_template(tmp_path, pipeline_template="project:my-template")
+    events = _read_events(tmp_path, result["run_id"])
+    evt = next(e for e in events if e["event_type"] == "pipeline.template.applied")
+    assert evt["payload"]["template_id"] == "my-template"
+    assert evt["payload"]["tier"] == "project"
+
+
+def test_run_pipeline_no_template_event_when_no_template(tmp_path, monkeypatch):
+    """No pipeline.template.applied event when pipeline_template is None."""
+    monkeypatch.chdir(tmp_path)
+    result = _run_pipeline_with_template(tmp_path, pipeline_template=None)
+    events = _read_events(tmp_path, result["run_id"])
+    event_types = [e["event_type"] for e in events]
+    assert "pipeline.template.applied" not in event_types
+    assert "pipeline.template.dropped" not in event_types
+
+
+def test_run_pipeline_emits_template_applied_on_resume(tmp_path, monkeypatch):
+    """TEMPLATE_APPLIED is emitted with source='resume' when resuming a run that had a template."""
+    monkeypatch.chdir(tmp_path)
+    run_id = "20260101-000000-000-tmpl-resume"
+    resume_status = {
+        "run_id": run_id,
+        "pipeline_status": "failed",
+        "work_request": {"title": "Template event test"},
+        "branch": "feat/template-resume",
+        "pipeline_template": "project:my-template",
+        "stages": {
+            "plan": {"status": "completed"},
+            "plan_review": {"status": "pending"},
+            "coordinate": {"status": "pending"},
+            "implement": {"status": "pending"},
+            "test": {"status": "pending"},
+            "review": {"status": "pending"},
+            "pr": {"status": "pending"},
+        },
+        "milestones": {},
+        "loop_counters": {},
+    }
+    result = _run_pipeline_with_template(
+        tmp_path,
+        pipeline_template="my-template",
+        resume=True,
+        resume_status=resume_status,
+    )
+    events = _read_events(tmp_path, result["run_id"])
+    evt = next(e for e in events if e["event_type"] == "pipeline.template.applied")
+    assert evt["payload"]["source"] == "resume"
+    assert evt["payload"]["template_id"] == "my-template"
+    assert evt["payload"]["tier"] == "project"
+
+
+def test_run_pipeline_emits_template_dropped_on_resume_regression(tmp_path, monkeypatch):
+    """TEMPLATE_DROPPED is emitted when a resumed run has a persisted template
+    but the runner receives pipeline_template=None (regression guard)."""
+    monkeypatch.chdir(tmp_path)
+    run_id = "20260101-000000-000-tmpl-dropped"
+    resume_status = {
+        "run_id": run_id,
+        "pipeline_status": "failed",
+        "work_request": {"title": "Template event test"},
+        "branch": "feat/template-dropped",
+        "pipeline_template": "project:my-template",
+        "stages": {
+            "plan": {"status": "completed"},
+            "plan_review": {"status": "pending"},
+            "coordinate": {"status": "pending"},
+            "implement": {"status": "pending"},
+            "test": {"status": "pending"},
+            "review": {"status": "pending"},
+            "pr": {"status": "pending"},
+        },
+        "milestones": {},
+        "loop_counters": {},
+    }
+    result = _run_pipeline_with_template(
+        tmp_path,
+        pipeline_template=None,  # template not passed → regression scenario
+        resume=True,
+        resume_status=resume_status,
+    )
+    events = _read_events(tmp_path, result["run_id"])
+    event_types = [e["event_type"] for e in events]
+    assert "pipeline.template.dropped" in event_types
+    evt = next(e for e in events if e["event_type"] == "pipeline.template.dropped")
+    assert evt["payload"]["template_id"] == "my-template"
+    assert evt["payload"]["reason"] == "missing_on_resume"

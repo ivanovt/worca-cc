@@ -102,6 +102,23 @@ export function buildWorkspaceArgs(workspace_root, workspace_id, manifest) {
   return args;
 }
 
+/**
+ * Returns true when `host` resolves to a loopback bind — undefined/null are
+ * treated as loopback because the production default in
+ * `worca-ui/server/index.js` is `127.0.0.1`. Used by the outbound-send route
+ * to refuse exposing user-addressable chat from a non-loopback bind.
+ *
+ * @param {string|undefined|null} host
+ * @returns {boolean}
+ */
+export function isLoopbackHost(host) {
+  if (host === undefined || host === null || host === '') return true;
+  if (host === 'localhost' || host === '::1') return true;
+  if (host === '::ffff:127.0.0.1') return true;
+  if (host.startsWith('127.')) return true;
+  return false;
+}
+
 export function createApp(options = {}) {
   const app = express();
   const appDir = join(dirname(fileURLToPath(import.meta.url)), '..', 'app');
@@ -173,6 +190,50 @@ export function createApp(options = {}) {
   // each held their own mutex and concurrent launches via /api/runs +
   // /api/projects/:id/runs could both pass the cap check and start.
   const launchLock = new LaunchLock();
+
+  // In-process mutex for deferred PR creation — keyed by `${project}/${runId}`.
+  // Handles double-click races: a second POST while the first is in-flight gets 409.
+  const inFlightPrCreation = new Map();
+
+  // Spawner for `worca pr create` — overridable via options._spawnPrCreate for tests.
+  const prSpawn =
+    options._spawnPrCreate ||
+    ((runId, projectPath) =>
+      new Promise((resolve, reject) => {
+        const child = spawn(
+          'python3',
+          [
+            '-m',
+            'worca.cli.main',
+            'pr',
+            'create',
+            '--project',
+            projectPath,
+            '--',
+            runId,
+          ],
+          { stdio: ['ignore', 'pipe', 'pipe'], env: { ...process.env } },
+        );
+        let stdout = '';
+        let stderr = '';
+        child.stdout.on('data', (chunk) => {
+          stdout += chunk.toString();
+        });
+        child.stderr.on('data', (chunk) => {
+          stderr += chunk.toString();
+        });
+        child.on('error', reject);
+        child.on('exit', (code) => {
+          if (code === 0) resolve({ stdout, stderr });
+          else
+            reject(
+              Object.assign(
+                new Error(`worca pr create failed: ${stderr.trim()}`),
+                { stderr },
+              ),
+            );
+        });
+      }));
 
   // ─── Legacy single-project API ─────────────────────────────────────────
   // Mounts the shared project-scoped routes at /api with a middleware that
@@ -653,6 +714,23 @@ export function createApp(options = {}) {
     }
   });
 
+  // GET /api/worca-cli — focused worca-cc compatibility probe.
+  //
+  // Returns the cached `checkWorcaVersion()` result populated at server
+  // boot (see index.js). The UI uses this to gate destructive Pipelines
+  // actions: when `ok` is false, the editor surfaces a banner and hides
+  // the Edit / Duplicate / Set Default / Delete / Create / Import
+  // buttons. Read paths (list, view, export) keep working.
+  //
+  // `?force=1` re-runs the probe. Without `force`, the response is
+  // served from the cache and costs essentially nothing.
+  app.get('/api/worca-cli', async (req, res) => {
+    if (req.query.force === '1' || !app.locals.worcaVersion) {
+      app.locals.worcaVersion = await checkWorcaVersion();
+    }
+    res.json(app.locals.worcaVersion);
+  });
+
   // ─── Multi-project routes ──────────────────────────────────────────────
   if (prefsDir) {
     app.use('/api/preferences', createPreferencesRouter({ prefsDir }));
@@ -783,6 +861,52 @@ export function createApp(options = {}) {
     app.use('/api/workspace-runs', workspaceRouters.workspaceRuns);
   }
 
+  // POST /api/projects/:project/runs/:runId/pr — trigger deferred PR creation.
+  // The in-process mutex (inFlightPrCreation) prevents double-click races: a
+  // second request while the first is still in-flight returns 409 immediately.
+  // The CLI's own status.json lock covers concurrent-process races.
+  app.post('/api/projects/:project/runs/:runId/pr', async (req, res) => {
+    const { project, runId } = req.params;
+
+    if (!/^[A-Za-z0-9_.-]+$/.test(runId) || runId.startsWith('-')) {
+      return res.status(400).json({ error: 'invalid_run_id' });
+    }
+
+    const key = `${project}/${runId}`;
+
+    if (inFlightPrCreation.has(key)) {
+      return res.status(409).json({ error: 'pr_creation_in_progress' });
+    }
+
+    // Resolve the project path: use req.project if set by projectResolver
+    // (global mode), otherwise fall back to projectRoot or cwd.
+    const projectPath = req.project?.path ?? projectRoot ?? process.cwd();
+
+    const work = (async () => {
+      const { stdout } = await prSpawn(runId, projectPath);
+      // Match a PR/MR URL across hosts the CLI may emit: GitHub (/pull/N),
+      // GitLab (/-/merge_requests/N), Bitbucket (/pull-requests/N), and
+      // Azure DevOps (/pullrequest/N). Keep it provider-agnostic so the
+      // returned pr_url isn't silently dropped on non-GitHub hosts.
+      const prUrlMatch = stdout.match(
+        /https?:\/\/\S+?\/(?:pull|pull-requests|pullrequest|merge_requests)\/\d+/,
+      );
+      if (prUrlMatch) return { pr_url: prUrlMatch[0] };
+      return {};
+    })();
+
+    inFlightPrCreation.set(key, work);
+
+    try {
+      const result = await work;
+      res.json(result);
+    } catch (err) {
+      res.status(500).json({ error: err.message });
+    } finally {
+      inFlightPrCreation.delete(key);
+    }
+  });
+
   // POST /api/integrations/telegram/detect — find chat IDs from recent messages.
   // If the Telegram adapter is running, temporarily pauses its poll loop so
   // getUpdates returns results instead of being consumed by the long-poller.
@@ -863,6 +987,68 @@ export function createApp(options = {}) {
     const integrations = app.locals.integrations;
     if (!integrations) return res.json({ enabled: false });
     res.json(integrations.status());
+  });
+
+  // POST /api/integrations/send — fan out a NormalizedMessage to one or
+  // more chat platforms through the same allowlist + rate-limiter pipeline
+  // the worca event fan-out uses. Drives the worca-notify skill.
+  //
+  // Body shape:
+  //   {
+  //     platforms?: string[],         // omit → all enabled chat adapters
+  //     message: NormalizedMessage,   // { title, body: MessageSegment[], severity }
+  //     chat_id?: string              // override the configured chat_id
+  //   }
+  //
+  // Returns 200 with `{ results: [{ platform, ok, error? }] }` for both
+  // total-success and partial-success cases; 4xx only for malformed input.
+  //
+  // Auth model: the endpoint is INTENTIONALLY restricted to loopback binds
+  // (127.0.0.0/8, ::1, localhost). The CSRF middleware above lets through
+  // requests with no Origin header (so webhooks work); without this guard,
+  // a UI server started with HOST=0.0.0.0 or --host <public-ip> would expose
+  // unauthenticated send-to-user's-chat to anything that can reach the port.
+  // 503 (subsystem disabled) and 403 (non-loopback bind) are terminal —
+  // retrying won't help.
+  app.post('/api/integrations/send', async (req, res) => {
+    if (!isLoopbackHost(serverHost)) {
+      return res.status(403).json({
+        error:
+          'send endpoint is restricted to loopback binds; ' +
+          'restart the UI server on 127.0.0.1 / ::1 / localhost ' +
+          'to send notifications',
+      });
+    }
+    const integrations = app.locals.integrations;
+    if (!integrations) {
+      return res
+        .status(503)
+        .json({ error: 'integrations subsystem not initialized' });
+    }
+    if (integrations.status?.().enabled === false) {
+      return res
+        .status(503)
+        .json({ error: 'integrations subsystem disabled in config' });
+    }
+    const { platforms, message, chat_id: chatIdOverride } = req.body ?? {};
+    if (!message || typeof message !== 'object') {
+      return res
+        .status(400)
+        .json({ error: 'message is required and must be an object' });
+    }
+    if (platforms !== undefined && !Array.isArray(platforms)) {
+      return res.status(400).json({ error: 'platforms must be an array' });
+    }
+    try {
+      const out = await integrations.sendOutbound({
+        platforms,
+        message,
+        chatIdOverride,
+      });
+      res.json(out);
+    } catch (err) {
+      res.status(400).json({ error: String(err?.message ?? err) });
+    }
   });
 
   // GET /api/integrations/config — return saved config (secrets redacted)

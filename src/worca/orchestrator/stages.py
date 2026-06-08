@@ -81,6 +81,13 @@ STAGE_ORDER = [Stage.PREFLIGHT, Stage.PLAN, Stage.PLAN_REVIEW, Stage.COORDINATE,
 # Stages that default to disabled when not configured in settings.json
 _STAGES_DEFAULT_DISABLED = {Stage.PLAN_REVIEW, Stage.LEARN}
 
+# Env-var names that, when set on a model alias's `env` block in worca.models,
+# reroute Claude CLI to a non-Anthropic endpoint. Their presence is the signal
+# that Claude CLI's total_cost_usd was computed against the wrong pricing table
+# and worca should override it from worca.pricing.models.<alias>. Conservative
+# and explicit by design — new entries are added deliberately, never inferred.
+_ALT_ENDPOINT_ENV_KEYS = frozenset({"ANTHROPIC_BASE_URL"})
+
 
 def _read_settings(settings_path: str) -> dict:
     """Read and parse settings, with .local.json merge support."""
@@ -112,24 +119,24 @@ def get_stage_config(stage: Stage, settings_path: str = ".claude/settings.json")
     agent_name = stage_entry.get("agent") or STAGE_AGENT_MAP.get(stage)
 
     if agent_name is None:
-        return {"agent": None, "model": None, "model_env": {}, "max_turns": None, "effort": None, "schema": None}
+        return {"agent": None, "model": None, "model_env": {}, "max_turns": None, "effort": None, "schema": None, "cost_alias": None}
 
     agent_config = worca.get("agents", {}).get(agent_name, {})
     model_map = worca.get("models", {})
     raw_model = agent_config.get("model", "sonnet")
     model_id, model_env = _resolve_model(raw_model, model_map)
-    # model_alias preserves what the user typed (e.g. "glm-ds"), so the UI can
-    # show "Model: glm-ds  ID: opus" — the alias is otherwise lost at this seam
-    # because the runner only persists the resolved id downstream. None means
-    # "no distinct alias" (the user's configured value is already a model id).
     model_alias = raw_model if raw_model != model_id else None
+    _reroutes_api = bool(_ALT_ENDPOINT_ENV_KEYS & set(model_env or {}))
+    cost_alias = raw_model if _reroutes_api else None
     return {
         "agent": agent_name,
         "model": model_id,
         "model_alias": model_alias,
+        "cost_alias": cost_alias,
         "model_env": model_env,
         "max_turns": agent_config.get("max_turns", 30),
         "effort": agent_config.get("effort"),
+        "max_beads": agent_config.get("max_beads", 0),
         "schema": STAGE_SCHEMA_MAP.get(stage, f"{stage.value}.json"),
     }
 

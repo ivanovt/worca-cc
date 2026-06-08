@@ -29,14 +29,15 @@ STAGE_FAILED      = "pipeline.stage.failed"
 STAGE_INTERRUPTED = "pipeline.stage.interrupted"
 
 # ---------------------------------------------------------------------------
-# Agent telemetry (5 events)
+# Agent telemetry (6 events)
 # ---------------------------------------------------------------------------
 
-AGENT_SPAWNED     = "pipeline.agent.spawned"
-AGENT_TOOL_USE    = "pipeline.agent.tool_use"
-AGENT_TOOL_RESULT = "pipeline.agent.tool_result"
-AGENT_TEXT        = "pipeline.agent.text"
-AGENT_COMPLETED   = "pipeline.agent.completed"
+AGENT_SPAWNED        = "pipeline.agent.spawned"
+AGENT_TOOL_USE       = "pipeline.agent.tool_use"
+AGENT_TOOL_RESULT    = "pipeline.agent.tool_result"
+AGENT_TEXT           = "pipeline.agent.text"
+AGENT_COMPLETED      = "pipeline.agent.completed"
+ITERATION_ACCESS     = "pipeline.iteration.access"
 
 # ---------------------------------------------------------------------------
 # Bead lifecycle (6 events)
@@ -56,6 +57,7 @@ BEAD_NEXT      = "pipeline.bead.next"
 GIT_BRANCH_CREATED = "pipeline.git.branch_created"
 GIT_COMMIT         = "pipeline.git.commit"
 GIT_PR_CREATED     = "pipeline.git.pr_created"
+GIT_PR_DEFERRED    = "pipeline.git.pr_deferred"
 GIT_PR_MERGED      = "pipeline.git.pr_merged"
 
 # ---------------------------------------------------------------------------
@@ -101,13 +103,14 @@ LOOP_TRIGGERED   = "pipeline.loop.triggered"
 LOOP_EXHAUSTED   = "pipeline.loop.exhausted"
 
 # ---------------------------------------------------------------------------
-# Hook & governance events (3 events)
+# Hook & governance events (5 events)
 # ---------------------------------------------------------------------------
 
 HOOK_BLOCKED          = "pipeline.hook.blocked"
 HOOK_TEST_GATE        = "pipeline.hook.test_gate"
 HOOK_DISPATCH_BLOCKED = "pipeline.hook.dispatch_blocked"
 HOOK_DISPATCH_ALLOWED = "pipeline.hook.dispatch_allowed"
+HOOK_GRAPH_QUERY      = "pipeline.hook.graph_query"
 
 # ---------------------------------------------------------------------------
 # Preflight events (2 events)
@@ -121,6 +124,13 @@ PREFLIGHT_SKIPPED   = "pipeline.preflight.skipped"
 # ---------------------------------------------------------------------------
 
 PLAN_EDITED = "pipeline.plan_review.edited"
+
+# ---------------------------------------------------------------------------
+# Template lifecycle (2 events)
+# ---------------------------------------------------------------------------
+
+TEMPLATE_APPLIED = "pipeline.template.applied"
+TEMPLATE_DROPPED = "pipeline.template.dropped"
 
 # ---------------------------------------------------------------------------
 # Learn stage events (2 events)
@@ -444,14 +454,36 @@ def agent_completed_payload(
     cost_usd: float,
     duration_ms: int,
     exit_code: int,
+    context_final_pct=None,
 ) -> dict:
-    return {
+    p: dict = {
         "stage": stage,
         "iteration": iteration,
         "turns": turns,
         "cost_usd": cost_usd,
         "duration_ms": duration_ms,
         "exit_code": exit_code,
+    }
+    if context_final_pct is not None:
+        p["context_final_pct"] = context_final_pct
+    return p
+
+
+def iteration_access_payload(
+    run_id: str,
+    stage: str,
+    agent: str,
+    iteration: int,
+    bead_id: str,
+    file_access: dict,
+) -> dict:
+    return {
+        "run_id": run_id,
+        "stage": stage,
+        "agent": agent,
+        "iteration": iteration,
+        "bead_id": bead_id,
+        "file_access": file_access,
     }
 
 
@@ -541,6 +573,20 @@ def git_pr_created_payload(
         "source_branch": source_branch,
         "target_branch": target_branch,
         "provider": provider,
+    }
+
+
+def git_pr_deferred_payload(
+    pr_title: str,
+    base_branch: str,
+    head_branch: str,
+    commit_sha: str | None = None,
+) -> dict:
+    return {
+        "pr_title": pr_title,
+        "base_branch": base_branch,
+        "head_branch": head_branch,
+        "commit_sha": commit_sha,
     }
 
 
@@ -702,6 +748,7 @@ def cost_stage_total_payload(
     web_fetch_requests: int = 0,
     cache_creation_input_tokens: int = 0,
     cache_read_input_tokens: int = 0,
+    context_final_pct=None,
 ) -> dict:
     p: dict = {
         "stage": stage,
@@ -719,6 +766,8 @@ def cost_stage_total_payload(
         p["cache_creation_input_tokens"] = cache_creation_input_tokens
     if cache_read_input_tokens:
         p["cache_read_input_tokens"] = cache_read_input_tokens
+    if context_final_pct is not None:
+        p["context_final_pct"] = context_final_pct
     return p
 
 
@@ -842,6 +891,27 @@ def hook_dispatch_allowed_payload(
     return p
 
 
+def hook_graph_query_payload(
+    engine: str,
+    op: str,
+    *,
+    agent: str | None = None,
+) -> dict:
+    """Payload builder for pipeline.hook.graph_query.
+
+    Emitted live by the post_tool_use hook each time an agent issues a
+    knowledge-graph query (graphify CLI read or a CRG MCP tool). Mirrors the
+    dispatch_{allowed,blocked} live-event pattern so the run-detail graphify/CRG
+    badges can count queries *during* the run instead of waiting for the
+    stage-completion envelope. ``engine`` is "graphify" or "crg"; ``op`` is the
+    graphify subcommand / CRG tool name (feeds the CRG per-tool tooltip).
+    """
+    p: dict = {"engine": engine, "op": op}
+    if agent is not None:
+        p["agent"] = agent
+    return p
+
+
 # ---------------------------------------------------------------------------
 # Preflight payload builders
 # ---------------------------------------------------------------------------
@@ -874,6 +944,30 @@ def plan_edited_payload(
     if original_plan_path is not None:
         p["original_plan_path"] = original_plan_path
     return p
+
+
+# ---------------------------------------------------------------------------
+# Template lifecycle payload builders
+# ---------------------------------------------------------------------------
+
+def template_applied_payload(
+    template_id: str,
+    source: str,
+    tier: str = None,
+) -> dict:
+    """source: 'launch' | 'resume' | 'default'; tier: 'builtin' | 'project' | 'user'."""
+    p: dict = {"template_id": template_id, "source": source}
+    if tier is not None:
+        p["tier"] = tier
+    return p
+
+
+def template_dropped_payload(
+    template_id: str,
+    reason: str,
+) -> dict:
+    """reason: 'not_found' | 'resolve_error' | 'missing_on_resume'."""
+    return {"template_id": template_id, "reason": reason}
 
 
 # ---------------------------------------------------------------------------

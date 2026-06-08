@@ -2,25 +2,35 @@ import { createHash } from 'node:crypto';
 import { existsSync, readdirSync, readFileSync } from 'node:fs';
 import { readdir, readFile } from 'node:fs/promises';
 import { join } from 'node:path';
-import {
-  assignEventsToIterations,
-  readDispatchEventsFromJsonl,
-} from './dispatch-events-aggregator.js';
+import { assignEventsToIterations } from './dispatch-events-aggregator.js';
+import { readEventsForEnrichment } from './events-jsonl-reader.js';
+import { assignGraphQueryCountsToIterations } from './graph-query-aggregator.js';
 import { readPipelineOverlay } from './run-dir-resolver.js';
 import { safeWatch } from './safe-watch.js';
 
 /**
- * Enrich a status object with dispatch events read from events.jsonl in the
- * same run directory. Mutates `status.stages` by adding `dispatch_events` to
- * matching iterations. No-op when events.jsonl is missing (e.g. a run that
- * started before the emit was wired, or a run with no dispatches).
+ * Enrich a status object from events.jsonl in the same run directory:
+ *  - dispatch events → `dispatch_events` per iteration (skills/subagents badges)
+ *  - graph-query events → live graphify_invocations / crg_invocations /
+ *    crg_tool_counts for the still-running iteration (graphify/CRG badges),
+ *    without clobbering the runner's authoritative completion-time counts.
+ * No-op when events.jsonl is missing (e.g. a run started before the emit was
+ * wired, or one with no dispatches / graph queries).
  */
 function enrichWithDispatchEvents(status, runDir) {
   if (!status?.stages) return status;
   const eventsPath = join(runDir, 'events.jsonl');
-  const events = readDispatchEventsFromJsonl(eventsPath);
-  if (events.length === 0) return status;
-  status.stages = assignEventsToIterations(events, status.stages);
+  // Single read for both event kinds (issue #296) — was two full passes.
+  const { dispatchEvents, graphEvents } = readEventsForEnrichment(eventsPath);
+  if (dispatchEvents.length > 0) {
+    status.stages = assignEventsToIterations(dispatchEvents, status.stages);
+  }
+  if (graphEvents.length > 0) {
+    status.stages = assignGraphQueryCountsToIterations(
+      graphEvents,
+      status.stages,
+    );
+  }
   return status;
 }
 
@@ -47,7 +57,7 @@ function isTerminal(status) {
   );
 }
 
-const _discoverRunsCache = new Map(); // worcaDir → { ts, runs }
+const _discoverRunsCache = new Map(); // `${worcaDir}|${enrich}` → { ts, runs }
 // TTL defaults to 0 under vitest (NODE_ENV=test) so the cache is a no-op in
 // tests — they build fixture dirs from Date.now() and a shared path could
 // otherwise serve a stale cached scan across tests. Production uses 1500ms;
@@ -67,14 +77,21 @@ export function _setDiscoverRunsTtlForTest(ms) {
  * single scan. Per-run handlers use findRun() instead. Live status changes
  * still reach clients via the statusWatcher broadcast, so TTL-window staleness
  * here is invisible in the UI.
+ *
+ * `enrich` (default false) controls events.jsonl enrichment. List/sidebar
+ * callers never render dispatch_events / graph-query counts (only the detailed
+ * run view does, fed by findRun), so they pass enrich:false and skip reading
+ * every project's events.jsonl entirely — the hot-path fix for issue #296. The
+ * cache is keyed on (worcaDir, enrich) since the two shapes differ.
  */
-export function discoverRuns(worcaDir) {
-  const cached = _discoverRunsCache.get(worcaDir);
+export function discoverRuns(worcaDir, { enrich = false } = {}) {
+  const cacheKey = `${worcaDir}|${enrich ? 1 : 0}`;
+  const cached = _discoverRunsCache.get(cacheKey);
   if (cached && Date.now() - cached.ts < _discoverRunsTtlMs) {
     return cached.runs;
   }
-  const runs = _discoverRunsUncached(worcaDir);
-  _discoverRunsCache.set(worcaDir, { ts: Date.now(), runs });
+  const runs = _discoverRunsUncached(worcaDir, { enrich });
+  _discoverRunsCache.set(cacheKey, { ts: Date.now(), runs });
   return runs;
 }
 
@@ -139,8 +156,12 @@ export function findRun(worcaDir, runId) {
 
   // Fallback for legacy layouts where the on-disk name != the computed id
   // (flat .worca/status.json, hashed legacy ids). Rare — pay one (TTL-cached)
-  // full scan rather than regress correctness vs discoverRuns().find().
-  return discoverRuns(worcaDir).find((r) => r.id === runId) || null;
+  // full scan rather than regress correctness vs discoverRuns().find(). Pass
+  // enrich:true so findRun stays fully enriched in every branch (its contract),
+  // even though discoverRuns now defaults enrichment off for the list path.
+  return (
+    discoverRuns(worcaDir, { enrich: true }).find((r) => r.id === runId) || null
+  );
 }
 
 function _shapeRunFromFile(
@@ -158,7 +179,13 @@ function _shapeRunFromFile(
     if (enrich && runDir) status = enrichWithDispatchEvents(status, runDir);
     const id = createRunId(status);
     const active = !isTerminal(status) && status.pipeline_status === 'running';
-    const base = { id, active, ...status };
+    const base = {
+      id,
+      active,
+      ...status,
+      source_type: status.source_type ?? null,
+      source_ref: status.source_ref ?? null,
+    };
     if (worktreeReg) {
       return {
         ...base,
@@ -177,7 +204,7 @@ function _shapeRunFromFile(
   }
 }
 
-function _discoverRunsUncached(worcaDir) {
+function _discoverRunsUncached(worcaDir, { enrich = false } = {}) {
   const runs = [];
   const seenIds = new Set();
 
@@ -190,13 +217,19 @@ function _discoverRunsUncached(worcaDir) {
       if (!existsSync(statusPath)) continue;
       try {
         let status = JSON.parse(readFileSync(statusPath, 'utf8'));
-        status = enrichWithDispatchEvents(status, runDir);
+        if (enrich) status = enrichWithDispatchEvents(status, runDir);
         const id = createRunId(status);
         if (seenIds.has(id)) continue;
         seenIds.add(id);
         const active =
           !isTerminal(status) && status.pipeline_status === 'running';
-        runs.push({ id, active, ...status });
+        runs.push({
+          id,
+          active,
+          ...status,
+          source_type: status.source_type ?? null,
+          source_ref: status.source_ref ?? null,
+        });
       } catch {
         /* ignore */
       }
@@ -212,7 +245,13 @@ function _discoverRunsUncached(worcaDir) {
       if (!seenIds.has(id)) {
         const active =
           !isTerminal(status) && status.pipeline_status === 'running';
-        runs.push({ id, active, ...status });
+        runs.push({
+          id,
+          active,
+          ...status,
+          source_type: status.source_type ?? null,
+          source_ref: status.source_ref ?? null,
+        });
         seenIds.add(id);
       }
     } catch {
@@ -236,7 +275,13 @@ function _discoverRunsUncached(worcaDir) {
               seenIds.add(id);
               const active =
                 !isTerminal(data) && data.pipeline_status === 'running';
-              runs.push({ id, active, ...data });
+              runs.push({
+                id,
+                active,
+                ...data,
+                source_type: data.source_type ?? null,
+                source_ref: data.source_ref ?? null,
+              });
             }
           }
         } else if (entry.isDirectory()) {
@@ -249,7 +294,13 @@ function _discoverRunsUncached(worcaDir) {
               seenIds.add(id);
               const active =
                 !isTerminal(data) && data.pipeline_status === 'running';
-              runs.push({ id, active, ...data });
+              runs.push({
+                id,
+                active,
+                ...data,
+                source_type: data.source_type ?? null,
+                source_ref: data.source_ref ?? null,
+              });
             }
           }
         }
@@ -274,10 +325,12 @@ function _discoverRunsUncached(worcaDir) {
           if (!existsSync(sp)) continue;
           try {
             let status = JSON.parse(readFileSync(sp, 'utf8'));
-            status = enrichWithDispatchEvents(
-              status,
-              join(wtRunsDir, runEntry),
-            );
+            if (enrich) {
+              status = enrichWithDispatchEvents(
+                status,
+                join(wtRunsDir, runEntry),
+              );
+            }
             const id = createRunId(status);
             if (seenIds.has(id)) continue;
             seenIds.add(id);
@@ -287,6 +340,8 @@ function _discoverRunsUncached(worcaDir) {
               id,
               active,
               ...status,
+              source_type: status.source_type ?? null,
+              source_ref: status.source_ref ?? null,
               worktree_worca_dir: join(reg.worktree_path, '.worca'),
               is_worktree_run: true,
               head_branch: reg.branch || null,
@@ -309,10 +364,13 @@ function _discoverRunsUncached(worcaDir) {
 }
 
 /**
- * Async version of discoverRuns — avoids blocking the event loop.
- * Used by the status watcher's debounced refresh.
+ * Async version of discoverRuns — avoids blocking the event loop. Used by the
+ * status watcher's debounced refresh (enrich:true, since it broadcasts
+ * run-snapshot to the detailed view's live update) and by the list-path REST /
+ * WS handlers (enrich:false — issue #296, keeps the all-projects scan off the
+ * event loop without reading every events.jsonl).
  */
-export async function discoverRunsAsync(worcaDir) {
+export async function discoverRunsAsync(worcaDir, { enrich = false } = {}) {
   const runs = [];
   const seenIds = new Set();
 
@@ -332,13 +390,21 @@ export async function discoverRunsAsync(worcaDir) {
     });
     for (const result of await Promise.all(readPromises)) {
       if (!result) continue;
-      const status = enrichWithDispatchEvents(result.status, result.runDir);
+      const status = enrich
+        ? enrichWithDispatchEvents(result.status, result.runDir)
+        : result.status;
       const id = createRunId(status);
       if (seenIds.has(id)) continue;
       seenIds.add(id);
       const active =
         !isTerminal(status) && status.pipeline_status === 'running';
-      runs.push({ id, active, ...status });
+      runs.push({
+        id,
+        active,
+        ...status,
+        source_type: status.source_type ?? null,
+        source_ref: status.source_ref ?? null,
+      });
     }
   } catch {
     /* ignore */
@@ -353,7 +419,13 @@ export async function discoverRunsAsync(worcaDir) {
     if (!seenIds.has(id)) {
       const active =
         !isTerminal(status) && status.pipeline_status === 'running';
-      runs.push({ id, active, ...status });
+      runs.push({
+        id,
+        active,
+        ...status,
+        source_type: status.source_type ?? null,
+        source_ref: status.source_ref ?? null,
+      });
       seenIds.add(id);
     }
   } catch {
@@ -386,7 +458,13 @@ export async function discoverRunsAsync(worcaDir) {
       if (!seenIds.has(id)) {
         seenIds.add(id);
         const active = !isTerminal(data) && data.pipeline_status === 'running';
-        runs.push({ id, active, ...data });
+        runs.push({
+          id,
+          active,
+          ...data,
+          source_type: data.source_type ?? null,
+          source_ref: data.source_ref ?? null,
+        });
       }
     }
   } catch {
@@ -417,10 +495,12 @@ export async function discoverRunsAsync(worcaDir) {
             try {
               const sp = join(wtRunsDir, runEntry, 'status.json');
               let status = JSON.parse(await readFile(sp, 'utf8'));
-              status = enrichWithDispatchEvents(
-                status,
-                join(wtRunsDir, runEntry),
-              );
+              if (enrich) {
+                status = enrichWithDispatchEvents(
+                  status,
+                  join(wtRunsDir, runEntry),
+                );
+              }
               results.push({ status, reg });
             } catch {
               /* ignore */
@@ -442,6 +522,8 @@ export async function discoverRunsAsync(worcaDir) {
         id,
         active,
         ...status,
+        source_type: status.source_type ?? null,
+        source_ref: status.source_ref ?? null,
         worktree_worca_dir: join(reg.worktree_path, '.worca'),
         is_worktree_run: true,
         head_branch: reg.branch || null,

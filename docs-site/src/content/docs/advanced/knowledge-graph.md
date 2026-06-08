@@ -40,9 +40,7 @@ Once Graphify is enabled, the **Preflight** stage automatically builds — or re
 
 The tab's **Build** button is an optional convenience — it pre-warms the cache for the current commit so you can browse the graph in the UI (the tab shows a human-readable report and a copy-able `graphify query` snippet) or skip the small first-run build delay. **Clear** removes the project's cached snapshots. When a graph is ready, each agent iteration in run detail shows a `Graphify: N` query-count badge.
 
-:::note[Screenshot — coming soon]
-The Settings → Graphify tab: the Off / Structural / Full selector, the (Full-only) model-profile picker, and the Build / Clear cache controls.
-:::
+![The Settings → Graphify tab: the Off / Structural / Full selector, the (Full-only) model-profile picker, and the Build / Clear cache controls.](/screenshots/knowledge-graph/01-graphify.png)
 
 ## How agents use it
 

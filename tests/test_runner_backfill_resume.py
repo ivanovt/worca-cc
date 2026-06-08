@@ -212,3 +212,108 @@ class TestBackfillPromptContextOnResume:
             f"backfill_prompt_context must NOT be called on fresh start; "
             f"got {len(backfill_calls)} call(s)"
         )
+
+
+class TestResumeAfterMidImplement:
+    """Integration test: resume after interruption mid-IMPLEMENT processes
+    remaining beads, completes IMPLEMENT, and advances to TEST."""
+
+    def _make_mid_implement_run(self, tmp_path):
+        run_id = "20260101-000000-000-midimpl"
+        run_dir = tmp_path / ".worca" / "runs" / run_id
+        logs_dir = run_dir / "logs"
+        coord_log_dir = logs_dir / "coordinate"
+        coord_log_dir.mkdir(parents=True)
+
+        # Write coordinate log in envelope shape (production format)
+        envelope = {
+            "type": "result",
+            "structured_output": {
+                "beads_ids": ["b1", "b2", "b3"],
+                "dependency_graph": {},
+            },
+        }
+        (coord_log_dir / "iter-1.json").write_text(json.dumps(envelope))
+
+        status = {
+            "run_id": run_id,
+            "pipeline_status": "failed",
+            "work_request": {"title": "Mid-implement resume"},
+            "branch": "mid-impl-branch",
+            "stages": {
+                "plan": {"status": "completed"},
+                "plan_review": {"status": "pending"},
+                "coordinate": {"status": "completed"},
+                "implement": {"status": "in_progress"},
+                "test": {"status": "pending"},
+                "review": {"status": "pending"},
+                "pr": {"status": "pending"},
+            },
+            "milestones": {},
+            "loop_counters": {"bead_iteration": 1},
+        }
+        (run_dir / "status.json").write_text(json.dumps(status))
+        status_path = str(tmp_path / ".worca" / "status.json")
+        return status_path, str(run_dir)
+
+    def test_resume_processes_remaining_beads_and_advances(self, tmp_path):
+        """After mid-IMPLEMENT interruption with 1 of 3 beads done, resume
+        processes the remaining 2 beads, completes IMPLEMENT, and advances
+        to TEST (which is disabled, so pipeline completes)."""
+        status_path, run_dir = self._make_mid_implement_run(tmp_path)
+        settings_path = _make_settings(tmp_path)
+        wr = WorkRequest(source_type="prompt", title="Mid-implement resume")
+        plan = tmp_path / "plan.md"
+        plan.write_text("# Plan\n")
+
+        claimed_beads = []
+
+        def mock_run_stage(stage, context, settings_path, msize=1, iteration=1,
+                           prompt_override=None, **kwargs):
+            if stage == Stage.IMPLEMENT:
+                return {"files_changed": ["impl.py"], "tests_added": []}, {"type": "result"}
+            return {}, {"type": "result"}
+
+        def mock_claim(bead_id):
+            claimed_beads.append(bead_id)
+            return True
+
+        b2 = {"id": "b2", "title": "Bead b2"}
+        b3 = {"id": "b3", "title": "Bead b3"}
+        # _query_ready_bead is called twice per bead: once for assignment at
+        # stage entry, once after completion to check for the next bead.
+        # Sequence: assign b2 → check-next returns b3 → assign b3 → check-next returns None
+        bead_sequence = [b2, b3, b3, None]
+
+        patches = [
+            patch("worca.orchestrator.runner.run_stage", side_effect=mock_run_stage),
+            patch("worca.orchestrator.runner._query_ready_bead", side_effect=bead_sequence),
+            patch("worca.orchestrator.runner._claim_bead", side_effect=mock_claim),
+            patch("worca.orchestrator.runner.bd_show", return_value={"description": ""}),
+            patch("worca.orchestrator.runner.bd_close", return_value=True),
+            patch("worca.orchestrator.runner.bd_label_add", return_value=True),
+            patch("worca.orchestrator.runner.bd_get_effort_label", return_value=None),
+            patch("worca.orchestrator.effort.bd_get_effort_label", return_value=None),
+            patch("worca.orchestrator.runner.create_branch"),
+            patch("worca.orchestrator.runner._write_pid"),
+            patch("worca.orchestrator.runner._remove_pid"),
+        ]
+
+        ctx_stack = [p.__enter__() for p in patches]
+        try:
+            run_pipeline(wr, resume=True, plan_file=str(plan),
+                         settings_path=settings_path, status_path=status_path)
+        finally:
+            for p, _ in zip(reversed(patches), reversed(ctx_stack)):
+                p.__exit__(None, None, None)
+
+        assert claimed_beads == ["b2", "b3"], (
+            f"Expected beads b2 and b3 to be claimed; got {claimed_beads}"
+        )
+
+        # Verify IMPLEMENT completed and pipeline advanced past it
+        final_status = json.loads(
+            (tmp_path / ".worca" / "runs" / "20260101-000000-000-midimpl" / "status.json").read_text()
+        )
+        assert final_status["stages"]["implement"]["status"] == "completed"
+        assert final_status["loop_counters"]["bead_iteration"] == 3

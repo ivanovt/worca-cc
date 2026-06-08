@@ -117,7 +117,15 @@ async function run() {
 
   try {
     const esbuild = await import('esbuild');
-    await esbuild.build({
+    // Optional build-time override of the docs base URL used by
+    // worca-ui/app/utils/help-links.js. Production / npm-published
+    // builds leave WORCA_DOCS_BASE unset and fall through to the
+    // 'https://docs.worca.dev' default baked into the module.
+    // Local + staging previews can retarget the badges:
+    //   WORCA_DOCS_BASE=http://localhost:4321        npm run build
+    //   WORCA_DOCS_BASE=http://staging.docs.example  npm run build
+    const docsBase = process.env.WORCA_DOCS_BASE;
+    const buildOpts = {
       entryPoints: [entry],
       bundle: true,
       format: 'esm',
@@ -127,7 +135,12 @@ async function run() {
       sourcemap: true,
       minify: true,
       legalComments: 'none',
-    });
+    };
+    if (docsBase) {
+      buildOpts.define = { WORCA_DOCS_BASE: JSON.stringify(docsBase) };
+      console.log('help-links DOCS_BASE override:', docsBase);
+    }
+    await esbuild.build(buildOpts);
     console.log('built', path.relative(repoRoot, outfile));
   } catch (err) {
     console.error('bundle error', err);

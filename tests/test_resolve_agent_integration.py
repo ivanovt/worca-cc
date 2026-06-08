@@ -159,13 +159,15 @@ def test_plan_block_initial_contains_work_request():
     assert "Add user authentication" in result
 
 
-def test_plan_block_includes_claude_md_when_provided():
+def test_plan_block_does_not_inline_claude_md_even_if_provided():
+    # The claude_md context var was removed (CLAUDE.md is auto-loaded by the
+    # CLI). Even if a caller still passes it, the plan block must not inline it.
     result = _resolve_block("plan", {
         "work_request": "Add auth",
         "claude_md": "# My Project\n\nUses FastAPI.",
         "plan_revision_mode": False,
     })
-    assert "# My Project" in result and "FastAPI" in result
+    assert "# My Project" not in result and "FastAPI" not in result
 
 
 def test_plan_block_revision_contains_current_plan_and_issues():

@@ -16,9 +16,9 @@ import subprocess
 import sys
 import time
 from datetime import datetime, timezone
-from typing import Optional
+from typing import Mapping, Optional
 
-from worca.orchestrator.guardian_context import build_guardian_context, compute_defer_pr
+from worca.orchestrator.guardian_context import build_guardian_context
 from worca.orchestrator.error_classifier import (
     classify_error, record_failure, record_success,
     should_halt, get_retry_delay, get_circuit_breaker_state,
@@ -29,6 +29,7 @@ from worca.orchestrator.control import read_control, delete_control
 from worca.orchestrator.overlay import OverlayResolver, resolve_agent
 from worca.orchestrator.prompt_builder import PromptBuilder
 from worca.orchestrator.effort import resolve_effort, escalation_iter_num, EFFORT_LEVELS
+from worca.orchestrator.file_access_aggregation import aggregate_iteration_file_access
 from worca.orchestrator.stages import (
     Stage, get_stage_config, get_enabled_stages, STAGE_AGENT_MAP,
     is_learn_enabled, resolve_plan_review_mode,
@@ -41,6 +42,12 @@ from worca.state.status import (
 )
 from worca.utils.beads import bd_ready, bd_show, bd_update, bd_close, bd_label_add, bd_daemon_stop, bd_get_effort_label
 from worca.utils.gh_issues import gh_issue_start, gh_issue_complete
+from worca.utils.gh_pr import (
+    WORCA_COMMENT_MARKER,
+    current_repo_nwo,
+    post_revision_summary,
+    reply_to_thread,
+)
 from worca.utils.claude_cli import run_agent, terminate_current, terminate_all, AgentSubprocessError
 from worca.utils.proc import pid_is_alive
 from worca.utils.proc_registry import kill_all_tracked
@@ -71,9 +78,9 @@ from worca.events.types import (
     STAGE_STARTED, STAGE_COMPLETED, STAGE_FAILED, STAGE_INTERRUPTED,
     stage_started_payload, stage_completed_payload,
     stage_failed_payload, stage_interrupted_payload,
-    AGENT_SPAWNED, AGENT_TOOL_USE, AGENT_TOOL_RESULT, AGENT_TEXT, AGENT_COMPLETED,
+    AGENT_SPAWNED, AGENT_TOOL_USE, AGENT_TOOL_RESULT, AGENT_TEXT, AGENT_COMPLETED, ITERATION_ACCESS,
     agent_spawned_payload, agent_tool_use_payload, agent_tool_result_payload,
-    agent_text_payload, agent_completed_payload,
+    agent_text_payload, agent_completed_payload, iteration_access_payload,
     BEAD_ASSIGNED, BEAD_COMPLETED, BEAD_FAILED, BEAD_LABELED, BEAD_NEXT,
     bead_assigned_payload, bead_completed_payload, bead_failed_payload,
     bead_labeled_payload, bead_next_payload,
@@ -87,14 +94,16 @@ from worca.events.types import (
     cb_failure_recorded_payload, cb_retry_payload, cb_tripped_payload, cb_reset_payload,
     COST_STAGE_TOTAL, COST_RUNNING_TOTAL, COST_BUDGET_WARNING,
     cost_stage_total_payload, cost_running_total_payload, cost_budget_warning_payload,
-    GIT_BRANCH_CREATED, GIT_PR_CREATED,
-    git_branch_created_payload, git_pr_created_payload,
+    GIT_BRANCH_CREATED, GIT_PR_CREATED, GIT_PR_DEFERRED,
+    git_branch_created_payload, git_pr_created_payload, git_pr_deferred_payload,
     PREFLIGHT_COMPLETED, PREFLIGHT_SKIPPED,
     preflight_completed_payload, preflight_skipped_payload,
     LEARN_COMPLETED, LEARN_FAILED,
     learn_completed_payload, learn_failed_payload,
     PLAN_EDITED, plan_edited_payload,
     GUIDE_CONFLICT, guide_conflict_payload,
+    TEMPLATE_APPLIED, TEMPLATE_DROPPED,
+    template_applied_payload, template_dropped_payload,
 )
 
 # Maps pipeline stages to their user-message block files. The stage's
@@ -397,6 +406,52 @@ def _next_plan_path(run_dir: str) -> str:
     if next_num > 999:
         next_num = 999  # Cap at plan-999.md to stay within 3-digit format
     return os.path.join(run_dir, f"plan-{next_num:03d}.md")
+
+
+def _materialize_plan_markdown(result: dict, work_request) -> str:
+    """Render a plan markdown document from the planner's structured output.
+
+    Fallback used when the planner returns a valid structured plan but never
+    writes the plan file to disk (see the materialization guard in the PLAN
+    stage handler). Mirrors the human-authored plan layout closely enough that
+    the coordinator and the UI "View plan" viewer have real content to work
+    with. Shape follows ``schemas/plan.json``: ``approach`` (str),
+    ``tasks_outline`` (list of {title, description, estimated_complexity}),
+    ``test_strategy`` (str), ``branch_name`` (str).
+    """
+    title = getattr(work_request, "title", None) or "Plan"
+    lines = [f"# {title}", ""]
+    lines.append(
+        "> _Materialized from the planner's structured output — the planner "
+        "stage completed without writing a plan file. See `plan_materialized` "
+        "in status.json._"
+    )
+    lines.append("")
+
+    approach = (result.get("approach") or "").strip()
+    if approach:
+        lines += ["## Approach", "", approach, ""]
+
+    tasks = result.get("tasks_outline") or []
+    if tasks:
+        lines += ["## Tasks", ""]
+        for i, task in enumerate(tasks, 1):
+            if not isinstance(task, dict):
+                continue
+            t_title = (task.get("title") or f"Task {i}").strip()
+            complexity = (task.get("estimated_complexity") or "").strip()
+            suffix = f" _(complexity: {complexity})_" if complexity else ""
+            lines.append(f"{i}. **{t_title}**{suffix}")
+            desc = (task.get("description") or "").strip()
+            if desc:
+                lines += ["", f"   {desc}", ""]
+        lines.append("")
+
+    test_strategy = (result.get("test_strategy") or "").strip()
+    if test_strategy:
+        lines += ["## Test Strategy", "", test_strategy, ""]
+
+    return "\n".join(lines).rstrip() + "\n"
 
 
 def _mint_plan_edit_target(run_dir: Optional[str], current_plan: str) -> Optional[str]:
@@ -836,8 +891,21 @@ def format_effort_log_line(
     return " ".join(parts)
 
 
-def _log_stage_metrics(stage_label: str, result: dict, raw_envelope: dict) -> None:
-    """Log detailed metrics from a completed stage."""
+def _log_stage_metrics(
+    stage_label: str,
+    result: dict,
+    raw_envelope: dict,
+    *,
+    cost_override: Optional[float] = None,
+) -> None:
+    """Log detailed metrics from a completed stage.
+
+    When `cost_override` is provided, it is used as the cost figure instead of
+    raw_envelope["total_cost_usd"]. The caller passes the override-aware value
+    from `extract_token_usage(..., settings_path=...)` so the human-readable
+    spawn-log line agrees with the persisted status.json record for
+    alt-endpoint aliases (where Claude CLI's raw cost is not authoritative).
+    """
     parts = []
 
     # Duration from envelope (more accurate than wall clock for agent time)
@@ -850,8 +918,9 @@ def _log_stage_metrics(stage_label: str, result: dict, raw_envelope: dict) -> No
     if turns:
         parts.append(f"turns={turns}")
 
-    # Cost
-    cost = raw_envelope.get("total_cost_usd")
+    # Cost — prefer the override-aware value from extract_token_usage when
+    # supplied, fall back to the raw envelope number otherwise.
+    cost = cost_override if cost_override is not None else raw_envelope.get("total_cost_usd")
     if cost:
         parts.append(f"cost=${cost:.2f}")
 
@@ -884,6 +953,27 @@ def _log_stage_metrics(stage_label: str, result: dict, raw_envelope: dict) -> No
         if outcome:
             level = "ok" if outcome == "approve" else "warn"
             _log(f"{stage_label} verdict: {outcome}", level)
+
+
+def _warn_if_cap_deviation(effective_cap: int, created_count: int, is_pr_revision: bool) -> None:
+    """Log a warning when coordinator bead count deviates from the effective cap.
+
+    Skip when cap is 0 (no cap) or in PR-revision mode. Pipeline always proceeds.
+    """
+    if not effective_cap or is_pr_revision:
+        return
+    if effective_cap == 1 and created_count != 1:
+        _log(
+            f"Coordinator created {created_count} bead(s) but cap was 1 "
+            f"(expected exactly 1) — proceeding as-is",
+            "warn",
+        )
+    elif effective_cap > 1 and created_count > effective_cap:
+        _log(
+            f"Coordinator created {created_count} bead(s) but cap was "
+            f"{effective_cap} — proceeding as-is",
+            "warn",
+        )
 
 
 def _save_stage_output(stage: Stage, result: dict, logs_dir: str = ".worca/logs", iteration: int = 1) -> None:
@@ -1001,6 +1091,7 @@ def _run_learn_stage(status, prompt_builder, settings_path, run_dir,
             "duration_ms": duration_ms,
             "output": result,
         }
+        usage = extract_token_usage(raw, settings_path=settings_path) if isinstance(raw, dict) else {}
         if isinstance(raw, dict):
             if raw.get("duration_api_ms"):
                 iter_extras["duration_api_ms"] = raw["duration_api_ms"]
@@ -1008,9 +1099,9 @@ def _run_learn_stage(status, prompt_builder, settings_path, run_dir,
                 iter_extras["duration_session_ms"] = raw["duration_ms"]
             if raw.get("num_turns"):
                 iter_extras["turns"] = raw["num_turns"]
-            if raw.get("total_cost_usd"):
-                iter_extras["cost_usd"] = raw["total_cost_usd"]
-        usage = extract_token_usage(raw) if isinstance(raw, dict) else {}
+            _learn_cost = usage.get("total_cost_usd", raw.get("total_cost_usd"))
+            if _learn_cost:
+                iter_extras["cost_usd"] = _learn_cost
         if usage:
             iter_extras["token_usage"] = usage
 
@@ -1091,6 +1182,72 @@ def _is_agent_telemetry_enabled(settings_path: str) -> bool:
         return settings.get("worca", {}).get("events", {}).get("agent_telemetry", True)
     except Exception:
         return True
+
+
+def _is_file_access_telemetry_enabled(settings_path: str) -> bool:
+    """Check worca.telemetry.file_access.enabled setting (defaults to True)."""
+    try:
+        settings = load_settings(settings_path)
+        return settings.get("worca", {}).get("telemetry", {}).get("file_access", {}).get("enabled", True)
+    except Exception:
+        return True
+
+
+def _aggregate_file_access_into_extras(iter_extras: dict, settings_path: str, status: dict,
+                                       stage: str, iter_num: int,
+                                       bead_id: Optional[str] = None) -> None:
+    """Aggregate the iteration's file-access JSONL into ``iter_extras["file_access"]``.
+
+    Reads the JSONL fragment the PostToolUse hook wrote for this
+    (stage, iteration, bead) and stores the aggregated dict. ``bead_id`` MUST
+    match what was stamped into the agent subprocess env (WORCA_BEAD_ID) — for
+    IMPLEMENT that is the assigned bead, so the reader filename mirrors the
+    writer filename. Telemetry never breaks the pipeline: disabled-by-setting
+    and any aggregation error are swallowed silently.
+    """
+    if not _is_file_access_telemetry_enabled(settings_path):
+        return
+    try:
+        file_access = aggregate_iteration_file_access(
+            status["run_id"], stage, iter_num, os.getcwd(), bead_id=bead_id
+        )
+        if file_access:
+            iter_extras["file_access"] = file_access
+    except Exception:
+        pass  # Graceful degradation on aggregation failure
+
+
+def _emit_iteration_access_event(ctx: Optional[EventContext], status: dict, stage: str,
+                                 run_id: str) -> None:
+    """Emit pipeline.iteration.access event after aggregation.
+
+    Extracts agent and file_access from the current iteration in status,
+    then emits the event. Does nothing if file_access is not present.
+    """
+    if not ctx:
+        return
+    try:
+        iterations = status.get("stages", {}).get(stage, {}).get("iterations")
+        if not iterations:
+            return
+        iteration = iterations[-1]
+        file_access = iteration.get("file_access")
+        if not file_access:
+            return
+        agent = iteration.get("agent", "unknown")
+        iteration_num = iteration.get("number", len(iterations))
+        bead_id = iteration.get("bead_id", "")
+        emit_event(ctx, ITERATION_ACCESS, iteration_access_payload(
+            run_id=run_id,
+            stage=stage,
+            agent=agent,
+            iteration=iteration_num,
+            bead_id=bead_id,
+            file_access=file_access,
+        ))
+    except Exception:
+        # Gracefully skip event emission on any error
+        pass
 
 
 _GRAPHIFY_READ_VERBS = frozenset({"query", "explain", "path", "affected", "diagnose"})
@@ -1223,6 +1380,46 @@ def _make_agent_event_handler(
     return handler
 
 
+def _apply_defer_pr_from_config(worca_config: dict, subprocess_env: dict) -> None:
+    """Translate worca.stages.pr.defer config to WORCA_DEFER_PR env var.
+
+    Mutates subprocess_env in place. Only adds the var; never removes it.
+    The workspace dag_executor sets WORCA_DEFER_PR=1 in child os.environ —
+    the guard ensures stages.pr.defer:false in a child template does not undo
+    that (the two producers compose monotonically: either can defer, neither
+    can un-defer).
+    """
+    pr_cfg = worca_config.get("stages", {}).get("pr", {})
+    if pr_cfg.get("defer") is True and not subprocess_env.get("WORCA_DEFER_PR"):
+        subprocess_env["WORCA_DEFER_PR"] = "1"
+
+
+def _pr_stage_is_deferred(settings_path: str, env: Optional[Mapping[str, str]] = None) -> bool:
+    """Resolve whether the PR stage defers, the SAME way the guardian prompt does.
+
+    The guardian *prompt* is rendered in run_pipeline from an env copy that folds
+    the worca.stages.pr.defer config toggle in via _apply_defer_pr_from_config and
+    then runs through build_guardian_context (which also honors revise-PR
+    precedence). The PR-stage *schema* selection must use that identical
+    resolution — otherwise a config-only defer (no WORCA_DEFER_PR in os.environ)
+    renders the deferred prompt ("stash, do not open a PR") while the schema stays
+    pr.json (which demands pr_number/pr_url), and the agent's output can't satisfy
+    both. Reusing the same two functions keeps schema and prompt from ever
+    disagreeing.
+    """
+    resolved_env = dict(os.environ if env is None else env)
+    _apply_defer_pr_from_config(
+        load_settings(settings_path).get("worca", {}), resolved_env
+    )
+    return bool(build_guardian_context(resolved_env)["defer_pr"])
+
+
+def _lift_pr_deferred_to_status(result: dict, status: dict) -> None:
+    """When the PR stage output has deferred:True, mark status.pr_deferred=True."""
+    if isinstance(result, dict) and result.get("deferred") is True:
+        status["pr_deferred"] = True
+
+
 def run_stage(
     stage: Stage,
     context: dict,
@@ -1235,6 +1432,7 @@ def run_stage(
     env_overrides: Optional[dict] = None,
     graphify_out: Optional[str] = None,
     crg_data_dir: Optional[str] = None,
+    bead_id: Optional[str] = None,
 ) -> tuple[dict, dict]:
     """Run a single pipeline stage.
 
@@ -1263,11 +1461,15 @@ def run_stage(
     is the full claude CLI JSON response for logging.
     """
     config = get_stage_config(stage, settings_path=settings_path)
-    # PR stage uses a different schema when the run defers PR creation to a
-    # parent orchestrator (workspace child). Two schemas instead of one
-    # conditional schema keeps each flat — the Claude API rejects custom
-    # tools whose input_schema has top-level allOf/oneOf/anyOf.
-    if stage == Stage.PR and compute_defer_pr(os.environ):
+    # PR stage uses a different schema when the run defers PR creation — either a
+    # workspace child (WORCA_DEFER_PR=1, set by dag_executor) or a project that
+    # set worca.stages.pr.defer:true. _pr_stage_is_deferred resolves this the
+    # SAME way the guardian prompt is resolved in run_pipeline, so a config-only
+    # defer still selects pr-deferred.json (otherwise the agent is told to stash
+    # the PR while the schema still demands pr_number/pr_url). Two flat schemas
+    # instead of one conditional schema keeps each flat — the Claude API rejects
+    # custom tools whose input_schema has top-level allOf/oneOf/anyOf.
+    if stage == Stage.PR and _pr_stage_is_deferred(settings_path):
         config = {**config, "schema": "pr-deferred.json"}
     max_turns = config["max_turns"] * msize
     raw_prompt = context.get("prompt", "")
@@ -1334,6 +1536,7 @@ def run_stage(
         output_format="stream-json",
         json_schema=_schema_path(config["schema"]),
         model=config.get("model"),
+        model_alias=config.get("cost_alias"),
         model_env=merged_env,
         log_path=log_path,
         on_event=on_event,
@@ -1342,6 +1545,7 @@ def run_stage(
         run_dir=run_dir,
         stage=stage.value,
         iteration=iteration,
+        bead_id=bead_id,
     )
     _gfx = _gfx_metrics["graphify_invocations"]
     _crg = _gfx_metrics["crg_invocations"]
@@ -1395,6 +1599,66 @@ def _extract_pr_fields_from_text(text) -> Optional[dict]:
 
 
 PRVerification = collections.namedtuple("PRVerification", ["ok", "reason"])
+
+
+def _fetch_pr_url_via_gh(pr_number: int, timeout: int = 10) -> Optional[str]:
+    """Return the URL of an existing PR, or None on any error.
+
+    Used in revise mode to populate status["pr"].url when the guardian re-reads
+    an existing PR instead of creating a new one.
+    """
+    try:
+        r = subprocess.run(
+            ["gh", "pr", "view", str(pr_number), "--json", "url,number"],
+            capture_output=True, text=True, timeout=timeout,
+        )
+    except (FileNotFoundError, subprocess.TimeoutExpired, OSError):
+        return None
+    if r.returncode != 0:
+        return None
+    try:
+        data = json.loads(r.stdout or "{}")
+    except json.JSONDecodeError:
+        return None
+    return data.get("url") or None
+
+
+def _revise_pr_writeback(pr_number, commit_sha, review_feedback) -> None:
+    """Post the revision summary + per-thread replies for a revise-mode run.
+
+    Runner-side writeback (like gh_issues.py) — NOT an agent tool call — so it
+    bypasses the pre_tool_use governance hook and never depends on the guardian
+    formatting GraphQL by hand. Both helpers are error-suppressed and
+    WORCA_NO_GITHUB-gated; failures here never fail the pipeline.
+
+    Every comment posted here starts with WORCA_COMMENT_MARKER so a later
+    revise run recognises and skips worca's own writeback (L1).
+
+    - Summary: one top-level comment on the PR (D1 — update in place).
+    - Replies: one reply per ingested thread that carries a thread_id (D3 —
+      reply only, never resolve). Review-summary items have no thread_id and
+      are skipped. In a revision run every ingested unresolved thread is in
+      scope, so all of them are replied to with the addressing commit.
+    """
+    nwo = current_repo_nwo()
+    sha = (commit_sha or "").strip()
+    sha_phrase = f" in commit `{sha}`" if sha else ""
+
+    if nwo:
+        n_threads = sum(1 for c in (review_feedback or []) if c.get("thread_id"))
+        summary = (
+            f"{WORCA_COMMENT_MARKER} · addressed {n_threads} review "
+            f"{'comment' if n_threads == 1 else 'comments'}{sha_phrase}."
+        )
+        post_revision_summary(nwo, pr_number, summary)
+
+    seen_threads = set()
+    for comment in review_feedback or []:
+        thread_id = comment.get("thread_id")
+        if not thread_id or thread_id in seen_threads:
+            continue
+        seen_threads.add(thread_id)
+        reply_to_thread(nwo, thread_id, f"{WORCA_COMMENT_MARKER} · addressed{sha_phrase}.")
 
 
 def _verify_pr_via_gh(pr_number: int, expected_url: str, timeout: int = 10) -> Optional[PRVerification]:
@@ -1852,7 +2116,6 @@ def _query_ready_bead(allowed_ids: list[str] | None = None, run_id: str | None =
 
     Args:
         allowed_ids: If provided, only return beads whose ID is in this list.
-                     This prevents picking up stale beads from prior runs.
         run_id: If provided, pass --label run:{run_id} to bd ready so only
                 beads from this run are returned. Without this, the 10-item
                 display limit in bd ready can be filled by unrelated beads.
@@ -1923,6 +2186,103 @@ def _ensure_beads_initialized() -> None:
             raise PipelineError(f"Failed to initialize beads: {init_result.stderr}")
 
 
+def _pin_effective_settings_path(settings_path: Optional[str]) -> None:
+    """Pin the effective settings file for this run via ``WORCA_SETTINGS_PATH``.
+
+    The runner resolves model/stage/loop config from ``settings_path`` (the
+    template-merged + stripped effective settings), but the dispatch hooks and
+    the ``--tools``/``--disallowedTools`` CLI-flag resolution read settings from
+    disk via ``tracking._settings_path()`` — which, without this pin, falls back
+    to the raw on-disk project ``.claude/settings.json`` and silently overrides a
+    template's ``governance.dispatch``. Exporting the path here (inherited by
+    every agent subprocess via ``get_env`` and thus by the hook subprocesses they
+    spawn) makes both consumers read the same merged config. No-op-equivalent for
+    no-template runs, where ``settings_path`` already IS the on-disk file.
+    """
+    if settings_path:
+        os.environ["WORCA_SETTINGS_PATH"] = os.path.abspath(settings_path)
+
+
+def launch_param_status(
+    max_beads_override: Optional[int], msize: int, mloops: int
+) -> dict:
+    """Status keys recording launch-time params, present only when explicitly set.
+
+    The UI surfaces these on the preflight row. ``max_beads_override`` is stored
+    whenever provided (``None`` means "not passed"); the size/loop multipliers are
+    stored only when raised above their default of 1 so an unset multiplier leaves
+    the key absent and the UI shows nothing.
+    """
+    out: dict = {}
+    if max_beads_override is not None:
+        out["max_beads_override"] = max_beads_override
+    if isinstance(msize, int) and msize > 1:
+        out["size_multiplier"] = msize
+    if isinstance(mloops, int) and mloops > 1:
+        out["loop_multiplier"] = mloops
+    return out
+
+
+def effective_bead_cap_status(
+    effective_cap: int, max_beads_override: Optional[int], has_review_comments: bool
+) -> dict:
+    """Status keys recording the RESOLVED coordinator bead cap and where it came from.
+
+    Surfaced on the UI preflight row alongside ``max_beads_override``.
+    ``max_beads_effective`` is the cap prompt_builder actually resolved (0 = Auto,
+    and 0 under PR-revision suppression). ``max_beads_source`` is ``"explicit"``
+    only when a launch override genuinely drove the cap; config/template caps —
+    and PR-revision suppression, which forces the cap to 0 regardless of any
+    override — record ``"template"`` since neither is a launch-time choice.
+    """
+    source = (
+        "explicit"
+        if (max_beads_override is not None and not has_review_comments)
+        else "template"
+    )
+    return {
+        "max_beads_effective": int(effective_cap or 0),
+        "max_beads_source": source,
+    }
+
+
+def _persist_observations(
+    status: dict,
+    loop_counters: dict[str, int],
+    result: dict,
+    prompt_builder: PromptBuilder,
+    run_id: str,
+) -> None:
+    """Persist observations to observations-bottle.md.
+
+    This is non-blocking (per D8) — errors are logged but do not stop the pipeline.
+    Observations are NOT accumulated into prompt context (per D7).
+    """
+    new_observations = result.get("observations", [])
+    if not new_observations:
+        return
+
+    run_dir = status.get("run_dir")
+    if not run_dir:
+        return
+
+    iteration_num = loop_counters.get("pr_changes", 0) + 1
+    obs_path = os.path.join(run_dir, "observations-bottle.md")
+
+    try:
+        os.makedirs(run_dir, exist_ok=True)
+        with open(obs_path, "a", encoding="utf-8") as f:
+            f.write(f"\n## Review Iteration {iteration_num}\n\n")
+            for obs in new_observations:
+                sev = obs.get("severity", "?")
+                file = obs.get("file", "?")
+                line = obs.get("line", "?")
+                desc = obs.get("description", "")
+                f.write(f"- [{sev}] `{file}:{line}` {desc}\n")
+    except (IOError, OSError, PermissionError) as e:
+        _log(f"[{run_id}] Failed to write observations file: {obs_path}: {e}", "warn")
+
+
 def run_pipeline(
     work_request: WorkRequest,
     plan_file: Optional[str] = None,
@@ -1938,6 +2298,7 @@ def run_pipeline(
     pipeline_template: Optional[str] = None,
     registry_base: Optional[str] = None,
     run_id: Optional[str] = None,
+    max_beads_override: Optional[int] = None,
 ) -> dict:
     """Run the full pipeline for a single work request.
 
@@ -1965,6 +2326,11 @@ def run_pipeline(
     _shutdown_requested = False
     _pending_signal_event = None
     _signal_event_emitted = False
+
+    # Pin the effective settings file so the dispatch hooks and the
+    # --tools/--disallowedTools resolution read the same template-merged config
+    # as the rest of the pipeline (see _pin_effective_settings_path).
+    _pin_effective_settings_path(settings_path)
 
     # status_path can arrive in two shapes:
     #   <worca>/status.json                       (legacy flat layout)
@@ -2106,6 +2472,8 @@ def run_pipeline(
         if worktree:
             status["worktree"] = True
 
+        status.update(launch_param_status(max_beads_override, msize, mloops))
+
         # target_branch is the PR base branch (what the PR merges into).
         # Sourced from WORCA_TARGET_BRANCH env var (highest priority) or the
         # --branch flag, which in worktree mode names the base branch.
@@ -2212,6 +2580,32 @@ def run_pipeline(
                     branch=branch_name,
                 ))
 
+            # Emit template lifecycle event now that EventContext is ready.
+            _persisted_tmpl = status.get("pipeline_template")
+            _is_resume = resume_stage is not None
+            if _is_resume and _persisted_tmpl and isinstance(_persisted_tmpl, str) and not pipeline_template:
+                # Regression guard: resumed run had a template persisted but
+                # the caller didn't pass pipeline_template (template wasn't
+                # restored). Shouldn't fire after the Phase 1 fix, but catches
+                # regressions where the template is silently dropped on resume.
+                _dropped_id = _persisted_tmpl.split(":", 1)[-1]
+                emit_event(ctx, TEMPLATE_DROPPED, template_dropped_payload(
+                    template_id=_dropped_id,
+                    reason="missing_on_resume",
+                ))
+            elif _persisted_tmpl and isinstance(_persisted_tmpl, str):
+                _source = "resume" if _is_resume else "launch"
+                _parts = _persisted_tmpl.split(":", 1)
+                if len(_parts) == 2:
+                    _tier, _tmpl_id = _parts
+                else:
+                    _tier, _tmpl_id = None, _parts[0]
+                emit_event(ctx, TEMPLATE_APPLIED, template_applied_payload(
+                    template_id=_tmpl_id,
+                    source=_source,
+                    tier=_tier,
+                ))
+
         context = {
             "prompt": work_request.description or work_request.title,
             "_run_dir": run_dir,
@@ -2225,7 +2619,7 @@ def run_pipeline(
         # PR-stage retries so iter_2 verification compares against the same
         # pre-stage HEAD as iter_1.
         _pr_baseline_head: Optional[str] = None
-        max_beads = 0
+        created_bead_count = 0
 
         # Initialize PromptBuilder for context threading across stages
         prompt_context_path = os.path.join(run_dir, "prompt_context.json") if run_dir else None
@@ -2257,11 +2651,11 @@ def run_pipeline(
             _backfilled = backfill_prompt_context(prompt_builder, status, logs_dir)
             if _backfilled:
                 _log(f"Resume backfill: populated {len(_backfilled)} missing context key(s): {', '.join(_backfilled)}")
-            # Restore max_beads from persisted context — the COORDINATE stage
+            # Restore created_bead_count from persisted context — the COORDINATE stage
             # that originally set it will be skipped on resume.
             resumed_beads = prompt_builder.get_context("beads_ids")
             if resumed_beads:
-                max_beads = len(resumed_beads)
+                created_bead_count = len(resumed_beads)
             # Re-flag graphify availability on resume — the PREFLIGHT handler
             # that sets has_graphify + GRAPHIFY_OUT is skipped on resume.
             _graphify_out = _reattach_graphify_on_resume(status, prompt_builder)
@@ -2366,14 +2760,32 @@ def run_pipeline(
         if status.get("plan_file"):
             prompt_builder.update_context("plan_file", status["plan_file"])
         prompt_builder.update_context("run_id", status.get("run_id", ""))
+        # Load git_head from status for review stage scoping
+        prompt_builder.update_context("review_base", status.get("git_head", ""))
         prompt_builder.update_context("branch", branch_name)
         prompt_builder.update_context("title", work_request.title)
+        if work_request.review_comments:
+            prompt_builder.update_context("review_comments", work_request.review_comments)
+        # Translate worca.stages.pr.defer config to WORCA_DEFER_PR so the
+        # {{#if defer_pr}} block in guardian.md resolves correctly. We work on
+        # a per-run copy of the environment rather than mutating the live
+        # os.environ: the toggle is monotonic (never un-defers), so mutating
+        # the process env would leak the flag into subsequent in-process runs.
+        # The workspace dag_executor already sets WORCA_DEFER_PR=1 in child
+        # env; copying os.environ preserves that value — the two producers
+        # compose monotonically.
+        guardian_env = dict(os.environ)
+        _apply_defer_pr_from_config(
+            load_settings(settings_path).get("worca", {}),
+            guardian_env,
+        )
         # Guardian template variables (issue #165): derived once here so the
         # dispatch-time resolve_agent call resolves {{pr_title_prefix}},
         # {{pr_footer}}, and {{#if defer_pr}} in guardian.md. Computed from
-        # the current process env, which carries the fleet/workspace child
-        # WORCA_* vars set by run_fleet.py / dag_executor.py.
-        for key, value in build_guardian_context(os.environ).items():
+        # the per-run env copy, which carries the fleet/workspace child
+        # WORCA_* vars set by run_fleet.py / dag_executor.py plus the
+        # config-derived WORCA_DEFER_PR above.
+        for key, value in build_guardian_context(guardian_env).items():
             prompt_builder.update_context(key, value)
         if status.get("run_id"):
             os.environ["WORCA_RUN_ID"] = status["run_id"]
@@ -2517,6 +2929,11 @@ def run_pipeline(
                 if _eff_level is not None:
                     _effort_env_overrides["CLAUDE_CODE_EFFORT_LEVEL"] = _eff_level
 
+            if current_stage == Stage.PR:
+                _revises_pr_num = status.get("revises_pr")
+                if _revises_pr_num is not None:
+                    _effort_env_overrides["WORCA_REVISE_PR"] = str(_revises_pr_num)
+
             # Start a new iteration record
             _iter_kwargs = {
                 "agent": stage_config["agent"],
@@ -2528,6 +2945,15 @@ def run_pipeline(
             # old runs and plain-model configs unchanged on disk.
             if stage_config.get("model_alias"):
                 _iter_kwargs["model_alias"] = stage_config["model_alias"]
+            # Bead linkage on implement iterations only — _assigned_bead is
+            # resolved above (claimed bead, or beads_ids[0] fallback). Title is
+            # cached when the bead is claimed via _query_ready_bead; absent on
+            # the beads_ids[0] fallback, which keeps it null on disk.
+            if current_stage == Stage.IMPLEMENT and _assigned_bead:
+                _iter_kwargs["bead_id"] = _assigned_bead
+                _bead_title = prompt_builder.get_context("assigned_bead_title")
+                if _bead_title:
+                    _iter_kwargs["bead_title"] = _bead_title
             iter_record = start_iteration(
                 status, current_stage.value,
                 **_iter_kwargs,
@@ -2611,7 +3037,25 @@ def run_pipeline(
                 else:
                     pb_iteration = loop_counters.get(f"{current_stage.value}_iteration", 0)
 
+                # Thread max_beads cap into prompt_builder before building COORDINATE context
+                if current_stage == Stage.COORDINATE:
+                    prompt_builder.update_context("max_beads_override", max_beads_override)
+                    prompt_builder.update_context("max_beads_config", stage_config["max_beads"])
+
                 ctx_dict = prompt_builder.build_context(current_stage.value, pb_iteration)
+
+                # W-069: persist the resolved coordinator bead cap + its source so
+                # the UI preflight row can surface the EFFECTIVE cap (not just the
+                # launch override). Written before COORDINATE executes, so it's
+                # visible even if the stage later fails.
+                if current_stage == Stage.COORDINATE:
+                    status.update(effective_bead_cap_status(
+                        int(ctx_dict.get("max_beads", 0) or 0),
+                        max_beads_override,
+                        bool(ctx_dict.get("has_review_comments")),
+                    ))
+                    save_status(status, actual_status_path)
+
                 _stage_agent_name = stage_config["agent"]
                 if current_stage == Stage.PLAN_REVIEW:
                     _pr_mode, _pr_mode_reason = resolve_plan_review_mode(
@@ -2791,6 +3235,7 @@ def run_pipeline(
                         env_overrides=_effort_env_overrides,
                         graphify_out=_graphify_out,
                         crg_data_dir=_crg_data_dir,
+                        bead_id=_assigned_bead,
                     )
             except InterruptedError:
                 stage_completed = datetime.now(timezone.utc).isoformat()
@@ -2934,19 +3379,28 @@ def run_pipeline(
             elapsed = time.time() - t0
             _log(f"{stage_label}{iter_label} completed ({_format_duration(elapsed)})", "ok")
 
+            # Extract token usage from the raw envelope first so the metrics
+            # log line below uses the same override-aware cost as the values
+            # persisted into status.json (otherwise an alt-endpoint alias
+            # silently shows Claude CLI's raw Anthropic-priced number in the
+            # spawn log while the run record carries the overridden $0/local).
+            usage = extract_token_usage(raw_envelope, settings_path=settings_path) if isinstance(raw_envelope, dict) else {}
+
             # Log detailed metrics
             if isinstance(raw_envelope, dict):
-                _log_stage_metrics(stage_label, result, raw_envelope)
+                _log_stage_metrics(
+                    stage_label,
+                    result,
+                    raw_envelope,
+                    cost_override=usage.get("total_cost_usd"),
+                )
 
             # Save full envelope for resume/debugging (per-iteration)
             _save_stage_output(current_stage, raw_envelope, logs_dir, iteration=iter_num)
 
-            # Extract token usage from the raw envelope
-            usage = extract_token_usage(raw_envelope) if isinstance(raw_envelope, dict) else {}
-
             # Emit cost events after token extraction
             if ctx and isinstance(raw_envelope, dict):
-                _stage_cost = raw_envelope.get("total_cost_usd") or 0.0
+                _stage_cost = usage.get("total_cost_usd", raw_envelope.get("total_cost_usd") or 0.0)
                 _stage_input = usage.get("input_tokens", 0)
                 _stage_output = usage.get("output_tokens", 0)
                 if _stage_cost or _stage_input or _stage_output:
@@ -2961,6 +3415,7 @@ def run_pipeline(
                         cache_read_input_tokens=usage.get("cache_read_input_tokens", 0),
                         web_search_requests=usage.get("web_search_requests", 0),
                         web_fetch_requests=usage.get("web_fetch_requests", 0),
+                        context_final_pct=usage.get("context_final_pct"),
                     ))
                 # Running total: sum of all previously-completed stages + current
                 _prev_costs = sum(
@@ -3012,8 +3467,9 @@ def run_pipeline(
                     iter_extras["duration_session_ms"] = raw_envelope["duration_ms"]
                 if raw_envelope.get("num_turns"):
                     iter_extras["turns"] = raw_envelope["num_turns"]
-                if raw_envelope.get("total_cost_usd"):
-                    iter_extras["cost_usd"] = raw_envelope["total_cost_usd"]
+                _iter_cost = usage.get("total_cost_usd", raw_envelope.get("total_cost_usd"))
+                if _iter_cost:
+                    iter_extras["cost_usd"] = _iter_cost
                 if current_stage != Stage.PREFLIGHT:
                     iter_extras["graphify_invocations"] = raw_envelope.get(
                         "graphify_invocations", 0
@@ -3026,6 +3482,9 @@ def run_pipeline(
                         iter_extras["crg_tool_counts"] = _crg_tc
             if usage:
                 iter_extras["token_usage"] = usage
+                _ctx_pct = usage.get("context_final_pct")
+                if _ctx_pct is not None:
+                    iter_extras["context_final_pct"] = _ctx_pct
             iter_extras["prompt"] = rendered_prompt
             if isinstance(result, dict):
                 iter_extras["output"] = result
@@ -3035,8 +3494,9 @@ def run_pipeline(
             if isinstance(raw_envelope, dict):
                 if raw_envelope.get("num_turns"):
                     stage_extras["turns"] = raw_envelope["num_turns"]
-                if raw_envelope.get("total_cost_usd"):
-                    stage_extras["cost_usd"] = raw_envelope["total_cost_usd"]
+                _stg_cost = usage.get("total_cost_usd", raw_envelope.get("total_cost_usd"))
+                if _stg_cost:
+                    stage_extras["cost_usd"] = _stg_cost
 
             # Compute stage-level token aggregate across all iterations
             all_iter_usages = []
@@ -3144,6 +3604,36 @@ def run_pipeline(
 
             # Milestone gate after PLAN
             elif current_stage == Stage.PLAN:
+                _aggregate_file_access_into_extras(
+                    iter_extras, settings_path, status, current_stage.value, iter_num,
+                    bead_id=_assigned_bead,
+                )
+
+                # Resilience guard: the planner is expected to Write its plan to
+                # status["plan_file"], but agents occasionally return a complete
+                # structured plan (+ prose) while skipping the file Write. The
+                # stage still "succeeds" (valid structured output), yet the plan
+                # file never lands on disk — so the coordinator has nothing to
+                # read and the UI "View plan" button 404s ("No plan file found").
+                # Materialize the structured output to the plan file so the run
+                # owns a real artifact. No-op when the planner wrote the file.
+                _plan_file = status.get("plan_file")
+                if _plan_file and isinstance(result, dict) and not os.path.exists(_plan_file):
+                    try:
+                        _pdir = os.path.dirname(_plan_file)
+                        if _pdir:
+                            os.makedirs(_pdir, exist_ok=True)
+                        with open(_plan_file, "w", encoding="utf-8") as _pf:
+                            _pf.write(_materialize_plan_markdown(result, work_request))
+                        iter_extras["plan_materialized"] = True
+                        _log(
+                            "Planner produced no plan file; materialized "
+                            f"{_plan_file} from structured output",
+                            "warn",
+                        )
+                    except OSError as _e:
+                        _log(f"Failed to materialize plan file {_plan_file}: {_e}", "err")
+
                 # Plan approval is a webhook-controlled gate, not a planner
                 # self-assessment. Default to approved; the webhook (when
                 # plan_approval is enabled and a subscriber is connected) can
@@ -3151,6 +3641,7 @@ def run_pipeline(
                 approved = True
                 iter_extras["outcome"] = "success" if approved else "rejected"
                 complete_iteration(status, current_stage.value, **iter_extras)
+                _emit_iteration_access_event(ctx, status, current_stage.value, status["run_id"])
                 update_stage(status, current_stage.value, **stage_extras)
                 set_milestone(status, "plan_approved", approved)
                 if ctx:
@@ -3450,8 +3941,14 @@ def run_pipeline(
 
             # Handle coordinate results
             elif current_stage == Stage.COORDINATE:
+                _aggregate_file_access_into_extras(
+                    iter_extras, settings_path, status, current_stage.value, iter_num,
+                    bead_id=_assigned_bead,
+                )
+
                 iter_extras["outcome"] = "success"
                 complete_iteration(status, current_stage.value, **iter_extras)
+                _emit_iteration_access_event(ctx, status, current_stage.value, status["run_id"])
                 update_stage(status, current_stage.value, **stage_extras)
                 save_status(status, actual_status_path)
                 if ctx:
@@ -3471,7 +3968,12 @@ def run_pipeline(
                             raise PipelineInterrupted("Aborted via control webhook", stop_reason="control_webhook")
                 # Thread coordinate outputs into PromptBuilder
                 beads_ids = result.get("beads_ids", [])
-                max_beads = len(beads_ids)
+                created_bead_count = len(beads_ids)
+                _warn_if_cap_deviation(
+                    ctx_dict.get("max_beads", 0),
+                    created_bead_count,
+                    bool(prompt_builder.get_context("review_comments")),
+                )
                 prompt_builder.update_context("beads_ids", beads_ids)
                 prompt_builder.update_context("dependency_graph", result.get("dependency_graph", {}))
                 prompt_builder.pop_context("unresolved_plan_issues")
@@ -3517,7 +4019,12 @@ def run_pipeline(
             # Handle implement results — batch-then-test flow
             elif current_stage == Stage.IMPLEMENT:
                 iter_extras["outcome"] = "success"
+                _aggregate_file_access_into_extras(
+                    iter_extras, settings_path, status, current_stage.value, iter_num,
+                    bead_id=_assigned_bead,
+                )
                 complete_iteration(status, current_stage.value, **iter_extras)
+                _emit_iteration_access_event(ctx, status, current_stage.value, status["run_id"])
 
                 # Thread implement outputs into PromptBuilder
                 new_files = result.get("files_changed", [])
@@ -3545,6 +4052,14 @@ def run_pipeline(
                                     bead_id=claimed_bead,
                                     error="bd_close failed",
                                 ))
+                        # Record the bead as processed regardless of bd_close
+                        # outcome — implementation is the expensive step and
+                        # must not be retried on the same bead. Persisting here
+                        # (via save_context below) lets resume skip it too.
+                        _implemented = prompt_builder.get_context("implemented_bead_ids") or []
+                        if claimed_bead not in _implemented:
+                            _implemented.append(claimed_bead)
+                            prompt_builder.update_context("implemented_bead_ids", _implemented)
 
                     # Accumulate files across all beads
                     all_files = prompt_builder.get_context("all_files_changed") or []
@@ -3562,8 +4077,23 @@ def run_pipeline(
                     # is stopped between bead iterations, resume must re-enter
                     # IMPLEMENT to process remaining beads.
                     next_bead = _query_ready_bead(allowed_ids=run_bead_ids, run_id=status.get("run_id"))
+                    # Drain when bd_ready re-surfaces an already-implemented
+                    # bead. Happens when the bead store doesn't reflect our
+                    # closure yet (slow daemon, stateless test stub, or a
+                    # bd_close failure). Re-implementing is never the right
+                    # answer — advance instead.
+                    if next_bead:
+                        _impl_set = set(prompt_builder.get_context("implemented_bead_ids") or [])
+                        if next_bead["id"] in _impl_set:
+                            _log(
+                                f"bd ready returned already-implemented bead {next_bead['id']} "
+                                f"— treating bead queue as drained",
+                                "warn",
+                            )
+                            next_bead = None
                     if next_bead and Stage.IMPLEMENT in stage_order:
-                        if loop_counters["bead_iteration"] < max_beads:
+                        safety_cap = max(created_bead_count, len(run_bead_ids or [])) + 3
+                        if loop_counters["bead_iteration"] < safety_cap:
                             # Keep stage in_progress between beads so resume works
                             if prompt_context_path:
                                 prompt_builder.save_context(prompt_context_path)
@@ -3575,13 +4105,16 @@ def run_pipeline(
                                 emit_event(ctx, BEAD_NEXT, bead_next_payload(
                                     next_bead_id=next_bead["id"],
                                     bead_iteration=loop_counters["bead_iteration"],
-                                    max_beads=max_beads,
+                                    max_beads=created_bead_count,
                                 ))
                             continue
                         else:
-                            if next_bead:
-                                _log(f"Bead limit reached ({max_beads}) but bd ready still has beads — possible stale beads from prior run", "warn")
-                            _log(f"Bead iteration limit reached after {loop_counters['bead_iteration']} beads", "warn")
+                            _log(f"Safety cap reached ({safety_cap}) but bd ready still has "
+                                 f"run-scoped beads — halting to prevent partial implementation", "err")
+                            raise PipelineInterrupted(
+                                f"implement_incomplete: bead {next_bead['id']} and possibly more still unstarted",
+                                stop_reason="implement_incomplete",
+                            )
 
                     # All beads done — NOW mark IMPLEMENT completed
                     prompt_builder.update_context("files_changed", list(set(all_files)))
@@ -3601,9 +4134,9 @@ def run_pipeline(
                 save_status(status, actual_status_path)
                 if ctx:
                     _bead_kwargs = {}
-                    if max_beads:
+                    if created_bead_count:
                         _bead_kwargs["beads_done"] = loop_counters.get("bead_iteration", 0)
-                        _bead_kwargs["beads_total"] = max_beads
+                        _bead_kwargs["beads_total"] = created_bead_count
                     _sc_event = emit_event(ctx, STAGE_COMPLETED, stage_completed_payload(
                         stage=current_stage.value, iteration=iter_num,
                         duration_ms=iter_extras.get("duration_ms", 0),
@@ -3622,6 +4155,11 @@ def run_pipeline(
 
             # Handle test results — simplified (flat counter, no per-bead logic)
             elif current_stage == Stage.TEST:
+                _aggregate_file_access_into_extras(
+                    iter_extras, settings_path, status, current_stage.value, iter_num,
+                    bead_id=_assigned_bead,
+                )
+
                 passed = result.get("passed", False)
                 _emit_guide_conflicts(ctx, "test", result)
                 # Thread test outputs into PromptBuilder
@@ -3639,6 +4177,7 @@ def run_pipeline(
                     prompt_builder.update_context("review_history", None)
                     iter_extras["outcome"] = "test_failure"
                     complete_iteration(status, current_stage.value, **iter_extras)
+                    _emit_iteration_access_event(ctx, status, current_stage.value, status["run_id"])
                     update_stage(status, current_stage.value, **stage_extras)
                     save_status(status, actual_status_path)
                     if ctx:
@@ -3707,6 +4246,7 @@ def run_pipeline(
                 else:
                     iter_extras["outcome"] = "success"
                     complete_iteration(status, current_stage.value, **iter_extras)
+                    _emit_iteration_access_event(ctx, status, current_stage.value, status["run_id"])
                     update_stage(status, current_stage.value, **stage_extras)
                     save_status(status, actual_status_path)
                     if ctx:
@@ -3733,9 +4273,16 @@ def run_pipeline(
 
             # Handle review results — simplified (flat counter, no per-bead logic)
             elif current_stage == Stage.REVIEW:
+                _aggregate_file_access_into_extras(
+                    iter_extras, settings_path, status, current_stage.value, iter_num,
+                    bead_id=_assigned_bead,
+                )
+
                 outcome = result.get("outcome", "approve")
                 _log(f"Review outcome: {outcome}")
                 _emit_guide_conflicts(ctx, "review", result)
+                # Persist observations across iterations (non-blocking, best-effort)
+                _persist_observations(status, loop_counters, result, prompt_builder, run_id)
                 next_stage, status = handle_pr_review(outcome, status)
                 _all_issues = result.get("issues", [])
                 _critical_count = sum(
@@ -3749,6 +4296,7 @@ def run_pipeline(
                     ))
                 iter_extras["outcome"] = outcome
                 complete_iteration(status, current_stage.value, **iter_extras)
+                _emit_iteration_access_event(ctx, status, current_stage.value, status["run_id"])
                 update_stage(status, current_stage.value, **stage_extras)
                 save_status(status, actual_status_path)
                 if ctx:
@@ -3979,8 +4527,43 @@ def run_pipeline(
                             stage=Stage.PR.value,
                         ))
                 if isinstance(result, dict):
+                    _lift_pr_deferred_to_status(result, status)
+                    if result.get("deferred") is True:
+                        # Lift deferred fields to stages.pr so worca pr create
+                        # can read them without traversing iterations.
+                        update_stage(status, Stage.PR.value,
+                            deferred=True,
+                            pr_title=result.get("pr_title", ""),
+                            pr_body=result.get("pr_body", ""),
+                            base_branch=(
+                                result.get("base_branch")
+                                or result.get("target_branch") or ""
+                            ),
+                            source_branch=(
+                                result.get("source_branch")
+                                or status.get("branch") or ""
+                            ),
+                        )
+                        save_status(status, actual_status_path)
+                        if ctx:
+                            emit_event(ctx, GIT_PR_DEFERRED, git_pr_deferred_payload(
+                                pr_title=result.get("pr_title", ""),
+                                base_branch=result.get("base_branch") or result.get("target_branch") or "",
+                                head_branch=result.get("source_branch") or status.get("branch") or "",
+                                commit_sha=result.get("commit_sha"),
+                            ))
                     _pr_url = result.get("pr_url")
                     _pr_number = result.get("pr_number")
+                    # In revise mode, if the agent's prose fallback didn't carry
+                    # pr_url/pr_number, re-read the existing PR via gh so
+                    # status["pr"] still populates with the correct number/url.
+                    _revises_pr = status.get("revises_pr")
+                    if _revises_pr is not None and (not _pr_url or _pr_number is None):
+                        _fetched_url = _fetch_pr_url_via_gh(_revises_pr)
+                        if _fetched_url and not _pr_url:
+                            _pr_url = _fetched_url
+                        if _pr_number is None:
+                            _pr_number = _revises_pr
                     if _pr_url and _pr_number is not None:
                         _commit_sha = result.get("commit_sha")
                         # Branches: prefer agent value, fall back to runner state.
@@ -4023,6 +4606,18 @@ def run_pipeline(
                                 target_branch=_target_branch,
                                 provider=_provider,
                             ))
+
+                        # Revise mode: worca owns the PR writeback (summary
+                        # comment + per-thread replies). The guardian only
+                        # pushes the head branch; doing the writeback here keeps
+                        # it off the agent tool path and reliable (D3 — replies
+                        # only, never resolve).
+                        if _revises_pr is not None:
+                            _revise_pr_writeback(
+                                _pr_number,
+                                _commit_sha,
+                                status.get("review_feedback", []),
+                            )
 
                     _maybe_graphify_post_guardian(
                         settings_path=settings_path,

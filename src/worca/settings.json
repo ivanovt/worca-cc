@@ -22,7 +22,7 @@
     ],
     "PostToolUse": [
       {
-        "matcher": "Bash",
+        "matcher": "Bash|Read|Write|Edit|MultiEdit|NotebookEdit|Grep|Glob|mcp__code-review-graph__.*|mcp__code_review_graph__.*",
         "hooks": [
           {
             "type": "command",
@@ -119,7 +119,9 @@
       "TodoWrite",
       "WebFetch",
       "WebSearch",
-      "Read(*)"
+      "Read(*)",
+      "Glob",
+      "Grep"
     ]
   },
   "worca": {
@@ -176,7 +178,8 @@
       "coordinator": {
         "model": "opus",
         "max_turns": 300,
-        "effort": "high"
+        "effort": "high",
+        "max_beads": 0
       },
       "implementer": {
         "model": "sonnet",
@@ -207,7 +210,7 @@
       }
     },
     "models": {
-      "opus": "claude-opus-4-6",
+      "opus": "claude-opus-4-7",
       "sonnet": "claude-sonnet-4-6",
       "haiku": "claude-haiku-4-5-20251001"
     },
@@ -324,7 +327,7 @@
         },
         "subagents": {
           "always_disallowed": [],
-          "default_denied": ["general-purpose"],
+          "default_denied": [],
           "per_agent_allow": {
             "_defaults": ["*"]
           }

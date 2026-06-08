@@ -25,6 +25,31 @@ const DISPATCH_EVENT_TYPES = new Set([
 ]);
 
 /**
+ * Classify a single parsed events.jsonl line. Returns the normalised dispatch
+ * entry if the line is a dispatch event, or null otherwise. Extracted so a
+ * combined single-pass reader (events-jsonl-reader.js) can share the exact same
+ * normalisation as the standalone reader below.
+ *
+ * @param {object} e — a parsed events.jsonl object
+ * @returns {{type, section, candidate, via?, reason?, timestamp}|null}
+ */
+export function parseDispatchEventLine(e) {
+  if (!e || !DISPATCH_EVENT_TYPES.has(e.event_type)) return null;
+  const payload = e.payload || {};
+  const candidate = payload.candidate;
+  if (!candidate) return null;
+  const entry = {
+    type: e.event_type,
+    section: payload.section || 'subagents',
+    candidate,
+    timestamp: e.timestamp,
+  };
+  if (payload.reason) entry.reason = payload.reason;
+  if (payload.via) entry.via = payload.via;
+  return entry;
+}
+
+/**
  * Parse events.jsonl and return only the dispatch events, with normalised shape.
  * Malformed lines are silently skipped so a corrupt event doesn't break the run view.
  *
@@ -48,19 +73,8 @@ export function readDispatchEventsFromJsonl(eventsPath) {
     } catch {
       continue;
     }
-    if (!DISPATCH_EVENT_TYPES.has(e.event_type)) continue;
-    const payload = e.payload || {};
-    const candidate = payload.candidate;
-    if (!candidate) continue;
-    const entry = {
-      type: e.event_type,
-      section: payload.section || 'subagents',
-      candidate,
-      timestamp: e.timestamp,
-    };
-    if (payload.reason) entry.reason = payload.reason;
-    if (payload.via) entry.via = payload.via;
-    out.push(entry);
+    const entry = parseDispatchEventLine(e);
+    if (entry) out.push(entry);
   }
   return out;
 }

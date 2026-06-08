@@ -32,3 +32,22 @@
 	font-size: var(--sl-text-base);
 	font-weight: 600;
 }
+
+/* Content images — rounded hairline border + soft layered shadow so screenshots
+   sit as discrete cards on the page. Scoped to .sl-markdown-content so it does
+   not touch sidebar/header icons, and the image-zoom overlay's <dialog> image
+   (which lives outside the content wrapper). */
+.sl-markdown-content img {
+	border-radius: 12px;
+	border: 1px solid var(--sl-color-gray-5);
+	box-shadow:
+		0 1px 2px rgba(15, 23, 42, 0.06),
+		0 6px 16px rgba(15, 23, 42, 0.08);
+}
+
+:root[data-theme='dark'] .sl-markdown-content img {
+	border-color: var(--sl-color-gray-5);
+	box-shadow:
+		0 1px 2px rgba(0, 0, 0, 0.4),
+		0 8px 24px rgba(0, 0, 0, 0.45);
+}

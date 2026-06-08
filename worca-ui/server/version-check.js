@@ -1,8 +1,17 @@
 // server/version-check.js — worca-cc version compatibility check
 import { execFile } from 'node:child_process';
 
-/** Minimum worca-cc version required by this @worca/ui release. */
-export const MIN_WORCA_CC = '0.6.0';
+/**
+ * Minimum worca-cc version required by this @worca/ui release.
+ *
+ * Bumped to 0.47.0 for the Pipelines section (W-062): the editor's
+ * CRUD routes delegate to `worca templates create / validate / duplicate`
+ * and pass a `--project-root` flag, none of which exist in worca-cc
+ * ≤ 0.46.0. When the installed version is behind this, the Pipelines
+ * view degrades to read-only and surfaces a banner instructing the
+ * user to upgrade.
+ */
+export const MIN_WORCA_CC = '0.47.0';
 
 /**
  * Parse the version string from `worca --version` output.

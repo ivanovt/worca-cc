@@ -144,6 +144,35 @@ export function writePipelinePid(worcaDir, activeRunId) {
  * @param {number} [timeout=10000]
  * @returns {Promise<object>} the parsed message
  */
+/**
+ * Force every tier section on the Pipeline Templates page open.
+ *
+ * The Pipelines view renders each tier (Project / User / Built-in) as a
+ * collapsible `<sl-details>`. Only Project starts open by default, so
+ * any E2E that interacts with a User or Built-in card needs to expand
+ * the relevant section first — otherwise the card is in the DOM but
+ * its inner buttons fail `visible` checks.
+ *
+ * Call this right after navigating to `#/templates` (or any URL that
+ * lands on the pipelines list). Safe to call on already-open sections
+ * — setting `open = true` is a no-op when it already is.
+ *
+ * @param {import('@playwright/test').Page} page
+ */
+export async function expandAllTierSections(page) {
+  // Wait for at least one section to render so the evaluate doesn't
+  // run before lit-html has painted.
+  await page.locator('sl-details.pipelines-tier-section').first().waitFor({
+    state: 'attached',
+    timeout: 10000,
+  });
+  await page.evaluate(() => {
+    document.querySelectorAll('sl-details.pipelines-tier-section').forEach((d) => {
+      d.open = true;
+    });
+  });
+}
+
 export function waitForWsMessage(page, eventType, timeout = 10000) {
   return new Promise((resolve, reject) => {
     const timer = setTimeout(() => {

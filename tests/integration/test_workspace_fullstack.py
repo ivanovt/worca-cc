@@ -43,10 +43,15 @@ _WORKSPACE_SCENARIO = {
                 "git commit -m 'fullstack implementation'"
             ),
             "structured_output": {
+                "outcome": "success",
+                "deferred": True,
                 "commit_sha": "$HEAD",
                 "source_branch": "worca/ws-branch",
                 "target_branch": "main",
                 "provider": "github",
+                "pr_title": "fullstack implementation",
+                "pr_body": "## Summary\n- fullstack change",
+                "base_branch": "main",
             },
         },
     },
@@ -182,6 +187,7 @@ def test_workspace_fullstack_3_repos(tmp_path):
         "MOCK_CLAUDE_SCENARIO": str(scenario_path),
         "WORCA_SKIP_BEADS": "1",
         "WORCA_AGENT": "",
+        "WORCA_DEFER_PR": "1",
         "PATH": f"{STUBS_DIR}{os.pathsep}{os.environ.get('PATH', '')}",
     }
 

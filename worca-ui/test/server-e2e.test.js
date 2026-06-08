@@ -26,6 +26,35 @@ function waitForOpen(ws) {
   });
 }
 
+// Open a WebSocket and drain the server's protocol-2 `hello` message before
+// returning. The message listener is attached **before** awaiting `'open'`
+// because on some platforms (notably macOS) the `hello` is emitted in the
+// same tick as `'open'` — if we attach later, we miss it and hang. Without
+// this drain, a `sendAndReceive` issued right after open can also race the
+// handshake and consume `hello` as its reply (issue #257).
+async function openAndHandshake(url) {
+  const ws = new WebSocket(url);
+  const helloReceived = new Promise((resolve, reject) => {
+    const timer = setTimeout(
+      () => reject(new Error('no hello message in 2s')),
+      2000,
+    );
+    ws.once('message', (data) => {
+      clearTimeout(timer);
+      const msg = JSON.parse(data.toString());
+      if (msg.type === 'hello') resolve();
+      else reject(new Error(`expected hello, got ${msg.type}`));
+    });
+    ws.once('error', (err) => {
+      clearTimeout(timer);
+      reject(err);
+    });
+  });
+  await waitForOpen(ws);
+  await helloReceived;
+  return ws;
+}
+
 function sendAndReceive(ws, msg) {
   return new Promise((resolve, reject) => {
     const timer = setTimeout(() => reject(new Error('timeout')), 5000);
@@ -89,8 +118,7 @@ describe('server e2e', () => {
   });
 
   it('WebSocket connects through full server stack', async () => {
-    const ws = new WebSocket(`ws://127.0.0.1:${port}/ws`);
-    await waitForOpen(ws);
+    const ws = await openAndHandshake(`ws://127.0.0.1:${port}/ws`);
     const reply = await sendAndReceive(ws, { id: '1', type: 'list-runs' });
     expect(reply.ok).toBe(true);
     ws.close();
@@ -109,8 +137,7 @@ describe('server e2e', () => {
     const res = await fetch(`http://127.0.0.1:${port}/`);
     expect(res.status).toBe(200);
 
-    const ws = new WebSocket(`ws://127.0.0.1:${port}/ws`);
-    await waitForOpen(ws);
+    const ws = await openAndHandshake(`ws://127.0.0.1:${port}/ws`);
     const reply = await sendAndReceive(ws, { id: '2', type: 'list-runs' });
     expect(reply.payload.runs.length).toBe(1);
     expect(reply.payload.runs[0].active).toBe(true);
@@ -118,8 +145,7 @@ describe('server e2e', () => {
   });
 
   it('preferences round-trip through full stack', async () => {
-    const ws = new WebSocket(`ws://127.0.0.1:${port}/ws`);
-    await waitForOpen(ws);
+    const ws = await openAndHandshake(`ws://127.0.0.1:${port}/ws`);
 
     const getReply = await sendAndReceive(ws, { id: '3', type: 'get-preferences' });
     expect(getReply.payload.theme).toBe('light');

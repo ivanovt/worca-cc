@@ -420,7 +420,7 @@ describe('project-routes', () => {
       expect(Array.isArray(body.templates)).toBe(true);
     });
 
-    it('returns worca-tier templates from .claude/worca/templates/', async () => {
+    it('returns builtin-tier templates from .claude/worca/templates/', async () => {
       const tmplDir = join(
         projectRoot,
         '.claude',
@@ -453,7 +453,7 @@ describe('project-routes', () => {
       expect(t).toBeDefined();
       expect(t.name).toBe('My Template');
       expect(t.description).toBe('A test template');
-      expect(t.tier).toBe('worca');
+      expect(t.tier).toBe('builtin');
     });
 
     it('returns project-tier templates from .claude/templates/', async () => {
@@ -540,11 +540,11 @@ describe('project-routes', () => {
         `/api/projects/${projectName}/templates`,
       );
       expect(status).toBe(200);
-      expect(body.templates.some((t) => t.tier === 'worca')).toBe(true);
+      expect(body.templates.some((t) => t.tier === 'builtin')).toBe(true);
       expect(body.templates.some((t) => t.tier === 'project')).toBe(true);
     });
 
-    it('orders templates by resolution priority: user → project → worca', async () => {
+    it('orders templates to match Python TemplateResolver.list: builtin → project → user', async () => {
       const oldHome = process.env.WORCA_HOME;
       process.env.WORCA_HOME = prefsDir;
       try {
@@ -596,12 +596,13 @@ describe('project-routes', () => {
         const tiers = body.templates.map((t) => t.tier);
         const firstUser = tiers.indexOf('user');
         const firstProject = tiers.indexOf('project');
-        const firstWorca = tiers.indexOf('worca');
+        const firstBuiltin = tiers.indexOf('builtin');
         expect(firstUser).not.toBe(-1);
         expect(firstProject).not.toBe(-1);
-        expect(firstWorca).not.toBe(-1);
-        expect(firstUser).toBeLessThan(firstProject);
-        expect(firstProject).toBeLessThan(firstWorca);
+        expect(firstBuiltin).not.toBe(-1);
+        // Matches Python's order: builtins → projects → users
+        expect(firstBuiltin).toBeLessThan(firstProject);
+        expect(firstProject).toBeLessThan(firstUser);
       } finally {
         if (oldHome === undefined) delete process.env.WORCA_HOME;
         else process.env.WORCA_HOME = oldHome;

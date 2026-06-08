@@ -15,6 +15,7 @@ from worca.utils.claude_cli import (
     AgentSubprocessError,
     _accumulate_usage,
     _ARG_INLINE_LIMIT,
+    _format_log_line,
     _resolve_tool_args,
     _resolve_tool_disallows,
     build_command,
@@ -388,6 +389,75 @@ def test_run_agent_model_env_none_is_safe():
     with patch("worca.utils.claude_cli.subprocess.Popen", return_value=mock_proc):
         result = run_agent("prompt", agent="planner", model_env=None, settings={})
     assert result["ok"] is True
+
+
+def test_run_agent_stamps_stage_and_iteration_env_vars():
+    """stage and iteration parameters are exported as WORCA_STAGE and WORCA_ITERATION."""
+    result_event = {"ok": True}
+    mock_proc = _make_mock_popen(result_event)
+    with patch("worca.utils.claude_cli.subprocess.Popen", return_value=mock_proc) as mock_popen:
+        run_agent(
+            "prompt", agent="planner",
+            stage="plan", iteration=2,
+            settings={},
+        )
+    env = mock_popen.call_args[1]["env"]
+    assert env["WORCA_STAGE"] == "plan"
+    assert env["WORCA_ITERATION"] == "2"
+
+
+def test_run_agent_omits_stage_and_iteration_when_not_provided():
+    """When stage and iteration are None, they are not set in the env."""
+    result_event = {"ok": True}
+    mock_proc = _make_mock_popen(result_event)
+    with patch("worca.utils.claude_cli.subprocess.Popen", return_value=mock_proc) as mock_popen:
+        run_agent(
+            "prompt", agent="planner",
+            stage=None, iteration=None,
+            settings={},
+        )
+    env = mock_popen.call_args[1]["env"]
+    assert "WORCA_STAGE" not in env
+    assert "WORCA_ITERATION" not in env
+
+
+def test_run_agent_strips_stale_stage_and_iteration_from_parent_env(monkeypatch):
+    """When the parent process already has WORCA_STAGE / WORCA_ITERATION set
+    (nested invocation, leftover from an earlier stage in the same pipeline,
+    or operator shell), they must NOT leak through to a child invoked with
+    ``stage=None`` / ``iteration=None``.
+
+    get_env() returns ``os.environ.copy()``, so without explicit removal the
+    parent's values silently win and the file-access hook records the child's
+    activity under the wrong stage/iteration column in the Access Map.
+    """
+    monkeypatch.setenv("WORCA_STAGE", "plan")
+    monkeypatch.setenv("WORCA_ITERATION", "5")
+    result_event = {"ok": True}
+    mock_proc = _make_mock_popen(result_event)
+    with patch("worca.utils.claude_cli.subprocess.Popen", return_value=mock_proc) as mock_popen:
+        run_agent(
+            "prompt", agent="planner",
+            stage=None, iteration=None,
+            settings={},
+        )
+    env = mock_popen.call_args[1]["env"]
+    assert "WORCA_STAGE" not in env
+    assert "WORCA_ITERATION" not in env
+
+
+def test_run_agent_sets_worca_agent_always():
+    """WORCA_AGENT is always set, regardless of stage/iteration."""
+    result_event = {"ok": True}
+    mock_proc = _make_mock_popen(result_event)
+    with patch("worca.utils.claude_cli.subprocess.Popen", return_value=mock_proc) as mock_popen:
+        run_agent(
+            "prompt", agent="planner",
+            stage="plan", iteration=2,
+            settings={},
+        )
+    env = mock_popen.call_args[1]["env"]
+    assert env["WORCA_AGENT"] == "planner"
 
 
 @_DARWIN_CI_SKIP
@@ -1380,6 +1450,27 @@ def test_run_agent_no_mcp_config_omits_flags():
 
 
 # ---------------------------------------------------------------------------
+# model_alias stamping
+# ---------------------------------------------------------------------------
+
+
+def test_run_agent_stamps_model_alias_on_result():
+    result_event = {"result": "ok"}
+    mock_proc = _make_mock_popen(result_event)
+    with patch("worca.utils.claude_cli.subprocess.Popen", return_value=mock_proc):
+        result = run_agent("prompt", agent="planner", model_alias="glm-ds", settings={})
+    assert result["_model_alias"] == "glm-ds"
+
+
+def test_run_agent_omits_model_alias_when_none():
+    result_event = {"result": "ok"}
+    mock_proc = _make_mock_popen(result_event)
+    with patch("worca.utils.claude_cli.subprocess.Popen", return_value=mock_proc):
+        result = run_agent("prompt", agent="planner", settings={})
+    assert "_model_alias" not in result
+
+
+# ---------------------------------------------------------------------------
 # terminate_current: migrated from src/worca/utils/test_claude_cli.py
 # ---------------------------------------------------------------------------
 
@@ -1431,3 +1522,123 @@ def test_structured_output_extraction_compatible_with_runner():
         structured, envelope = raw, raw
     assert structured["approach"] == "incremental"
     assert envelope["total_cost_usd"] == 0.5
+
+
+# ---------------------------------------------------------------------------
+# process_stream: context window tracking + _format_log_line ctx_final label
+# ---------------------------------------------------------------------------
+
+_MODEL = "claude-sonnet-4-6"
+
+
+def _assistant_event(input_tokens, cache_read=0, cache_creation=0):
+    return {
+        "type": "assistant",
+        "message": {
+            "usage": {
+                "input_tokens": input_tokens,
+                "cache_read_input_tokens": cache_read,
+                "cache_creation_input_tokens": cache_creation,
+            }
+        },
+    }
+
+
+def _result_event_with_model_usage(context_window):
+    return {
+        "type": "result",
+        "subtype": "success",
+        "total_cost_usd": 0.01,
+        "num_turns": 3,
+        "duration_ms": 1000,
+        "modelUsage": {_MODEL: {"contextWindow": context_window}},
+    }
+
+
+def test_process_stream_tracks_last_assistant_usage_and_attaches_context_pct():
+    """process_stream computes _final_context_pct from the last assistant
+    event's per-turn usage divided by the result's contextWindow.
+    Only the *last* assistant event's usage is used (not the first).
+    """
+    init = {"type": "system", "subtype": "init", "model": _MODEL}
+    asst1 = _assistant_event(input_tokens=10000)
+    asst2 = _assistant_event(input_tokens=50000, cache_read=30000, cache_creation=5000)
+    result = _result_event_with_model_usage(200000)
+
+    out = process_stream(_stream(init, asst1, asst2, result))
+
+    expected_used = 50000 + 30000 + 5000  # last assistant only
+    expected_pct = round(expected_used / 200000 * 100, 1)
+    assert out.get("_final_context_pct") == expected_pct
+
+
+def test_process_stream_no_context_pct_when_no_assistant_event():
+    """Without any assistant event there is no last-turn usage to compute from."""
+    init = {"type": "system", "subtype": "init", "model": _MODEL}
+    result = _result_event_with_model_usage(200000)
+
+    out = process_stream(_stream(init, result))
+
+    assert "_final_context_pct" not in out
+
+
+def test_process_stream_no_context_pct_when_context_window_missing():
+    """If the result event carries no modelUsage, _final_context_pct is absent."""
+    init = {"type": "system", "subtype": "init", "model": _MODEL}
+    asst = _assistant_event(input_tokens=10000)
+    result = {
+        "type": "result",
+        "subtype": "success",
+        "total_cost_usd": 0.01,
+        "num_turns": 1,
+        "duration_ms": 500,
+        # no modelUsage key
+    }
+
+    out = process_stream(_stream(init, asst, result))
+
+    assert "_final_context_pct" not in out
+
+
+def test_process_stream_no_context_pct_when_context_window_zero():
+    """contextWindow=0 must be treated as absent to avoid division-by-zero."""
+    init = {"type": "system", "subtype": "init", "model": _MODEL}
+    asst = _assistant_event(input_tokens=10000)
+    result = _result_event_with_model_usage(0)
+
+    out = process_stream(_stream(init, asst, result))
+
+    assert "_final_context_pct" not in out
+
+
+def test_format_log_line_done_includes_ctx_final():
+    """When _final_context_pct is set on a result event, the log line
+    carries ctx_final=NN%.
+    """
+    event = {
+        "type": "result",
+        "total_cost_usd": 0.042,
+        "num_turns": 5,
+        "duration_ms": 3000,
+        "_final_context_pct": 53.2,
+    }
+
+    line = _format_log_line(event)
+
+    assert line is not None
+    assert "ctx_final=53.2%" in line
+
+
+def test_format_log_line_done_no_ctx_final_when_absent():
+    """A result event without _final_context_pct produces no ctx_final token."""
+    event = {
+        "type": "result",
+        "total_cost_usd": 0.042,
+        "num_turns": 5,
+        "duration_ms": 3000,
+    }
+
+    line = _format_log_line(event)
+
+    assert line is not None
+    assert "ctx_final" not in line

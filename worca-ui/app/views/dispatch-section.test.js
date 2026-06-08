@@ -738,4 +738,101 @@ describe('dispatch-section', () => {
       );
     });
   });
+
+  describe('denyTiersEditable — editable Always Disallowed / Default Denied', () => {
+    const baseConfig = () => ({
+      always_disallowed: ['EnterPlanMode'],
+      default_denied: ['general-purpose'],
+      per_agent_allow: { _defaults: ['*'] },
+    });
+
+    function render(extra = {}) {
+      return renderToString(
+        dispatchSectionView({
+          section: 'tools',
+          config: baseConfig(),
+          knownItems: [],
+          agentRoles: AGENT_ROLES,
+          defaults: DISPATCH_DEFAULTS.tools,
+          onChange: vi.fn(),
+          denyTiersEditable: true,
+          ...extra,
+        }),
+      );
+    }
+
+    it('renders an add input for both deny tiers when editable', () => {
+      const html = render();
+      expect(html).toContain('dispatch-tier--editable');
+      expect(html).toContain('data-tier="Always Disallowed"');
+      expect(html).toContain('data-tier="Default Denied"');
+    });
+
+    it('renders an empty Default Denied tier (add input) instead of hiding it', () => {
+      const html = renderToString(
+        dispatchSectionView({
+          section: 'tools',
+          config: {
+            always_disallowed: [],
+            default_denied: [],
+            per_agent_allow: { _defaults: ['*'] },
+          },
+          knownItems: [],
+          agentRoles: AGENT_ROLES,
+          defaults: DISPATCH_DEFAULTS.tools,
+          onChange: vi.fn(),
+          denyTiersEditable: true,
+        }),
+      );
+      // Both tiers present even when empty (non-editable mode would omit them).
+      expect(html).toContain('data-tier="Always Disallowed"');
+      expect(html).toContain('data-tier="Default Denied"');
+    });
+
+    it('non-editable mode keeps the locked, hide-when-empty behavior', () => {
+      const html = renderToString(
+        dispatchSectionView({
+          section: 'tools',
+          config: {
+            always_disallowed: ['EnterPlanMode'],
+            default_denied: [],
+            per_agent_allow: { _defaults: ['*'] },
+          },
+          knownItems: [],
+          agentRoles: AGENT_ROLES,
+          defaults: DISPATCH_DEFAULTS.tools,
+          onChange: vi.fn(),
+          // denyTiersEditable omitted → defaults false
+        }),
+      );
+      expect(html).not.toContain('dispatch-tier--editable');
+      // Empty Default Denied is hidden in the read-only variant.
+      expect(html).not.toContain('data-tier="Default Denied"');
+    });
+
+    it('renders existing deny-tier entries as removable chips', () => {
+      const html = render();
+      // The seeded entries appear inside the editable tier, and the input
+      // wrapper is present so the user can add more.
+      expect(html).toContain('EnterPlanMode');
+      expect(html).toContain('general-purpose');
+      expect(html).toContain('dispatch-tag-input-field');
+    });
+
+    it('does not call onChange on mount (render is side-effect free)', () => {
+      const onChange = vi.fn();
+      renderToString(
+        dispatchSectionView({
+          section: 'tools',
+          config: baseConfig(),
+          knownItems: [],
+          agentRoles: AGENT_ROLES,
+          defaults: DISPATCH_DEFAULTS.tools,
+          onChange,
+          denyTiersEditable: true,
+        }),
+      );
+      expect(onChange).not.toHaveBeenCalled();
+    });
+  });
 });

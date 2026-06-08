@@ -175,6 +175,73 @@ def create_pipeline_worktree(
     return os.path.abspath(path)
 
 
+def find_worktree_for_branch(branch: str) -> str:
+    """Return the absolute path of the worktree that has `branch` checked out.
+
+    A git branch can be checked out in at most one worktree at a time. Scans
+    `git worktree list --porcelain` and returns the matching worktree's path,
+    or "" if no worktree currently has that branch checked out.
+
+    Used by the PR-revision flow: worca's own pipeline that opened a PR leaves
+    the PR head branch checked out in its (often still-on-disk) worktree, so a
+    follow-up revision run must reuse that worktree rather than fail trying to
+    check the same branch out a second time.
+    """
+    if not branch:
+        return ""
+    result = _run_git("worktree", "list", "--porcelain")
+    if result.returncode != 0:
+        return ""
+    current_path = ""
+    for line in result.stdout.splitlines():
+        if line.startswith("worktree "):
+            current_path = line[len("worktree "):]
+        elif line.startswith("branch "):
+            ref = line[len("branch "):]
+            if ref.startswith("refs/heads/"):
+                ref = ref[len("refs/heads/"):]
+            if ref == branch and current_path:
+                return os.path.abspath(current_path)
+    return ""
+
+
+def checkout_pr_worktree(
+    run_id: str,
+    pr_number: int,
+    pr_head_branch: str,
+    pr_is_cross_repo: bool = False,
+    base_dir: str = ".worktrees",
+) -> str:
+    """Create a worktree for a PR pipeline run using 'gh pr checkout'.
+
+    Creates an empty git worktree at path first, then runs 'gh pr checkout'
+    inside it to set up the exact PR head branch (L2 — no drift) and handle
+    cross-repo/fork PRs correctly (L3 — fresh worktree, never reuse original).
+
+    Returns the absolute worktree path on success, empty string on failure.
+    """
+    base = os.path.expanduser(base_dir)
+    path = os.path.join(base, f"pipeline-{run_id}")
+    if os.path.isabs(base):
+        os.makedirs(base, exist_ok=True)
+    # Step 1: create an empty worktree so gh pr checkout has a git context to run in
+    wt_result = _run_git("worktree", "add", "--no-checkout", path, "HEAD")
+    if wt_result.returncode != 0:
+        return ""
+    # Step 2: run gh pr checkout inside the new worktree to fetch and set up the branch
+    result = subprocess.run(
+        ["gh", "pr", "checkout", str(pr_number), "--branch", pr_head_branch],
+        capture_output=True,
+        text=True,
+        env=get_env(),
+        cwd=path,
+    )
+    if result.returncode != 0:
+        _run_git("worktree", "remove", "--force", path)
+        return ""
+    return os.path.abspath(path)
+
+
 def remove_pipeline_worktree(worktree_path: str) -> bool:
     """Remove a pipeline worktree and delete its associated branch.
 

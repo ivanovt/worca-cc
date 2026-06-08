@@ -59,6 +59,7 @@ def register_pipeline(
     workspace_id=None,
     group_type=None,
     target_branch=None,
+    revises_pr=None,
 ):
     """Register a new pipeline. Returns the path to the registry file.
 
@@ -67,9 +68,13 @@ def register_pipeline(
 
     branch: the worktree's own branch name (e.g. "worca/<slug>-<run_id>") —
     stored so the Worktrees UI can show it without reading the worktree's
-    status.json. Distinct from target_branch (the PR base branch).
+    status.json. Distinct from target_branch (the PR base branch). For PR
+    revision runs this is the PR head branch name, preserved verbatim (L2).
 
     fleet_id and workspace_id are mutually exclusive; pass at most one.
+
+    revises_pr: PR number (int) when this run is revising an existing PR.
+    Absent for normal runs.
     """
     if fleet_id is not None and workspace_id is not None:
         raise ValueError("fleet_id and workspace_id are mutually exclusive; pass at most one")
@@ -94,6 +99,8 @@ def register_pipeline(
         data["group_type"] = group_type
     if target_branch is not None:
         data["target_branch"] = target_branch
+    if revises_pr is not None:
+        data["revises_pr"] = revises_pr
 
     path = _pipeline_path(run_id, base=base)
     _atomic_write(path, data)

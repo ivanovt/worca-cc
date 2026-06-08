@@ -13,9 +13,7 @@ Open **Settings → Governance**. The dispatch editor has three sections — **T
 
 The run-detail view then shows each iteration's actual dispatch decisions as allow (green) / deny (red) badges, so you can confirm a change took effect.
 
-:::note[Screenshot — coming soon]
-The Settings → Governance dispatch editor: the Tools / Skills / Subagents sections with per-agent allow chips.
-:::
+![The Settings → Governance dispatch editor: the Tools / Skills / Subagents sections with per-agent allow chips.](/screenshots/dispatch-governance/01-tools.png)
 
 The rest of this page explains the model the editor writes to — useful when you want the precise semantics or are scripting `settings.json` directly. All three sections share one three-tier model under `worca.governance.dispatch`.
 

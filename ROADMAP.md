@@ -14,7 +14,7 @@ Three changes that tighten the loop between a GitHub issue and a running pipelin
 
 - **`/worca-analyze` skill** — end-to-end Claude Code skill that analyzes a GitHub issue, surfaces open design decisions with recommended options, optionally writes a `## Decisions` section back to the issue body, recommends the right pipeline template, and offers to launch a worktree-based pipeline.
 - **`worca run --worktree`** — first-class CLI flag that mirrors the dashboard's "New Pipeline" path; falls back to in-place if `run_worktree.py` is missing in the project runtime.
-- **`worca templates list --json`** — machine-readable enumeration of all resolvable templates with user > project > built-in tier resolution applied.
+- **`worca templates list --json`** — machine-readable enumeration of all resolvable templates with project > user > built-in tier resolution applied.
 
 ### Multi-Host PR Metadata ([W-051](https://github.com/SinishaDjukic/worca-cc/issues/136))
 

@@ -11,9 +11,7 @@ A **webhook** POSTs every matching event to a URL you control. The simplest way 
 
 Open **Settings → Webhooks**. The panel lets you toggle the event system, set budget limits, add subscriber URLs, choose which events each one receives, and turn on HMAC-SHA256 signing — all without touching JSON. Saves take effect on the next run.
 
-:::note[Screenshot — coming soon]
-The Webhooks settings panel: event-system toggle, budget limits, and a subscriber row with its event filter and signing secret.
-:::
+![The Webhooks settings panel: event-system toggle, budget limits, and a subscriber row with its event filter and signing secret.](/screenshots/webhooks/01-panel.png)
 
 ## What it writes
 

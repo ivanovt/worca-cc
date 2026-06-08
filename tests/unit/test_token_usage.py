@@ -342,3 +342,173 @@ def test_get_model_pricing_empty():
     assert get_model_pricing("", {}) is None
     assert get_model_pricing("model", {}) is None
     assert get_model_pricing("", {"opus": {}}) is None
+
+
+# --- extract_token_usage: model_alias & cost override ---
+
+def test_extract_records_model_alias_from_envelope():
+    raw = {
+        "type": "result",
+        "_model_alias": "glm-ds",
+        "_resolved_model": "claude-sonnet-4-20250514",
+        "total_cost_usd": 0.42,
+        "usage": {"input_tokens": 1000, "output_tokens": 200},
+    }
+    result = extract_token_usage(raw)
+    assert result["model_alias"] == "glm-ds"
+
+
+def test_extract_overrides_cost_from_alias_pricing(tmp_path):
+    settings = {
+        "worca": {
+            "pricing": {
+                "models": {
+                    "glm-ds": {
+                        "input_per_mtok": 2.0,
+                        "output_per_mtok": 10.0,
+                        "cache_write_per_mtok": 0,
+                        "cache_read_per_mtok": 0,
+                    }
+                },
+                "server_tools": {
+                    "web_search_per_request": 0.01,
+                },
+            }
+        }
+    }
+    path = tmp_path / "settings.json"
+    path.write_text(json.dumps(settings))
+
+    raw = {
+        "type": "result",
+        "_model_alias": "glm-ds",
+        "_resolved_model": "claude-sonnet-4-20250514",
+        "total_cost_usd": 99.99,
+        "usage": {"input_tokens": 1_000_000, "output_tokens": 100_000},
+    }
+    result = extract_token_usage(raw, settings_path=str(path))
+    # 1M * 2/1M + 100K * 10/1M = 2.0 + 1.0 = 3.0
+    assert abs(result["total_cost_usd"] - 3.0) < 0.001
+    assert result["cost_source"] == "alias"
+
+
+def test_extract_alias_no_pricing_entry_cost_is_zero(tmp_path, capsys):
+    settings = {"worca": {"pricing": {"models": {}}}}
+    path = tmp_path / "settings.json"
+    path.write_text(json.dumps(settings))
+
+    raw = {
+        "type": "result",
+        "_model_alias": "unknown-alias",
+        "_resolved_model": "claude-sonnet-4-20250514",
+        "total_cost_usd": 5.0,
+        "usage": {"input_tokens": 1000, "output_tokens": 200},
+    }
+    # Reset the warning set so this test gets a fresh warning
+    from worca.utils.token_usage import _warned_aliases
+    _warned_aliases.discard("unknown-alias")
+
+    result = extract_token_usage(raw, settings_path=str(path))
+    assert result["total_cost_usd"] == 0
+    assert result["cost_source"] == "alias"
+
+    captured = capsys.readouterr()
+    assert "unknown-alias" in captured.err
+
+
+def test_extract_alias_all_zero_pricing_cost_is_zero(tmp_path, capsys):
+    settings = {
+        "worca": {
+            "pricing": {
+                "models": {
+                    "zero-model": {
+                        "input_per_mtok": 0,
+                        "output_per_mtok": 0,
+                        "cache_write_per_mtok": 0,
+                        "cache_read_per_mtok": 0,
+                    }
+                }
+            }
+        }
+    }
+    path = tmp_path / "settings.json"
+    path.write_text(json.dumps(settings))
+
+    raw = {
+        "type": "result",
+        "_model_alias": "zero-model",
+        "_resolved_model": "claude-sonnet-4-20250514",
+        "total_cost_usd": 5.0,
+        "usage": {"input_tokens": 1000, "output_tokens": 200},
+    }
+    result = extract_token_usage(raw, settings_path=str(path))
+    assert result["total_cost_usd"] == 0
+    assert result["cost_source"] == "alias"
+
+    captured = capsys.readouterr()
+    assert captured.err == ""
+
+
+def test_extract_no_alias_cost_unchanged():
+    raw = {
+        "type": "result",
+        "_resolved_model": "claude-sonnet-4-20250514",
+        "total_cost_usd": 0.42,
+        "usage": {"input_tokens": 1000, "output_tokens": 200},
+    }
+    result = extract_token_usage(raw)
+    assert result["total_cost_usd"] == 0.42
+    assert "cost_source" not in result
+    assert "model_alias" not in result
+
+
+def test_extract_alias_warning_emitted_once(tmp_path, capsys):
+    settings = {"worca": {"pricing": {"models": {}}}}
+    path = tmp_path / "settings.json"
+    path.write_text(json.dumps(settings))
+
+    from worca.utils.token_usage import _warned_aliases
+    _warned_aliases.discard("warn-once-alias")
+
+    raw = {
+        "type": "result",
+        "_model_alias": "warn-once-alias",
+        "total_cost_usd": 1.0,
+        "usage": {"input_tokens": 100},
+    }
+
+    extract_token_usage(raw, settings_path=str(path))
+    first = capsys.readouterr()
+    assert "warn-once-alias" in first.err
+
+    extract_token_usage(raw, settings_path=str(path))
+    second = capsys.readouterr()
+    assert "warn-once-alias" not in second.err
+
+
+# --- aggregate_by_model: prefers model_alias ---
+
+def test_aggregate_by_model_prefers_alias():
+    usages = [
+        {
+            "model": "claude-sonnet-4-20250514",
+            "model_alias": "glm-ds",
+            "input_tokens": 1000,
+            "output_tokens": 200,
+            "total_cost_usd": 0.10,
+            "num_turns": 3,
+        },
+        {
+            "model": "claude-sonnet-4-20250514",
+            "input_tokens": 500,
+            "output_tokens": 100,
+            "total_cost_usd": 0.05,
+            "num_turns": 2,
+        },
+    ]
+    result = aggregate_by_model(usages)
+    assert "glm-ds" in result
+    assert "claude-sonnet-4-20250514" in result
+    assert result["glm-ds"]["input_tokens"] == 1000
+    assert result["glm-ds"]["invocations"] == 1
+    assert result["claude-sonnet-4-20250514"]["input_tokens"] == 500

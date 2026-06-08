@@ -66,10 +66,36 @@ def compute_defer_pr(env: Mapping[str, str]) -> bool:
     return env.get("WORCA_DEFER_PR") == "1"
 
 
+def compute_revise_pr(env: Mapping[str, str]) -> int | None:
+    """Return the PR number to revise, or None if not in revision mode.
+
+    WORCA_REVISE_PR must be a positive integer string (the PR number).
+    Any other value — absent, empty, non-numeric, zero, negative — returns
+    None so misconfigured values never silently activate revision mode.
+    """
+    raw = env.get("WORCA_REVISE_PR", "").strip()
+    if not raw:
+        return None
+    try:
+        n = int(raw)
+    except ValueError:
+        return None
+    return n if n > 0 else None
+
+
 def build_guardian_context(env: Mapping[str, str]) -> dict:
-    """Bundle the three guardian template variables for ``_render_agent_templates``."""
+    """Bundle the guardian template variables for ``_render_agent_templates``.
+
+    Precedence: revise_pr > defer_pr.  When ``WORCA_REVISE_PR`` is set to a
+    valid PR number the PR already exists, so ``WORCA_DEFER_PR`` is a no-op —
+    defer_pr is forced to False regardless of its own env var.
+    """
+    revise_pr = compute_revise_pr(env)
+    # revise_pr takes precedence: an existing PR cannot be deferred.
+    defer_pr = False if revise_pr is not None else compute_defer_pr(env)
     return {
-        "defer_pr": compute_defer_pr(env),
+        "defer_pr": defer_pr,
+        "revise_pr": revise_pr,
         "pr_title_prefix": compute_pr_title_prefix(env),
         "pr_footer": compute_pr_footer(env),
     }

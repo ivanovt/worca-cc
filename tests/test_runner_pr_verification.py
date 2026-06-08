@@ -14,7 +14,13 @@ import inspect
 from unittest.mock import patch
 
 
-from worca.orchestrator.runner import PRVerification, _verify_pr_stage, _verify_pr_via_gh
+from worca.orchestrator.runner import (
+    PRVerification,
+    _verify_pr_stage,
+    _verify_pr_via_gh,
+    _fetch_pr_url_via_gh,
+    _revise_pr_writeback,
+)
 from worca.orchestrator import runner as _runner_module
 
 
@@ -362,6 +368,76 @@ class TestVerifyPRStageNonDictResult:
         assert result.ok is False
 
 
+class TestFetchPrUrlViaGh:
+    """Unit tests for _fetch_pr_url_via_gh helper."""
+
+    def test_returns_url_on_success(self):
+        payload = '{"url": "https://github.com/org/repo/pull/42", "number": 42}'
+        with patch("subprocess.run") as mock_run:
+            mock_run.return_value.returncode = 0
+            mock_run.return_value.stdout = payload
+            result = _fetch_pr_url_via_gh(42)
+        assert result == "https://github.com/org/repo/pull/42"
+
+    def test_returns_none_when_gh_missing(self):
+        with patch("subprocess.run", side_effect=FileNotFoundError):
+            result = _fetch_pr_url_via_gh(42)
+        assert result is None
+
+    def test_returns_none_on_nonzero_returncode(self):
+        with patch("subprocess.run") as mock_run:
+            mock_run.return_value.returncode = 1
+            mock_run.return_value.stdout = ""
+            mock_run.return_value.stderr = "not found"
+            result = _fetch_pr_url_via_gh(42)
+        assert result is None
+
+    def test_returns_none_on_invalid_json(self):
+        with patch("subprocess.run") as mock_run:
+            mock_run.return_value.returncode = 0
+            mock_run.return_value.stdout = "not-json"
+            result = _fetch_pr_url_via_gh(42)
+        assert result is None
+
+    def test_returns_none_when_url_missing_from_response(self):
+        with patch("subprocess.run") as mock_run:
+            mock_run.return_value.returncode = 0
+            mock_run.return_value.stdout = '{"number": 42}'
+            result = _fetch_pr_url_via_gh(42)
+        assert result is None
+
+    def test_returns_none_on_timeout(self):
+        import subprocess
+        with patch("subprocess.run", side_effect=subprocess.TimeoutExpired("gh", 10)):
+            result = _fetch_pr_url_via_gh(42)
+        assert result is None
+
+
+class TestReviseModeEnvWiring:
+    """Sentinel tests: WORCA_REVISE_PR is wired into agent subprocess env."""
+
+    def _pipeline_source(self):
+        return inspect.getsource(_runner_module.run_pipeline)
+
+    def test_worca_revise_pr_injected_when_revises_pr_set(self):
+        src = self._pipeline_source()
+        assert "WORCA_REVISE_PR" in src, (
+            "WORCA_REVISE_PR not found in run_pipeline — env wiring missing"
+        )
+
+    def test_revises_pr_read_from_status_for_env_injection(self):
+        src = self._pipeline_source()
+        assert 'status.get("revises_pr")' in src or "status[\"revises_pr\"]" in src or "revises_pr" in src, (
+            "revises_pr not read from status in run_pipeline — env wiring missing"
+        )
+
+    def test_fetch_pr_url_called_in_revise_fallback(self):
+        src = self._pipeline_source()
+        assert "_fetch_pr_url_via_gh" in src, (
+            "_fetch_pr_url_via_gh not called in run_pipeline — revise fallback missing"
+        )
+
+
 class TestPRStageHandlerWiring:
     """Sentinel tests: fail until _verify_pr_stage is wired into run_pipeline."""
 
@@ -393,3 +469,94 @@ class TestPRStageHandlerWiring:
         assert "_pr_baseline_head is None" in src, (
             "Baseline guard 'is None' missing — capture would happen every iteration"
         )
+
+
+class TestRevisePrWriteback:
+    """Runner-side PR writeback for revise mode (W-067) — summary + replies."""
+
+    _FEEDBACK = [
+        {"thread_id": "PRRT_a", "path": "src/x.py", "line": 1, "body": "fix a"},
+        {"thread_id": "PRRT_b", "path": "src/y.py", "line": 2, "body": "fix b"},
+        # review_summary item: no thread_id → no reply, counts as PR-level only
+        {"thread_id": "", "path": "", "line": None, "body": "add a test"},
+    ]
+
+    def _patches(self, nwo="owner/repo"):
+        return (
+            patch("worca.orchestrator.runner.current_repo_nwo", return_value=nwo),
+            patch("worca.orchestrator.runner.post_revision_summary", return_value=True),
+            patch("worca.orchestrator.runner.reply_to_thread", return_value=True),
+        )
+
+    def test_posts_summary_and_replies_to_threads_with_ids(self):
+        p_nwo, p_sum, p_reply = self._patches()
+        with p_nwo, p_sum as mock_sum, p_reply as mock_reply:
+            _revise_pr_writeback(42, "abc1234", self._FEEDBACK)
+
+        mock_sum.assert_called_once()
+        # summary args: (nwo, pr_number, body)
+        nwo_arg, pr_arg, body_arg = mock_sum.call_args[0]
+        assert nwo_arg == "owner/repo"
+        assert pr_arg == 42
+        assert "abc1234" in body_arg
+        # two threads have thread_ids → two replies; the review_summary is skipped
+        assert mock_reply.call_count == 2
+        replied_threads = {c.args[1] for c in mock_reply.call_args_list}
+        assert replied_threads == {"PRRT_a", "PRRT_b"}
+
+    def test_reply_body_includes_commit_sha(self):
+        p_nwo, p_sum, p_reply = self._patches()
+        with p_nwo, p_sum, p_reply as mock_reply:
+            _revise_pr_writeback(7, "deadbee", self._FEEDBACK)
+        for call in mock_reply.call_args_list:
+            assert "deadbee" in call.args[2]
+
+    def test_writeback_text_carries_worca_marker(self):
+        """Summary + every reply start with WORCA_COMMENT_MARKER so a later
+        revise run recognises and skips worca's own writeback (L1)."""
+        from worca.utils.gh_pr import WORCA_COMMENT_MARKER
+
+        p_nwo, p_sum, p_reply = self._patches()
+        with p_nwo, p_sum as mock_sum, p_reply as mock_reply:
+            _revise_pr_writeback(7, "abc1234", self._FEEDBACK)
+        assert mock_sum.call_args[0][2].startswith(WORCA_COMMENT_MARKER)
+        for call in mock_reply.call_args_list:
+            assert call.args[2].startswith(WORCA_COMMENT_MARKER)
+
+    def test_dedups_repeated_thread_ids(self):
+        feedback = [
+            {"thread_id": "PRRT_a", "body": "first"},
+            {"thread_id": "PRRT_a", "body": "second comment, same thread"},
+        ]
+        p_nwo, p_sum, p_reply = self._patches()
+        with p_nwo, p_sum, p_reply as mock_reply:
+            _revise_pr_writeback(1, "sha", feedback)
+        assert mock_reply.call_count == 1
+
+    def test_no_nwo_skips_summary_but_still_replies(self):
+        p_nwo, p_sum, p_reply = self._patches(nwo="")
+        with p_nwo, p_sum as mock_sum, p_reply as mock_reply:
+            _revise_pr_writeback(5, "sha", self._FEEDBACK)
+        mock_sum.assert_not_called()
+        assert mock_reply.call_count == 2
+
+    def test_missing_commit_sha_omits_commit_phrase(self):
+        p_nwo, p_sum, p_reply = self._patches()
+        with p_nwo, p_sum as mock_sum, p_reply as mock_reply:
+            _revise_pr_writeback(9, None, self._FEEDBACK)
+        body_arg = mock_sum.call_args[0][2]
+        assert "commit" not in body_arg
+        for call in mock_reply.call_args_list:
+            assert "commit" not in call.args[2]
+
+    def test_empty_feedback_posts_summary_no_replies(self):
+        p_nwo, p_sum, p_reply = self._patches()
+        with p_nwo, p_sum as mock_sum, p_reply as mock_reply:
+            _revise_pr_writeback(3, "sha", [])
+        mock_sum.assert_called_once()
+        mock_reply.assert_not_called()
+
+    def test_wired_into_run_pipeline_revise_branch(self):
+        """Sentinel: run_pipeline calls _revise_pr_writeback in revise mode."""
+        src = inspect.getsource(_runner_module.run_pipeline)
+        assert "_revise_pr_writeback" in src

@@ -69,8 +69,13 @@ def parse_pr_url(url: str | None) -> dict[str, str]:
     # --- GitHub Cloud + Enterprise ---
     # https://{host}/{owner}/{repo}/pull/{n}
     # Covers github.com and any Enterprise GitHub host (e.g. github.mycompany.com, git.internal.corp)
-    m = re.match(r"^/([^/]+)/([^/]+)/pull/\d+", path)
+    m = re.match(r"^/([^/]+)/([^/]+)/pull/(\d+)", path)
     if m:
-        return {"provider": "github", "host": host, "repo_path": f"{m.group(1)}/{m.group(2)}"}
+        return {
+            "provider": "github",
+            "host": host,
+            "repo_path": f"{m.group(1)}/{m.group(2)}",
+            "number": int(m.group(3)),
+        }
 
     return {"provider": "other", "host": host, "repo_path": ""}

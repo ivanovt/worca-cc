@@ -183,6 +183,9 @@ class TestDeferredOutcome:
             "outcome": "success",
             "deferred": True,
             "commit_sha": "abc1234",
+            "pr_title": "Add feature X",
+            "pr_body": "## Summary\n- Added feature X",
+            "base_branch": "main",
         }
 
     def test_deferred_success_without_pr_fields_valid(self, deferred_schema):
@@ -227,6 +230,42 @@ class TestDeferredOutcome:
         assert "deferred" in deferred_schema["properties"]
         assert deferred_schema["properties"]["deferred"]["type"] == "boolean"
         assert deferred_schema["properties"]["deferred"]["const"] is True
+
+
+class TestPRDeferredSchemaRequiresNewFields:
+    """Success outputs on pr-deferred.json must carry pr_title, pr_body, and
+    base_branch so the click-time CLI can open the PR without re-deriving them."""
+
+    def _full_deferred_doc(self):
+        return {
+            "outcome": "success",
+            "deferred": True,
+            "commit_sha": "abc1234",
+            "pr_title": "Add feature X",
+            "pr_body": "## Summary\n- Added feature X",
+            "base_branch": "main",
+        }
+
+    def test_deferred_success_with_new_fields_valid(self, deferred_schema):
+        jsonschema.validate(self._full_deferred_doc(), deferred_schema)
+
+    def test_deferred_success_missing_pr_title_rejected(self, deferred_schema):
+        doc = self._full_deferred_doc()
+        del doc["pr_title"]
+        with pytest.raises(jsonschema.ValidationError):
+            jsonschema.validate(doc, deferred_schema)
+
+    def test_deferred_success_missing_pr_body_rejected(self, deferred_schema):
+        doc = self._full_deferred_doc()
+        del doc["pr_body"]
+        with pytest.raises(jsonschema.ValidationError):
+            jsonschema.validate(doc, deferred_schema)
+
+    def test_deferred_success_missing_base_branch_rejected(self, deferred_schema):
+        doc = self._full_deferred_doc()
+        del doc["base_branch"]
+        with pytest.raises(jsonschema.ValidationError):
+            jsonschema.validate(doc, deferred_schema)
 
 
 class TestAPICompatibility:

@@ -106,7 +106,13 @@ describe('workspace CSS — DAG styling', () => {
 
   it('does not introduce new CSS variables', () => {
     const dagSection = css.slice(css.indexOf('.dag-graph-node'));
-    const customProps = dagSection.match(/--[a-z][\w-]*/g) || [];
+    // Only match `var(--name)` usages so BEM-style modifier suffixes
+    // in selectors (e.g. `.template-card--clickable`) aren't picked up
+    // as CSS custom properties.
+    const customProps = Array.from(
+      dagSection.matchAll(/var\((--[a-z][\w-]*)/g),
+      (m) => m[1],
+    );
     const allowed = new Set([
       '--status-pending',
       '--status-running',
@@ -134,6 +140,74 @@ describe('workspace CSS — DAG styling', () => {
       '--status-planning',
       '--status-integration-testing',
       '--status-integration-failed',
+      '--fg-muted',
+      '--fg-active',
+      '--radius-lg',
+      '--sl-font-mono',
+      '--json',
+      '--disabled',
+      '--changed',
+      '--builtin',
+      '--current',
+      // Used by the .template-card inert-hover override below the DAG
+      // section — re-states the base .run-card background so the
+      // clickable lift effect is suppressed when no edit handler is wired.
+      '--surface',
+      // Used by the editor's `.editor-tab-group` rule to colour the
+      // active-tab indicator. Shoelace exposes its design tokens as
+      // `--sl-color-*`; we tap into the primary 600 swatch as a
+      // fallback when our own `--accent` isn't set.
+      '--sl-color-primary-600',
+      // Used by the editor's `.editor-field-pill--invalid` rule (ID
+      // collision warning border). Shoelace warning swatch with a
+      // hex fallback so themes without Shoelace still render the
+      // amber edge.
+      '--sl-color-warning-600',
+      // Used by the W-061 help-mode prototype (right-edge "Help" tab +
+      // per-surface .help-badge): Shoelace's neutral and primary scales
+      // are tapped for the muted-idle / primary-active treatment and
+      // for dark-mode contrast. Each var has a hex fallback in the
+      // CSS rules so themes without Shoelace still render.
+      '--sl-color-neutral-0',
+      '--sl-color-neutral-100',
+      '--sl-color-neutral-200',
+      '--sl-color-neutral-300',
+      '--sl-color-neutral-400',
+      '--sl-color-neutral-700',
+      '--sl-color-primary-50',
+      '--sl-color-primary-500',
+      '--sl-color-primary-700',
+      // Used by the Prompts tab (pipelines-editor-overlays) — spacing,
+      // border-radius, color, and typography tokens from Shoelace.
+      '--sl-spacing-x-small',
+      '--sl-spacing-small',
+      '--sl-spacing-medium',
+      '--sl-border-radius-medium',
+      '--sl-color-neutral-500',
+      '--sl-color-neutral-600',
+      '--sl-font-size-small',
+      '--sl-font-size-x-small',
+      '--sl-font-weight-semibold',
+      // Prompts tab merge highlighting: green = appended (additive), amber =
+      // overwrites a built-in section (caution), per the badge color language.
+      '--sl-color-success-50',
+      '--sl-color-success-500',
+      '--sl-color-warning-50',
+      '--sl-color-warning-500',
+      // File Access view (access-treetable, heatmap, scope-dot, searches)
+      // added after DAG rules — these are legitimate access-view tokens.
+      '--text-muted',
+      '--fa-file-col-width',
+      '--fa-cell-width',
+      '--fa-cell-height',
+      '--fa-grid',
+      '--depth',
+      '--heat',
+      // File Access drawer panels (file-history / cell-detail overlays)
+      // use --shadow-lg for the drawer drop shadow and --accent-hover for
+      // the timeline link hover state.
+      '--shadow-lg',
+      '--accent-hover',
     ]);
     for (const prop of customProps) {
       expect(allowed.has(prop)).toBe(true);

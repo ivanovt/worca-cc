@@ -73,13 +73,12 @@ _DISPATCH_DEFAULTS = {
         },
     },
     "subagents": {
+        # No subagents are denied by default. general-purpose (a full-tool
+        # Claude session) is now allowed under the "*" wildcard like any other
+        # subagent; a project can still deny specific subagents by adding them
+        # to always_disallowed or default_denied.
         "always_disallowed": [],
-        # general-purpose spawns an unconstrained full-tool Claude session, so
-        # it stays denied under the "*" wildcard — but as default_denied (not
-        # always_disallowed) a project can re-allow it per agent by naming it
-        # in per_agent_allow. The old always_disallowed placement made that
-        # impossible: the denylist short-circuits before per_agent_allow.
-        "default_denied": ["general-purpose"],
+        "default_denied": [],
         "per_agent_allow": {"_defaults": ["*"]},
     },
 }
@@ -93,7 +92,9 @@ _DISPATCH_DEFAULTS = {
 #   v1: collapse stale Explore-only subagent default; narrow worca-* skills glob.
 #   v2: move general-purpose from subagents.always_disallowed to default_denied
 #       (still denied by default, but allowable per-agent).
-DISPATCH_MIGRATION_VERSION = 2
+#   v3: release general-purpose from default_denied entirely (now allowed under
+#       the "*" wildcard, matching the shipped default after the policy change).
+DISPATCH_MIGRATION_VERSION = 3
 
 # The pre-W-054 (W-038-era) shipped subagent dispatch default: every pipeline
 # agent capped to Explore-only. W-054 changed the default to `_defaults: ["*"]`,
@@ -210,15 +211,39 @@ def adopt_general_purpose_allowable(subagents_cfg: dict) -> bool:
     return True
 
 
+def release_general_purpose_default_deny(subagents_cfg: dict) -> bool:
+    """Remove general-purpose from default_denied to match the shipped default.
+
+    The v2 migration parked general-purpose in default_denied (blocked under
+    "*", allowable per-agent). The policy later changed to allow it by default
+    (``_DISPATCH_DEFAULTS`` ships ``default_denied: []``), but that change did
+    not self-heal already-migrated projects: a project stamped at v2 keeps
+    ``default_denied: ["general-purpose"]`` forever and silently denies the
+    subagent even though a fresh install allows it. We reverse the *untouched*
+    v2 artifact — ``default_denied`` exactly ``["general-purpose"]`` — and leave
+    a customized denylist (extra entries) alone as a deliberate operator choice.
+
+    Returns True if migrated, else False.
+    """
+    if not isinstance(subagents_cfg, dict):
+        return False
+    if subagents_cfg.get("default_denied") != ["general-purpose"]:
+        return False
+    subagents_cfg["default_denied"] = []
+    return True
+
+
 def normalize_dispatch_defaults(governance_cfg: dict) -> list[str]:
     """Apply one-time dispatch-default normalizations, gated by a version stamp.
 
     Brings an *untouched* config up to the current shipped defaults for the
     things that changed after W-054:
       1. subagents.per_agent_allow pinned to the legacy Explore-only set,
-      2. skills.always_disallowed carrying the broad ``worca-*`` glob, and
+      2. skills.always_disallowed carrying the broad ``worca-*`` glob,
       3. subagents.always_disallowed hard-denying general-purpose (moved to
-         default_denied so it is allowable per-agent).
+         default_denied so it is allowable per-agent), and
+      4. subagents.default_denied still carrying general-purpose (released so it
+         is allowed under ``*``, matching the post-policy-change default).
 
     Each is exact-match guarded so a customized config is never silently
     widened. Stamps ``dispatch_migration_version`` so it runs once. Mutates
@@ -250,6 +275,14 @@ def normalize_dispatch_defaults(governance_cfg: dict) -> list[str]:
             "  governance.dispatch.subagents: moved general-purpose from "
             "always_disallowed to default_denied (now allowable per-agent)"
         )
+    # Runs AFTER adopt_general_purpose_allowable so a v1 project that just had
+    # general-purpose moved into default_denied gets it released in the same
+    # pass — net result: general-purpose allowed under "*", matching the default.
+    if release_general_purpose_default_deny(dispatch.get("subagents")):
+        changes.append(
+            "  governance.dispatch.subagents: released general-purpose from "
+            'default_denied (now allowed under "*", matching the shipped default)'
+        )
     governance_cfg["dispatch_migration_version"] = DISPATCH_MIGRATION_VERSION
     return changes
 
@@ -268,7 +301,23 @@ def _reset_dispatch_cache() -> None:
 
 
 def _settings_path() -> str | None:
-    """Return the absolute path to settings.json, or None if it can't be located."""
+    """Return the absolute path to settings.json, or None if it can't be located.
+
+    Resolution order:
+      1. ``WORCA_SETTINGS_PATH`` — the *effective* settings file the runner pins
+         for the run (template-merged + template-owned-key-stripped). Set so the
+         dispatch hooks (subagent_start / skill_use) AND the
+         ``--tools``/``--disallowedTools`` CLI-flag resolution read the SAME
+         config as the rest of the pipeline. Without it both fall through to the
+         raw on-disk project ``.claude/settings.json`` below, which silently
+         overrides a template's ``governance.dispatch`` (the only template-owned
+         key consumed via these on-disk paths). See ``run_pipeline``.
+      2. ``CLAUDE_PROJECT_DIR``/.claude/settings.json
+      3. git-toplevel/.claude/settings.json
+    """
+    pinned = os.environ.get("WORCA_SETTINGS_PATH")
+    if pinned and os.path.exists(pinned):
+        return pinned
     project_dir = os.environ.get("CLAUDE_PROJECT_DIR")
     if not project_dir:
         import subprocess

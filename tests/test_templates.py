@@ -1,17 +1,21 @@
 """Tests for TemplateResolver.__init__, list(), and get()."""
 
+import copy
 import json
 from pathlib import Path
 
 import pytest
 
 from worca.orchestrator.templates import (
+    CROSS_TEMPLATE_CARVEOUTS,
+    TEMPLATE_OWNED_KEYS,
     Template,
     TemplateSummary,
     TemplateError,
     TemplateResolver,
     deep_merge_config,
     render_params,
+    strip_template_owned,
 )
 
 
@@ -64,7 +68,7 @@ class TestTemplateResolverList:
         assert results[ids.index("bugfix")].tier == "builtin"
         assert results[ids.index("custom")].tier == "project"
 
-    def test_deduplicates_by_id_user_wins_over_project_and_builtin(self, tmp_path):
+    def test_deduplicates_by_id_project_wins_over_user_and_builtin(self, tmp_path):
         builtin_dir = tmp_path / "builtin"
         project_dir = tmp_path / "project"
         user_dir = tmp_path / "user"
@@ -79,7 +83,7 @@ class TestTemplateResolverList:
 
         shared = [r for r in results if r.id == "shared"]
         assert len(shared) == 1
-        assert shared[0].tier == "user"
+        assert shared[0].tier == "project"
 
     def test_deduplicates_project_wins_over_builtin(self, tmp_path):
         builtin_dir = tmp_path / "builtin"
@@ -171,6 +175,18 @@ class TestTemplateResolverGet:
 
         assert result is not None
         assert result.tier == "user"
+
+    def test_get_project_wins_over_user(self, tmp_path):
+        project_dir = tmp_path / "project"
+        user_dir = tmp_path / "user"
+        _write_template(project_dir / "shared", _minimal("shared", "project"))
+        _write_template(user_dir / "shared", _minimal("shared", "user"))
+
+        resolver = TemplateResolver(None, project_dir, user_dir)
+        result = resolver.get("shared")
+
+        assert result is not None
+        assert result.tier == "project"
 
     def test_returns_template_object(self, tmp_path):
         builtin_dir = tmp_path / "builtin"
@@ -434,11 +450,19 @@ class TestTemplateResolverSave:
         resolver.save(self._valid_data(), scope="project")
         assert (project_dir / "my-template" / "template.json").is_file()
 
-    def test_raises_builtin_conflict_for_builtin_id(self, tmp_path):
+    def test_saves_with_builtin_id_creates_shadow_in_project_scope(self, tmp_path):
+        """Saving with an id that matches a built-in is the canonical
+        shadow-and-edit path. It must land in project scope, leave the
+        built-in untouched, and override resolution on subsequent gets.
+        """
         resolver = self._make_resolver(tmp_path)
-        with pytest.raises(TemplateError) as exc_info:
-            resolver.save(self._valid_data("bugfix"), scope="project")
-        assert exc_info.value.code == "builtin_conflict"
+        resolver.save(self._valid_data("bugfix"), scope="project")
+        # Shadow lives in project tier
+        assert (tmp_path / "project" / "bugfix" / "template.json").is_file()
+        # Built-in is unchanged
+        assert (tmp_path / "builtin" / "bugfix" / "template.json").is_file()
+        # Resolution now returns the project shadow
+        assert resolver.get("bugfix").tier == "project"
 
     def test_raises_validation_error_for_invalid_fields(self, tmp_path):
         resolver = self._make_resolver(tmp_path)
@@ -448,6 +472,18 @@ class TestTemplateResolverSave:
         with pytest.raises(TemplateError) as exc_info:
             resolver.save(bad_data, scope="project")
         assert exc_info.value.code == "validation_error"
+
+    def test_save_accepts_id_with_underscores(self, tmp_path):
+        """Regression: the id validator used to reject '_legacy-settings'
+        (the id `worca init --upgrade` writes for the auto-migration shim),
+        causing a 400 in the API and an inability to round-trip the id
+        through save(). Underscores must be allowed.
+        """
+        resolver = self._make_resolver(tmp_path)
+        resolver.save(self._valid_data("_legacy-settings"), scope="project")
+        assert (
+            tmp_path / "project" / "_legacy-settings" / "template.json"
+        ).is_file()
 
     def test_collects_multiple_validation_errors_in_details(self, tmp_path):
         resolver = self._make_resolver(tmp_path)
@@ -489,11 +525,29 @@ class TestTemplateResolverDelete:
             resolver.delete("nonexistent", scope="project")
         assert exc_info.value.code == "not_found"
 
-    def test_raises_builtin_for_builtin_template(self, tmp_path):
+    def test_delete_with_builtin_id_un_shadows_project_copy(self, tmp_path):
+        """When a project template shadows a built-in, deleting from
+        project scope removes the shadow and leaves the built-in. The id
+        is then resolved back to the built-in tier.
+        """
+        resolver = self._make_resolver(tmp_path)
+        _write_template(tmp_path / "project" / "bugfix", _minimal("bugfix", "project"))
+        resolver.delete("bugfix", scope="project")
+        # Built-in is untouched
+        assert (tmp_path / "builtin" / "bugfix" / "template.json").is_file()
+        # Project shadow is gone
+        assert not (tmp_path / "project" / "bugfix").exists()
+        # Resolution falls back to built-in tier
+        assert resolver.get("bugfix").tier == "builtin"
+
+    def test_delete_returns_not_found_if_no_shadow_in_named_scope(self, tmp_path):
+        """Trying to delete from project scope when only the built-in
+        exists is a 'not_found' — not a 'cannot delete built-in'.
+        """
         resolver = self._make_resolver(tmp_path)
         with pytest.raises(TemplateError) as exc_info:
             resolver.delete("bugfix", scope="project")
-        assert exc_info.value.code == "builtin"
+        assert exc_info.value.code == "not_found"
 
 
 # ---------------------------------------------------------------------------
@@ -619,3 +673,107 @@ class TestTemplateResolverApplyConfig:
         result = resolver.apply("tmpl", current)
         assert result is not current
         assert current == current_copy
+
+
+# ---------------------------------------------------------------------------
+# strip_template_owned + TEMPLATE_OWNED_KEYS
+# ---------------------------------------------------------------------------
+
+
+class TestStripTemplateOwned:
+    def test_empty_settings_is_noop(self):
+        assert strip_template_owned({}) == {}
+
+    def test_strips_all_top_level_template_owned_keys(self):
+        worca = {
+            "agents": {"implementer": {"model": "sonnet"}},
+            "stages": {"plan_review": {"enabled": True}},
+            "loops": {"implement_test": 3},
+            "circuit_breaker": {"max_consecutive_failures": 5},
+            "effort": {"auto_mode": "adaptive"},
+        }
+        assert strip_template_owned(worca) == {}
+
+    def test_strips_nested_governance_dispatch_but_keeps_guards(self):
+        worca = {
+            "governance": {
+                "dispatch": {"_defaults": {"tools": ["*"]}},
+                "guards": {"block_graphify_mutation": True},
+            }
+        }
+        result = strip_template_owned(worca)
+        assert "dispatch" not in result["governance"]
+        assert result["governance"]["guards"] == {"block_graphify_mutation": True}
+
+    def test_preserves_cross_template_keys(self):
+        worca = {
+            "models": {"opus": "claude-opus-4-7"},
+            "webhooks": [{"url": "https://x"}],
+            "pricing": {"models": {}},
+            "graphify": {"enabled": True},
+            "code_review_graph": {"enabled": False},
+            "default_template": "feature",
+            # template-owned, will be stripped
+            "agents": {"planner": {"model": "opus"}},
+        }
+        result = strip_template_owned(worca)
+        assert "agents" not in result
+        assert result["models"] == {"opus": "claude-opus-4-7"}
+        assert result["webhooks"] == [{"url": "https://x"}]
+        assert result["pricing"] == {"models": {}}
+        assert result["graphify"] == {"enabled": True}
+        assert result["code_review_graph"] == {"enabled": False}
+        assert result["default_template"] == "feature"
+
+    def test_does_not_mutate_input(self):
+        worca = {"agents": {"x": {"model": "opus"}}, "models": {"opus": "id"}}
+        snapshot = copy.deepcopy(worca)
+        _ = strip_template_owned(worca)
+        assert worca == snapshot
+
+    def test_governance_empty_after_dispatch_strip_is_kept_as_empty_dict(self):
+        worca = {"governance": {"dispatch": {"_defaults": {"tools": ["*"]}}}}
+        result = strip_template_owned(worca)
+        assert result == {"governance": {}}
+
+    def test_missing_intermediate_paths_are_silently_skipped(self):
+        worca = {"models": {"opus": "id"}}
+        assert strip_template_owned(worca) == {"models": {"opus": "id"}}
+
+    def test_template_owned_keys_constant_shape(self):
+        for path in TEMPLATE_OWNED_KEYS:
+            assert isinstance(path, tuple)
+            assert all(isinstance(segment, str) for segment in path)
+            assert len(path) >= 1
+
+    def test_preserves_stages_preflight_through_strip(self):
+        """stages.preflight is a cross-template carve-out — it survives the
+        stages-block strip so project-Settings preflight checks still apply."""
+        worca = {
+            "stages": {
+                "preflight": {"enabled": True, "require": ["npm test"]},
+                "plan_review": {"enabled": True},
+                "learn": {"enabled": True},
+            },
+        }
+        result = strip_template_owned(worca)
+        assert "plan_review" not in result.get("stages", {})
+        assert "learn" not in result.get("stages", {})
+        assert result["stages"]["preflight"] == {
+            "enabled": True,
+            "require": ["npm test"],
+        }
+
+    def test_no_stages_key_when_preflight_absent(self):
+        """No preflight in the input → carve-out doesn't fabricate one."""
+        worca = {"stages": {"plan_review": {"enabled": True}}}
+        result = strip_template_owned(worca)
+        assert "stages" not in result
+
+    def test_carveouts_constant_shape(self):
+        for path in CROSS_TEMPLATE_CARVEOUTS:
+            assert isinstance(path, tuple)
+            assert all(isinstance(segment, str) for segment in path)
+            assert any(
+                path[: len(owned)] == owned for owned in TEMPLATE_OWNED_KEYS
+            ), f"carve-out {path} doesn't sit under any TEMPLATE_OWNED_KEYS path"

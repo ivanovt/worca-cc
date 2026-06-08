@@ -29,7 +29,7 @@ import { getDefaultBranch } from './git-helpers.js';
 import { extractAndStripGlobalKeys } from './global-keys.js';
 import { LaunchLock } from './launch-lock.js';
 import { createModelEnvRouter } from './model-env-routes.js';
-import { preferencesPath, templatesDir } from './paths.js';
+import { globalSettingsPath, preferencesPath } from './paths.js';
 import { readPreferences } from './preferences.js';
 import { ProcessManager } from './process-manager.js';
 import { countRunningPipelinesAcrossProjects } from './process-registry.js';
@@ -45,14 +45,16 @@ import {
 import {
   deepMerge,
   localPathFor,
+  readEffectiveSettings,
   readLocalSettings,
   readMergedSettings,
 } from './settings-merge.js';
 import { readGlobalSettings, writeGlobalSettings } from './settings-reader.js';
 import { validateSettingsPayload } from './settings-validator.js';
+import { createTemplatesRoutes } from './templates-routes.js';
 import { isVersionBehind } from './version-check.js';
 import { getVersionInfo } from './versions.js';
-import { discoverRuns } from './watcher.js';
+import { discoverRuns, discoverRunsAsync } from './watcher.js';
 import {
   checkWorcaInstalled,
   readProjectWorcaVersion,
@@ -364,7 +366,12 @@ export function createProjectScopedRoutes({
   // GET /api/projects/:projectId/runs — list runs for this project
   router.get('/runs', requireWorcaDir, async (req, res) => {
     try {
-      const runs = discoverRuns(req.project.worcaDir);
+      // List/sidebar path: scan off the event loop (async) and skip
+      // events.jsonl enrichment entirely — neither the run list nor the sidebar
+      // render dispatch_events / graph-query counts (issue #296).
+      const runs = await discoverRunsAsync(req.project.worcaDir, {
+        enrich: false,
+      });
       const default_branch = getDefaultBranch(req.project.projectRoot);
 
       const { getBeadsCounts } = req.app.locals;
@@ -458,6 +465,9 @@ export function createProjectScopedRoutes({
   // --- Model env endpoints (writes wholesale to settings.local.json) ---
   router.use('/settings/model-env', createModelEnvRouter());
 
+  // --- Template CRUD endpoints (templates-routes.js) ---
+  router.use(createTemplatesRoutes());
+
   // --- Project-scoped settings endpoints ---
 
   // GET /api/projects/:projectId/settings
@@ -468,6 +478,28 @@ export function createProjectScopedRoutes({
     }
     try {
       const merged = readMergedSettings(settingsPath);
+      res.json({
+        worca: merged.worca || {},
+        permissions: merged.permissions || {},
+      });
+    } catch (err) {
+      res
+        .status(500)
+        .json({ error: { code: 'read_error', message: err.message } });
+    }
+  });
+
+  // GET /api/projects/:projectId/effective-settings
+  //
+  // Returns the fully-layered settings the Python runtime sees: user-global
+  // base → user-global .local → project base → project .local. Used by UI
+  // surfaces that must mirror runtime alias resolution (e.g. the per-agent
+  // model dropdown in the template editor — without this, aliases that live
+  // only in user-global ~/.worca/settings.json are invisible to projects).
+  router.get('/effective-settings', (req, res) => {
+    const { settingsPath } = req.project;
+    try {
+      const merged = readEffectiveSettings(settingsPath, globalSettingsPath());
       res.json({
         worca: merged.worca || {},
         permissions: merged.permissions || {},
@@ -920,6 +952,7 @@ export function createProjectScopedRoutes({
       planFile,
       msize,
       mloops,
+      maxBeads,
       branch,
       template,
     } = body;
@@ -1009,6 +1042,10 @@ export function createProjectScopedRoutes({
       mloops != null
         ? Math.max(1, Math.min(10, Math.round(Number(mloops))))
         : 1;
+    const maxBeadsVal =
+      maxBeads != null
+        ? Math.max(0, Math.min(50, Math.round(Number(maxBeads))))
+        : undefined;
 
     // Atomically check global cap and start pipeline under lock
     await launchLock.withLock(async () => {
@@ -1036,6 +1073,7 @@ export function createProjectScopedRoutes({
           prompt: hasPrompt ? prompt : undefined,
           msize: msizeVal,
           mloops: mloopsVal,
+          maxBeads: maxBeadsVal,
           planFile: hasPlan ? planFile.trim() : undefined,
           branch: branch || undefined,
           template: template || undefined,
@@ -1633,44 +1671,8 @@ export function createProjectScopedRoutes({
   // overlays worktree pipelines via pipelines.d/, so the same /runs/:id/*
   // family handles both local and worktree-hosted runs.
 
-  // GET /api/projects/:projectId/templates — list available pipeline templates
-  router.get('/templates', (req, res) => {
-    const root = req.project.projectRoot;
-    const tiers = [
-      { tier: 'user', dir: templatesDir() },
-      { tier: 'project', dir: join(root, '.claude', 'templates') },
-      { tier: 'worca', dir: join(root, '.claude', 'worca', 'templates') },
-    ];
-
-    const templates = [];
-    for (const { tier, dir } of tiers) {
-      if (!existsSync(dir)) continue;
-      let entries;
-      try {
-        entries = readdirSync(dir, { withFileTypes: true });
-      } catch {
-        continue;
-      }
-      for (const entry of entries) {
-        if (!entry.isDirectory()) continue;
-        const manifestPath = join(dir, entry.name, 'template.json');
-        if (!existsSync(manifestPath)) continue;
-        try {
-          const manifest = JSON.parse(readFileSync(manifestPath, 'utf8'));
-          templates.push({
-            id: manifest.id || entry.name,
-            name: manifest.name || entry.name,
-            description: manifest.description || '',
-            tier,
-          });
-        } catch {
-          /* skip malformed manifests */
-        }
-      }
-    }
-
-    res.json({ ok: true, templates });
-  });
+  // NOTE: GET /templates and all template CRUD routes moved to
+  // templates-routes.js (now mounted at /).
 
   // GET /api/projects/:projectId/worca-status — check worca installation state.
   // `outdated` is true when the project's installed worca-cc version is
@@ -1741,7 +1743,9 @@ export function createProjectScopedRoutes({
   // Reads per-iteration token_usage from each run's status.json.
   router.get('/costs', requireWorcaDir, (req, res) => {
     const { worcaDir } = req.project;
-    const runs = discoverRuns(worcaDir);
+    // Costs read only per-iteration token_usage from status.json — no
+    // events.jsonl enrichment needed (issue #296).
+    const runs = discoverRuns(worcaDir, { enrich: false });
     const tokenData = {};
 
     for (const run of runs) {

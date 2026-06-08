@@ -826,3 +826,51 @@ def test_backfill_ignores_stages_not_in_map(tmp_path):
     filled = backfill_prompt_context(pb, status, logs_dir)
 
     assert filled == []
+
+
+def test_backfill_unwraps_structured_output_envelope(tmp_path):
+    """When iter JSON has a structured_output envelope, fields are still found."""
+    logs_dir = str(tmp_path / "logs")
+    os.makedirs(os.path.join(logs_dir, "coordinate"))
+    envelope = {
+        "type": "result",
+        "structured_output": {
+            "beads_ids": ["b1", "b2"],
+            "dependency_graph": {"b2": ["b1"]},
+        },
+    }
+    with open(os.path.join(logs_dir, "coordinate", "iter-1.json"), "w") as f:
+        json.dump(envelope, f)
+
+    status = {"stages": {"coordinate": {"status": "completed"}}}
+    pb = _FakePromptBuilder()
+    filled = backfill_prompt_context(pb, status, logs_dir)
+
+    assert pb.get_context("beads_ids") == ["b1", "b2"]
+    assert pb.get_context("dependency_graph") == {"b2": ["b1"]}
+    assert "beads_ids" in filled
+    assert "dependency_graph" in filled
+
+
+def test_backfill_unwraps_plan_envelope(tmp_path):
+    """Plan stage output wrapped in structured_output envelope is unwrapped."""
+    logs_dir = str(tmp_path / "logs")
+    os.makedirs(os.path.join(logs_dir, "plan"))
+    envelope = {
+        "type": "result",
+        "structured_output": {
+            "approach": "incremental",
+            "tasks_outline": [{"title": "T1"}],
+        },
+    }
+    with open(os.path.join(logs_dir, "plan", "iter-1.json"), "w") as f:
+        json.dump(envelope, f)
+
+    status = {"stages": {"plan": {"status": "completed"}}}
+    pb = _FakePromptBuilder()
+    filled = backfill_prompt_context(pb, status, logs_dir)
+
+    assert pb.get_context("plan_approach") == "incremental"
+    assert pb.get_context("plan_tasks_outline") == [{"title": "T1"}]
+    assert "plan_approach" in filled
+    assert "plan_tasks_outline" in filled

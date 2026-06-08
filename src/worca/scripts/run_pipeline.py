@@ -46,6 +46,8 @@ def create_parser():
     parser.add_argument("--worktree", action="store_true",
                         help="Worktree mode: skip branch creation and register in multi-pipeline registry")
     parser.add_argument("--template", help="Template ID to apply before running")
+    parser.add_argument("--force-template-change", action="store_true", default=False,
+                        help="Allow --template to override the persisted pipeline_template on resume")
     parser.add_argument("--param", action="append", metavar="KEY=VALUE",
                         help="Template parameter override (repeatable)")
     parser.add_argument("--guide", action="append", metavar="PATH",
@@ -58,6 +60,10 @@ def create_parser():
                         help="Pre-assigned run ID (set by run_worktree.py so the runner "
                              "and the multi-pipeline registry agree on the key). When "
                              "omitted, the runner generates its own.")
+    parser.add_argument("--max-beads", type=int, default=None,
+                        help="Cap on the number of beads the coordinator may create "
+                             "(0 = auto, None = use config). Allowed on --resume without "
+                             "--force-template-change.")
     return parser
 
 
@@ -211,6 +217,29 @@ def main():
         else:
             print(f"error: cannot resume — status file not found: {status_file}", file=sys.stderr)
             raise SystemExit(2)
+        # Restore pipeline_template from status.json when --template not explicitly passed.
+        _explicit_template = args.template
+        if not args.template:
+            _persisted_template = existing.get("pipeline_template")
+            if isinstance(_persisted_template, str) and _persisted_template:
+                args.template = _persisted_template.split(":")[1] if ":" in _persisted_template else _persisted_template
+        elif not args.force_template_change:
+            _persisted_template = existing.get("pipeline_template")
+            if isinstance(_persisted_template, str) and _persisted_template:
+                _persisted_bare = _persisted_template.split(":")[1] if ":" in _persisted_template else _persisted_template
+                if _explicit_template != _persisted_bare:
+                    print(
+                        f"error: --template {_explicit_template!r} conflicts with persisted "
+                        f"pipeline_template {_persisted_template!r}; "
+                        "use --force-template-change to override",
+                        file=sys.stderr,
+                    )
+                    raise SystemExit(2)
+        # Restore max_beads_override from status.json; CLI value wins if provided.
+        if args.max_beads is None:
+            _persisted_max_beads = existing.get("max_beads_override")
+            if isinstance(_persisted_max_beads, int):
+                args.max_beads = _persisted_max_beads
         plan_file = args.plan
         print(f"Resuming pipeline: {work_request.title}")
     else:
@@ -252,23 +281,48 @@ def main():
     _resolver = None
     _pipeline_template = None
 
+    # Load project settings once — used to (a) fall back to worca.default_template
+    # when --template wasn't passed, and (b) form the merge base when applying
+    # the resolved template.
+    try:
+        from worca.utils.settings import load_settings as _load_settings
+        _project_settings = _load_settings(args.settings)
+    except Exception:
+        _project_settings = {}
+    _project_worca = _project_settings.get("worca", {})
+
+    # Phase 1: fall back to worca.default_template when --template wasn't passed.
+    #
+    # Schema is either the legacy bare string `"bugfix"` (pre tier-in-key
+    # redesign) or the new object `{"tier": "project", "id": "bugfix"}`.
+    # The CLI only needs the id — the runtime tier-precedence resolver
+    # (project > user > builtin) will surface the same template the
+    # editor would have, so the optional `tier` hint is informational.
+    if not _template_id:
+        _default = _project_worca.get("default_template")
+        if isinstance(_default, str) and _default:
+            _template_id = _default
+        elif isinstance(_default, dict):
+            _candidate = _default.get("id")
+            if isinstance(_candidate, str) and _candidate:
+                _template_id = _candidate
+
     if _template_id:
         import tempfile
-        from worca.orchestrator.templates import TemplateError
+        from worca.orchestrator.templates import TemplateError, strip_template_owned
 
         _params = _parse_params(args.param or [])
-
-        try:
-            from worca.utils.settings import load_settings as _load_settings
-            _current_settings = _load_settings(args.settings)
-        except Exception:
-            _current_settings = {}
-
-        _current_worca = _current_settings.get("worca", {})
         _resolver = _make_template_resolver(args.settings)
 
+        # Phase 1: strip TEMPLATE_OWNED_KEYS from the merge base so leftover
+        # project-Settings values can't leak in for keys the template doesn't
+        # explicitly set. Cross-template keys (models, webhooks, pricing,
+        # governance.guards, graphify, code_review_graph, default_template
+        # itself) are preserved.
+        _base_for_template = strip_template_owned(_project_worca)
+
         try:
-            _merged_worca = _resolver.apply(_template_id, _current_worca, _params)
+            _merged_worca = _resolver.apply(_template_id, _base_for_template, _params)
         except TemplateError as e:
             print(f"error: template '{_template_id}': {e}", file=sys.stderr)
             raise SystemExit(2)
@@ -278,12 +332,15 @@ def main():
         if _tmpl and _tmpl.agents_dir:
             _merged_worca["_template_agents_dir"] = _tmpl.agents_dir
 
-        # Format pipeline_template as "tier:id" for storage in status.json
+        # Format pipeline_template as "tier:id" for storage in status.json.
+        # We used to substitute "worca" for "builtin" here for historical
+        # display reasons; the UI maps any leftover "worca:" prefix to
+        # "builtin:" on read, so we can emit the canonical resolver tier
+        # name directly and have a single vocabulary across the surface.
         if _tmpl:
-            _tier_display = "worca" if _tmpl.tier == "builtin" else _tmpl.tier
-            _pipeline_template = f"{_tier_display}:{_template_id}"
+            _pipeline_template = f"{_tmpl.tier}:{_template_id}"
 
-        _merged_settings = {**_current_settings, "worca": _merged_worca}
+        _merged_settings = {**_project_settings, "worca": _merged_worca}
         _tmp = tempfile.NamedTemporaryFile(mode="w", suffix=".json", delete=False)
         json.dump(_merged_settings, _tmp, indent=2)
         _tmp.close()
@@ -292,6 +349,22 @@ def main():
         print(f"  Template: {_template_id}")
 
     effective_settings_path = _temp_settings_path if _template_id else args.settings
+
+    # On resume the run_dir is already known — write forensic snapshot before the run
+    # so crashes/kills don't leave the dir without template evidence.
+    if args.resume and _template_id and _resolver:
+        _resume_run_dir = os.path.dirname(os.path.abspath(status_file))
+        try:
+            _resolver.snapshot_to_run(_template_id, _resume_run_dir, _params)
+        except Exception as snap_err:
+            print(f"warning: template snapshot failed: {snap_err}", file=sys.stderr)
+        if _merged_settings:
+            try:
+                Path(_resume_run_dir, "settings.json").write_text(
+                    json.dumps(_merged_settings, indent=2), encoding="utf-8"
+                )
+            except OSError:
+                pass
 
     try:
         effective_status_path = os.path.join(args.status_dir, "status.json")
@@ -309,10 +382,12 @@ def main():
             pipeline_template=_pipeline_template,
             registry_base=args.registry_base,
             run_id=args.run_id,
+            max_beads_override=args.max_beads,
         )
 
-        # Snapshot template to run dir and write merged settings for traceability
-        if _template_id and _resolver and status.get("run_id"):
+        # Snapshot template to run dir and write merged settings for traceability.
+        # Resume path: already written before run_pipeline() — skip here to avoid duplicates.
+        if not args.resume and _template_id and _resolver and status.get("run_id"):
             run_dir = os.path.join(args.status_dir, "runs", status["run_id"])
             try:
                 _resolver.snapshot_to_run(_template_id, run_dir, _params)

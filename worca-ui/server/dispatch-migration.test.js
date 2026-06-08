@@ -4,6 +4,7 @@ import {
   adoptGeneralPurposeAllowable,
   DISPATCH_MIGRATION_VERSION,
   migrateDispatchGovernance,
+  releaseGeneralPurposeDefaultDeny,
 } from './dispatch-migration.js';
 
 describe('migrateDispatchGovernance', () => {
@@ -190,7 +191,9 @@ describe('migrateDispatchGovernance', () => {
     migrateDispatchGovernance(worca);
     const pa = worca.governance.dispatch.subagents.per_agent_allow;
     expect(pa).toEqual({ _defaults: ['*'] });
-    expect(worca.governance.dispatch_migration_version).toBe(2);
+    expect(worca.governance.dispatch_migration_version).toBe(
+      DISPATCH_MIGRATION_VERSION,
+    );
   });
 
   it('preserves a genuinely customized subagent shape', () => {
@@ -272,10 +275,14 @@ describe('normalizeDispatchDefaults (W-054 follow-up)', () => {
     const d = worca.governance.dispatch;
     expect(d.subagents.per_agent_allow).toEqual({ _defaults: ['*'] });
     expect(d.subagents.always_disallowed).toEqual([]);
-    expect(d.subagents.default_denied).toEqual(['general-purpose']);
+    // general-purpose is moved to default_denied (v2) then released (v3) —
+    // net: allowed under "*", in neither deny tier.
+    expect(d.subagents.default_denied).toEqual([]);
     expect(d.skills.always_disallowed).not.toContain('worca-*');
     expect(d.skills.always_disallowed).toContain('worca-release');
-    expect(worca.governance.dispatch_migration_version).toBe(2);
+    expect(worca.governance.dispatch_migration_version).toBe(
+      DISPATCH_MIGRATION_VERSION,
+    );
     expect(changes.length).toBeGreaterThan(0);
   });
 
@@ -344,7 +351,49 @@ describe('adoptGeneralPurposeAllowable', () => {
     expect(adoptGeneralPurposeAllowable(cfg)).toBe(false);
   });
 
-  it('current migration version is 2', () => {
-    expect(DISPATCH_MIGRATION_VERSION).toBe(2);
+  it('current migration version is 3', () => {
+    expect(DISPATCH_MIGRATION_VERSION).toBe(3);
+  });
+});
+
+describe('releaseGeneralPurposeDefaultDeny (v3)', () => {
+  it('removes general-purpose from default_denied', () => {
+    const cfg = { always_disallowed: [], default_denied: ['general-purpose'] };
+    expect(releaseGeneralPurposeDefaultDeny(cfg)).toBe(true);
+    expect(cfg.default_denied).toEqual([]);
+  });
+
+  it('is a no-op when default_denied is already clear', () => {
+    const cfg = { always_disallowed: [], default_denied: [] };
+    expect(releaseGeneralPurposeDefaultDeny(cfg)).toBe(false);
+  });
+
+  it('leaves a customized default_denied (extra entries) alone', () => {
+    const cfg = {
+      always_disallowed: [],
+      default_denied: ['general-purpose', 'custom'],
+    };
+    expect(releaseGeneralPurposeDefaultDeny(cfg)).toBe(false);
+    expect(cfg.default_denied).toEqual(['general-purpose', 'custom']);
+  });
+
+  it('heals a v2-stamped config on upgrade (the field scenario)', () => {
+    const worca = {
+      governance: {
+        dispatch: {
+          subagents: {
+            always_disallowed: [],
+            default_denied: ['general-purpose'],
+            per_agent_allow: { _defaults: ['*'] },
+          },
+        },
+        dispatch_migration_version: 2,
+      },
+    };
+    migrateDispatchGovernance(worca);
+    expect(worca.governance.dispatch.subagents.default_denied).toEqual([]);
+    expect(worca.governance.dispatch_migration_version).toBe(
+      DISPATCH_MIGRATION_VERSION,
+    );
   });
 });

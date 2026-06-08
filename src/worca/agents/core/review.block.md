@@ -30,3 +30,9 @@ _A code-review-graph MCP server is attached — **use its tools to orient (struc
 
 {{files_changed_formatted}}
 {{/if}}
+
+{{#if review_base}}
+> Diff base: {{review_base}} (changes since pipeline start)
+{{else}}
+> Diff base: `"merge-base HEAD origin/HEAD"` (no review_base available, using fallback)
+{{/if}}

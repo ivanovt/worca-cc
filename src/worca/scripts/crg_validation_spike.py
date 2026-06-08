@@ -25,6 +25,7 @@ Fallback strategies (plan §5) are attached to each failing gate result.
 import json
 import os
 import re
+import select
 import shutil
 import subprocess
 import time
@@ -97,11 +98,48 @@ def _mcp_request(method: str, params: Optional[dict] = None, req_id: Optional[in
     return f"Content-Length: {len(body)}\r\n\r\n{body}".encode()
 
 
+def _clean_subprocess_env(**extra: str) -> dict[str, str]:
+    """Create a clean subprocess environment without worca-specific vars.
+
+    When spawning CRG serve tests, we must not inherit WORCA_* vars that
+    trigger governance guards (e.g., WORCA_AGENT causes CRG mutation guard
+    violations). Tests run the binary directly, not through agent tool use.
+    """
+    env = os.environ.copy()
+    # Remove worca-specific environment variables that trigger guards
+    worca_keys = [k for k in env if k.startswith("WORCA_")]
+    for key in worca_keys:
+        del env[key]
+    # Also remove CLAUDECODE to avoid any nested CLI interference
+    env.pop("CLAUDECODE", None)
+    env.update(extra)
+    return env
+
+
+def _wait_readable(stream, max_wait: float) -> bool:
+    """Block up to ``max_wait`` seconds for ``stream`` to be readable.
+
+    Why: ``read(1)`` on a subprocess pipe blocks indefinitely when the child
+    is silent — the surrounding deadline loop only checks between reads. On
+    POSIX, ``select`` enforces the wait. On Windows (no select-on-pipes),
+    fall back to letting the blocking read proceed.
+    """
+    if max_wait <= 0:
+        return False
+    try:
+        ready, _, _ = select.select([stream], [], [], max_wait)
+    except (OSError, ValueError):
+        return True
+    return bool(ready)
+
+
 def _read_mcp_response(proc, timeout: float = 10.0) -> Optional[dict]:
     """Read one JSON-RPC response from an MCP stdio server."""
     deadline = time.monotonic() + timeout
     header = b""
     while time.monotonic() < deadline:
+        if not _wait_readable(proc.stdout, deadline - time.monotonic()):
+            return None
         ch = proc.stdout.read(1)
         if not ch:
             return None
@@ -121,10 +159,15 @@ def _read_mcp_response(proc, timeout: float = 10.0) -> Optional[dict]:
 
     body = b""
     while len(body) < content_length and time.monotonic() < deadline:
+        if not _wait_readable(proc.stdout, deadline - time.monotonic()):
+            return None
         chunk = proc.stdout.read(content_length - len(body))
         if not chunk:
             return None
         body += chunk
+
+    if len(body) < content_length:
+        return None
 
     return json.loads(body.decode())
 
@@ -168,11 +211,10 @@ def validate_read_tools_no_dml(db_path: str, repo_root: str) -> ValidationResult
     wal_path = db_path + "-wal"
     shm_path = db_path + "-shm"
 
-    env = {
-        **os.environ,
-        "CRG_REPO_ROOT": os.path.abspath(repo_root),
-        "CRG_DATA_DIR": data_dir,
-    }
+    env = _clean_subprocess_env(
+        CRG_REPO_ROOT=os.path.abspath(repo_root),
+        CRG_DATA_DIR=data_dir,
+    )
 
     proc = subprocess.Popen(
         ["code-review-graph", "serve"],
@@ -281,11 +323,10 @@ def validate_env_var_honor(data_dir: str, repo_root: str) -> ValidationResult:
             details=f"graph.db not found at {db_path}",
         )
 
-    env = {
-        **os.environ,
-        "CRG_REPO_ROOT": os.path.abspath(repo_root),
-        "CRG_DATA_DIR": os.path.abspath(data_dir),
-    }
+    env = _clean_subprocess_env(
+        CRG_REPO_ROOT=os.path.abspath(repo_root),
+        CRG_DATA_DIR=os.path.abspath(data_dir),
+    )
 
     proc = subprocess.Popen(
         ["code-review-graph", "serve"],
@@ -367,11 +408,10 @@ def measure_serve_startup_latency(
             details=f"graph.db not found at {db_path}",
         )
 
-    env = {
-        **os.environ,
-        "CRG_REPO_ROOT": os.path.abspath(repo_root),
-        "CRG_DATA_DIR": os.path.abspath(data_dir),
-    }
+    env = _clean_subprocess_env(
+        CRG_REPO_ROOT=os.path.abspath(repo_root),
+        CRG_DATA_DIR=os.path.abspath(data_dir),
+    )
 
     latencies_ms: list[float] = []
     errors: list[str] = []

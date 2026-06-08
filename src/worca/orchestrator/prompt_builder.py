@@ -36,7 +36,7 @@ class PromptBuilder:
     _MAX_STATUS_JSON_LEN = 50_000  # truncate serialised status beyond this
 
     def __init__(self, work_request_title: str, work_request_description: str = "",
-                 claude_md_path: str = "CLAUDE.md", context_path: str = None,
+                 context_path: str = None,
                  master_plan_path: str = "MASTER_PLAN.md",
                  resolver=None, core_dir: str = None,
                  template_agents_dir: str = None, run_dir: str = None,
@@ -48,23 +48,11 @@ class PromptBuilder:
         self._crg_available = False
         self._context: dict = {}
         self._context_path = context_path
-        self._claude_md_content = self._read_claude_md(claude_md_path)
         self._master_plan_path = master_plan_path
         self._resolver = resolver
         self._core_dir = core_dir
         self._template_agents_dir = template_agents_dir
         self._run_dir = run_dir
-
-    @staticmethod
-    def _read_claude_md(path: str) -> str:
-        """Read CLAUDE.md content if it exists, return empty string otherwise."""
-        try:
-            if os.path.exists(path):
-                with open(path, encoding="utf-8") as f:
-                    return f.read().strip()
-        except OSError:
-            pass
-        return ""
 
     def set_graphify_available(self, available: bool) -> None:
         """Flag whether a queryable code knowledge graph is available this run.
@@ -215,7 +203,7 @@ class PromptBuilder:
             ctx: Context dict to mutate in place.
         """
         if stage == "plan":
-            ctx["claude_md"] = self._claude_md_content
+            ctx["has_review_comments"] = bool(ctx.get("review_comments"))
             if ctx.get("plan_revision_mode"):
                 # Prefer the plan content threaded by the runner at the revise
                 # loopback (the current plan being revised). Under W-061's
@@ -249,6 +237,20 @@ class PromptBuilder:
             # changelog. Prefer the plan content threaded from the last PLAN
             # completion; otherwise read the current (latest) plan file.
             ctx["current_plan"] = ctx.get("plan_file_content") or self._read_master_plan()
+            has_review_comments = bool(ctx.get("review_comments"))
+            ctx["has_review_comments"] = has_review_comments
+
+            # W-069: resolve effective bead cap; PR-revision runs suppress the cap
+            # so comment-to-bead decomposition is unconstrained.
+            if has_review_comments:
+                effective_cap = 0
+            else:
+                override = ctx.get("max_beads_override")
+                config_cap = ctx.get("max_beads_config", 0) or 0
+                effective_cap = override if override is not None else config_cap
+            ctx["max_beads"] = effective_cap
+            ctx["bead_cap_single"] = effective_cap == 1
+            ctx["bead_cap_multi"] = effective_cap > 1
 
             unresolved = ctx.get("unresolved_plan_issues")
             if unresolved:
@@ -313,6 +315,8 @@ class PromptBuilder:
                 ctx["files_changed_formatted"] = "\n".join(f"- {f}" for f in files_changed)
             else:
                 ctx["files_changed_formatted"] = ""
+            # Inject review_base for proper diff scoping (pre-inherited code exclusion)
+            ctx["review_base"] = self._context.get("review_base", "")
 
         elif stage == "learn":
             full_status = ctx.get("full_status") or {}

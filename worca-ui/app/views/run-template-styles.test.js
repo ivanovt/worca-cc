@@ -34,3 +34,33 @@ describe('new-run pipeline section sl-select styling', () => {
     expect(css).toMatch(/\.new-run-section\s+sl-select\s*\{[^}]*width:\s*100%/);
   });
 });
+
+describe('read-only editor Prompts-tab exemption', () => {
+  // The built-in (read-only) editor bleaches + pointer-locks every tab panel.
+  // The Prompts tab is a read-only viewer that must stay scrollable and
+  // full-contrast, so it (and its nested per-stage sub-tab panels) is exempt.
+  const EXEMPT_RE =
+    /\.editor-content--readonly\s+sl-tab-panel\[name="prompts"\][^{]*\{([^}]+)\}/;
+
+  it('re-enables pointer-events and resets opacity on the Prompts panel', () => {
+    const match = css.match(EXEMPT_RE);
+    expect(match).not.toBeNull();
+    const block = match[1];
+    expect(block).toContain('pointer-events: auto');
+    expect(block).toContain('opacity: 1');
+  });
+
+  it('covers nested per-stage sub-tab panels (not just the outer panel)', () => {
+    // The nested `sl-tab-panel`s would otherwise re-match the base
+    // pointer-events:none rule, re-breaking inner scroll.
+    expect(css).toMatch(
+      /\.editor-content--readonly\s+sl-tab-panel\[name="prompts"\]\s+sl-tab-panel/,
+    );
+  });
+
+  it('resets cursor inside the Prompts panel', () => {
+    expect(css).toMatch(
+      /\.editor-content--readonly\s+sl-tab-panel\[name="prompts"\]\s+\*\s*\{[^}]*cursor:\s*auto/,
+    );
+  });
+});

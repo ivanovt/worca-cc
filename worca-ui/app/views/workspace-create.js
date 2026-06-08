@@ -1,5 +1,6 @@
 import { html, nothing } from 'lit-html';
 import { unsafeHTML } from 'lit-html/directives/unsafe-html.js';
+import { helpFor } from '../utils/help-links.js';
 import { FolderOpen, iconSvg } from '../utils/icons.js';
 import { dagGraphView } from './dag-graph.js';
 
@@ -599,6 +600,7 @@ export function workspaceCreateView(appState, { rerender } = {}) {
           : nothing
       }
       <div class="new-run-form">
+        ${helpFor('workspace-runs')}
         ${_nameSection({ rerender })}
         ${_parentDirSection(appState, { rerender })}
         ${_repoChecklistSection({ rerender })}

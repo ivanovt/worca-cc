@@ -279,18 +279,13 @@ def test_build_context_plan_contains_work_request():
     assert "Implement authentication" in ctx["work_request"]
 
 
-def test_build_context_plan_contains_claude_md(tmp_path):
-    claude_md = tmp_path / "CLAUDE.md"
-    claude_md.write_text("# My Project\n\nUses Python + pytest")
-    pb = PromptBuilder("Add auth", "Desc", claude_md_path=str(claude_md))
+def test_build_context_plan_no_longer_injects_claude_md():
+    # CLAUDE.md is auto-loaded by the claude CLI into every session (verified
+    # for headless `-p --agent`), so the planner prompt no longer inlines it —
+    # the old {{claude_md}} duplication is gone.
+    pb = PromptBuilder("Add auth", "Desc")
     ctx = pb.build_context("plan")
-    assert ctx.get("claude_md") == "# My Project\n\nUses Python + pytest"
-
-
-def test_build_context_plan_no_claude_md(tmp_path):
-    pb = PromptBuilder("Add auth", "Desc", claude_md_path=str(tmp_path / "nonexistent.md"))
-    ctx = pb.build_context("plan")
-    assert ctx.get("claude_md") == ""
+    assert "claude_md" not in ctx
 
 
 def test_build_context_plan_revision_mode_sets_plan_content(tmp_path):
@@ -691,4 +686,54 @@ def test_build_context_crg_with_guide_independent():
     ctx = pb.build_context("plan")
     assert ctx["has_guide"] is True
     assert ctx["has_code_review_graph"] is True
-    assert ctx["guide_content"] == "guide stuff"
+
+
+# --- has_review_comments (planner constrained revision mode, W-067) ---
+
+def test_build_context_has_review_comments_false_by_default():
+    pb = PromptBuilder("Fix bug", "Desc")
+    ctx = pb.build_context("plan")
+    assert ctx.get("has_review_comments") is False
+
+
+def test_build_context_has_review_comments_true_when_set():
+    pb = PromptBuilder("Fix bug", "Desc")
+    pb.update_context("review_comments", [{"thread_id": "T1", "body": "fix this"}])
+    ctx = pb.build_context("plan")
+    assert ctx.get("has_review_comments") is True
+
+
+def test_build_context_has_review_comments_false_when_empty_list():
+    pb = PromptBuilder("Fix bug", "Desc")
+    pb.update_context("review_comments", [])
+    ctx = pb.build_context("plan")
+    assert ctx.get("has_review_comments") is False
+
+
+def test_has_review_comments_active_in_plan_and_coordinate_stages():
+    pb = PromptBuilder("Fix bug", "Desc")
+    pb.update_context("review_comments", [{"thread_id": "T1", "body": "fix this"}])
+    plan_ctx = pb.build_context("plan")
+    coord_ctx = pb.build_context("coordinate")
+    assert plan_ctx.get("has_review_comments") is True
+    assert coord_ctx.get("has_review_comments") is True
+
+
+def test_build_context_coordinate_has_review_comments_false_by_default():
+    pb = PromptBuilder("Fix bug", "Desc")
+    ctx = pb.build_context("coordinate")
+    assert ctx.get("has_review_comments") is False
+
+
+def test_build_context_coordinate_has_review_comments_true_when_set():
+    pb = PromptBuilder("Fix bug", "Desc")
+    pb.update_context("review_comments", [{"thread_id": "PRRT_1", "path": "src/foo.py", "line": 42, "body": "fix this"}])
+    ctx = pb.build_context("coordinate")
+    assert ctx.get("has_review_comments") is True
+
+
+def test_build_context_coordinate_has_review_comments_false_when_empty():
+    pb = PromptBuilder("Fix bug", "Desc")
+    pb.update_context("review_comments", [])
+    ctx = pb.build_context("coordinate")
+    assert ctx.get("has_review_comments") is False

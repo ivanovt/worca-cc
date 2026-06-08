@@ -1,11 +1,128 @@
 """Template resolver and utility functions for pipeline templates."""
 
+from __future__ import annotations
+
+import copy
 import json
 import re
 import shutil
 from dataclasses import dataclass
 from datetime import datetime, timezone
 from pathlib import Path
+
+# Keys under `worca.*` that are owned by the selected template at run launch.
+# When a template is in play (explicit at launch or resolved from
+# worca.default_template), these are stripped from the project-settings merge
+# base BEFORE the template's config applies. Result: a shared template behaves
+# identically across machines until explicitly edited.
+#
+# Keys NOT in this list (worca.models, worca.webhooks, worca.pricing,
+# worca.governance.guards, worca.graphify, worca.code_review_graph, etc.)
+# stay cross-template — they're project-machine concerns (creds, infra,
+# integrations) that should be the same for every template the project runs.
+TEMPLATE_OWNED_KEYS: list[tuple[str, ...]] = [
+    ("agents",),
+    ("stages",),
+    ("loops",),
+    ("circuit_breaker",),
+    ("effort",),
+    ("governance", "dispatch"),
+    # Approval gates (plan_approval / pr_approval / deploy_approval). Every
+    # existing built-in already declares these per its intent; promoting the
+    # block to template-owned closes the "teammate's Settings silently flips
+    # my gates" gap and makes the template's gate posture explicit.
+    ("milestones",),
+    # Test-gate strike count is a per-pipeline tolerance knob (same family
+    # as circuit_breaker.max_consecutive_failures). A quick-fix template
+    # legitimately wants strikes=1 to fail fast; a feature template wants
+    # strikes=3 to recover from flakiness. Project Settings used to own
+    # it; promoted to template-owned in the W-062 Phase 6 cleanup so
+    # templates can express their own retry posture.
+    ("governance", "test_gate_strikes"),
+    # plan_review enforcement mode (auto / review / review_and_edit). Sits
+    # under governance because it tightens what the plan_review stage may
+    # do, but each template owns its own enforcement posture — a
+    # research-only "investigate" template can keep auto, an audited
+    # production template can pin review. Promoted to template-owned in
+    # the same cleanup.
+    ("governance", "plan_review_enforce"),
+]
+
+# Nested paths that sit under a template-owned block but are themselves
+# cross-template: stripped along with the parent, then restored from the
+# project's Settings before the template's config applies. The template can
+# still deep-merge over them (so a template that explicitly sets
+# stages.preflight.enabled=false still wins), but project Settings values
+# survive when the template doesn't touch them.
+#
+# stages.preflight: the preflight check list is a project-machine concern
+# (what does THIS project need to pass before launching?) — not a template
+# choice. Every template should respect the project's preflight setup unless
+# it explicitly opts out.
+CROSS_TEMPLATE_CARVEOUTS: list[tuple[str, ...]] = [
+    ("stages", "preflight"),
+]
+
+
+def _get_at_path(d: dict, path: tuple[str, ...]):
+    """Walk path; return the leaf value or None if any segment is missing."""
+    node = d
+    for segment in path:
+        if not isinstance(node, dict) or segment not in node:
+            return None
+        node = node[segment]
+    return node
+
+
+def _set_at_path(d: dict, path: tuple[str, ...], value) -> None:
+    """Set value at path, creating intermediate dicts as needed."""
+    node = d
+    for segment in path[:-1]:
+        node = node.setdefault(segment, {})
+    node[path[-1]] = value
+
+
+def _delete_at_path(d: dict, path: tuple[str, ...]) -> None:
+    """Delete the leaf at path; no-op if any segment is missing."""
+    node = d
+    for segment in path[:-1]:
+        if not isinstance(node, dict) or segment not in node:
+            return
+        node = node[segment]
+    if isinstance(node, dict) and path[-1] in node:
+        del node[path[-1]]
+
+
+def strip_template_owned(worca_settings: dict) -> dict:
+    """Return a deep-copy of worca_settings with every TEMPLATE_OWNED_KEYS path
+    removed, then restore CROSS_TEMPLATE_CARVEOUTS from the original.
+
+    Called by run launch before a template's config is deep-merged in, so
+    project Settings can't leak template-driven keys into the merge base.
+    Cross-template carve-outs (e.g. stages.preflight) are preserved so they
+    still flow through to the merged config — the template can still override
+    them via deep-merge if it explicitly sets a value.
+
+    Missing intermediate paths are skipped silently — a clean project that
+    never customized any of these keys is a no-op.
+    """
+    # Snapshot carve-outs from the original settings BEFORE stripping.
+    saved_carveouts: list[tuple[tuple[str, ...], object]] = []
+    for path in CROSS_TEMPLATE_CARVEOUTS:
+        value = _get_at_path(worca_settings, path)
+        if value is not None:
+            saved_carveouts.append((path, copy.deepcopy(value)))
+
+    # Strip the template-owned paths.
+    result = copy.deepcopy(worca_settings)
+    for path in TEMPLATE_OWNED_KEYS:
+        _delete_at_path(result, path)
+
+    # Restore carve-outs so they survive into the template-merge base.
+    for path, value in saved_carveouts:
+        _set_at_path(result, path, value)
+
+    return result
 
 
 @dataclass
@@ -63,6 +180,230 @@ def deep_merge_config(base: dict, overlay: dict) -> dict:
             else:
                 result[key] = value
     return result
+
+
+# Loop names recognised by the pipeline. Each defaults to LOOP_DEFAULT_LIMIT
+# iterations when not configured (runner.within_loop_limit / _get_loop_limit).
+# Enumerated here so a standalone export can materialise the loop block.
+PIPELINE_LOOP_NAMES: tuple[str, ...] = (
+    "implement_test",
+    "plan_review",
+    "pr_changes",
+    "restart_planning",
+)
+LOOP_DEFAULT_LIMIT = 5
+
+# Agent-config defaults applied inline at consumption (stages.get_stage_config):
+# model shorthand "sonnet", max_turns 30, coordinator max_beads 0. Kept here as
+# named constants so the drift test (tests/test_templates_standalone.py) can
+# assert default_pipeline_config() still matches the live resolver defaults.
+AGENT_DEFAULT_MODEL = "sonnet"
+AGENT_DEFAULT_MAX_TURNS = 30
+COORDINATOR_DEFAULT_MAX_BEADS = 0
+
+# Effort block defaults (runner.py resolve path).
+EFFORT_DEFAULT_AUTO_MODE = "adaptive"
+EFFORT_DEFAULT_AUTO_CAP = "xhigh"
+
+# Circuit-breaker defaults (schemas/keys.json defaults block).
+CIRCUIT_BREAKER_DEFAULTS = {
+    "enabled": True,
+    "max_consecutive_failures": 3,
+    "classifier_model": "haiku",
+}
+
+
+def default_pipeline_config() -> dict:
+    """Build the built-in default config snapshot for the template-owned keys
+    that survive export (``stages``, ``agents``, ``effort``, ``loops``,
+    ``circuit_breaker``).
+
+    This is the materialisation base for a *standalone* export: the template's
+    sparse delta is deep-merged over this snapshot so the exported config is a
+    complete, version-pinned picture rather than a delta interpreted against the
+    importer's defaults.
+
+    Derived from the live constants in ``stages.py`` (stage order, default-agent
+    map, default-disabled set) where possible so it tracks those automatically;
+    the inline scalar defaults are mirrored from named constants above and
+    guarded by a drift test against the real resolvers. Governance/milestones
+    are deliberately omitted — they are stripped by CONFIG_ALLOWLIST on export.
+    """
+    from worca.orchestrator.stages import (
+        STAGE_AGENT_MAP,
+        STAGE_ORDER,
+        Stage,
+        _STAGES_DEFAULT_DISABLED,
+    )
+
+    stages: dict = {}
+    # STAGE_ORDER omits LEARN (it's not in the per-stage flow); include it so the
+    # snapshot covers every stage a template might toggle.
+    for stage in (*STAGE_ORDER, Stage.LEARN):
+        entry: dict = {"enabled": stage not in _STAGES_DEFAULT_DISABLED}
+        agent = STAGE_AGENT_MAP.get(stage)
+        if agent is not None:
+            entry["agent"] = agent
+        stages[stage.value] = entry
+
+    agents: dict = {}
+    for agent in sorted(a for a in STAGE_AGENT_MAP.values() if a is not None):
+        cfg = {"model": AGENT_DEFAULT_MODEL, "max_turns": AGENT_DEFAULT_MAX_TURNS}
+        if agent == "coordinator":
+            cfg["max_beads"] = COORDINATOR_DEFAULT_MAX_BEADS
+        agents[agent] = cfg
+
+    return {
+        "stages": stages,
+        "agents": agents,
+        "effort": {
+            "auto_mode": EFFORT_DEFAULT_AUTO_MODE,
+            "auto_cap": EFFORT_DEFAULT_AUTO_CAP,
+        },
+        "loops": {name: LOOP_DEFAULT_LIMIT for name in PIPELINE_LOOP_NAMES},
+        "circuit_breaker": dict(CIRCUIT_BREAKER_DEFAULTS),
+    }
+
+
+def materialize_config(template_config: dict) -> dict:
+    """Return the effective config for a *standalone* export: the built-in
+    defaults (``default_pipeline_config``) with the template's sparse delta
+    deep-merged on top.
+
+    Only the keys present in the defaults snapshot are materialised. Any other
+    key the template carries (e.g. ``models``) is preserved verbatim on top, so
+    nothing the template declared is lost. Secret scrubbing is NOT done here —
+    the manifest still goes through ``redact_bundle`` after materialisation.
+    """
+    return deep_merge_config(default_pipeline_config(), template_config or {})
+
+
+VALID_EFFORT_LEVELS = frozenset({"low", "medium", "high", "xhigh", "max"})
+
+
+def validate_merged_config(merged: dict) -> list[dict]:
+    """Run validation rules against an already-merged worca config.
+
+    Single source of truth for the validation ruleset. Used by both
+    `TemplateResolver.validate` (template + base settings → merge → check)
+    and the CLI's `worca templates validate --config <json>` (caller has
+    pre-merged config in hand).
+
+    Returns a list of issues:
+        {"field": <dot.path>, "severity": "error" | "warning", "message": <str>}
+
+    "error" means a run with this config would break; "warning" is suspicious
+    but legal (e.g. model alias falls back via `_DEFAULT_MODEL_MAP`).
+    """
+    from worca.orchestrator.stages import ALL_AGENTS
+    from worca.utils.settings import _DEFAULT_MODEL_MAP
+
+    issues: list[dict] = []
+    if not isinstance(merged, dict):
+        issues.append({
+            "field": "",
+            "severity": "error",
+            "message": "config must be a JSON object",
+        })
+        return issues
+
+    known_agents = {v for v in ALL_AGENTS if v is not None}
+    agents_config = merged.get("agents", {}) if isinstance(merged.get("agents"), dict) else {}
+    models_config = merged.get("models", {}) if isinstance(merged.get("models"), dict) else {}
+
+    for agent_key in agents_config:
+        if agent_key not in known_agents:
+            issues.append({
+                "field": f"agents.{agent_key}",
+                "severity": "error",
+                "message": (
+                    f"Unknown agent '{agent_key}'. "
+                    f"Must be one of: {sorted(known_agents)}"
+                ),
+            })
+
+    for agent_name in known_agents:
+        agent_data = agents_config.get(agent_name, {})
+        if not isinstance(agent_data, dict):
+            continue
+
+        model = agent_data.get("model")
+        if (
+            model
+            and isinstance(model, str)
+            and model not in models_config
+            and model not in ("opa", "oha")
+            and model not in _DEFAULT_MODEL_MAP
+        ):
+            issues.append({
+                "field": f"agents.{agent_name}.model",
+                "severity": "warning",
+                "message": (
+                    f"Model alias '{model}' is not defined in worca.models "
+                    "and not in default map (may be treated as a raw model ID)"
+                ),
+            })
+
+        agent_effort = agent_data.get("effort")
+        if agent_effort and agent_effort not in VALID_EFFORT_LEVELS:
+            issues.append({
+                "field": f"agents.{agent_name}.effort",
+                "severity": "error",
+                "message": (
+                    f"Invalid effort level for {agent_name}: '{agent_effort}'. "
+                    f"Must be one of: {sorted(VALID_EFFORT_LEVELS)}"
+                ),
+            })
+
+        if "max_beads" in agent_data:
+            max_beads = agent_data["max_beads"]
+            if not isinstance(max_beads, int) or isinstance(max_beads, bool):
+                issues.append({
+                    "field": f"agents.{agent_name}.max_beads",
+                    "severity": "error",
+                    "message": f"agents.{agent_name}.max_beads must be an integer",
+                })
+            elif max_beads < 0:
+                issues.append({
+                    "field": f"agents.{agent_name}.max_beads",
+                    "severity": "error",
+                    "message": f"agents.{agent_name}.max_beads must be >= 0",
+                })
+            elif max_beads > 50:
+                issues.append({
+                    "field": f"agents.{agent_name}.max_beads",
+                    "severity": "error",
+                    "message": f"agents.{agent_name}.max_beads must be <= 50",
+                })
+
+    effort_config = merged.get("effort", {})
+    if isinstance(effort_config, dict):
+        auto_cap = effort_config.get("auto_cap")
+        if auto_cap and auto_cap not in VALID_EFFORT_LEVELS:
+            issues.append({
+                "field": "effort.auto_cap",
+                "severity": "error",
+                "message": (
+                    f"Invalid effort level for auto_cap: '{auto_cap}'. "
+                    f"Must be one of: {sorted(VALID_EFFORT_LEVELS)}"
+                ),
+            })
+
+        for agent_name, agent_effort in effort_config.items():
+            if agent_name == "auto_cap" or not isinstance(agent_effort, dict):
+                continue
+            effort_level = agent_effort.get("effort")
+            if effort_level and effort_level not in VALID_EFFORT_LEVELS:
+                issues.append({
+                    "field": f"effort.{agent_name}.effort",
+                    "severity": "error",
+                    "message": (
+                        f"Invalid effort level for {agent_name}: '{effort_level}'. "
+                        f"Must be one of: {sorted(VALID_EFFORT_LEVELS)}"
+                    ),
+                })
+
+    return issues
 
 
 class TemplateResolver:
@@ -145,7 +486,7 @@ class TemplateResolver:
     def list(self) -> list[TemplateSummary]:
         """Return all templates across all tiers, deduplicated by ID.
 
-        Priority: user > project > builtin (highest wins on collision).
+        Priority: project > user > builtin (highest wins on collision).
         Sort order: builtins alpha, project alpha, user newest-first.
         """
         builtins = self._scan_tier(self._builtin_dir, "builtin")
@@ -155,13 +496,13 @@ class TemplateResolver:
         # Collect seen IDs in priority order (highest priority first)
         seen: dict[str, TemplateSummary] = {}
 
+        # Project templates sorted alphabetically
+        for t in sorted(projects, key=lambda t: t.id):
+            seen.setdefault(t.id, t)
+
         # User templates sorted newest-first
         users_sorted = sorted(users, key=lambda t: t.created_at, reverse=True)
         for t in users_sorted:
-            seen.setdefault(t.id, t)
-
-        # Project templates sorted alphabetically
-        for t in sorted(projects, key=lambda t: t.id):
             seen.setdefault(t.id, t)
 
         # Builtin templates sorted alphabetically
@@ -183,10 +524,10 @@ class TemplateResolver:
         return result_builtins + result_projects + result_users
 
     def get(self, template_id: str) -> "Template | None":
-        """Fetch a template by ID. Searches user > project > builtin."""
+        """Fetch a template by ID. Searches project > user > builtin."""
         for tier, tier_dir in [
-            ("user", self._user_dir),
             ("project", self._project_dir),
+            ("user", self._user_dir),
             ("builtin", self._builtin_dir),
         ]:
             if tier_dir is None or not tier_dir.is_dir():
@@ -220,20 +561,27 @@ class TemplateResolver:
         (dest / "resolved-params.json").write_text(json.dumps(resolved_params, indent=2), encoding="utf-8")
 
     def save(self, template_data: dict, scope: str = "project") -> "Template":
-        """Save a new template. scope is 'project' or 'user'.
+        """Save (upsert) a template. scope is 'project' or 'user'.
+
+        Saving a template whose id matches a built-in is explicitly allowed:
+        the project/user copy shadows the built-in, which is the canonical
+        editing flow. scope is restricted to 'project'|'user' so there is
+        no path by which save() can overwrite a built-in on disk.
 
         Validates all fields. Raises TemplateError(validation_error) with a
-        details list if any field is invalid. Raises TemplateError(builtin_conflict)
-        if the id matches a built-in template. Creates {scope_dir}/{id}/ and writes
-        template.json with builtin=false and created_at set to now.
+        details list if any field is invalid. Creates {scope_dir}/{id}/ and
+        writes template.json with builtin=false and created_at set to now.
         """
         scope_dir = self._user_dir if scope == "user" else self._project_dir
 
         errors = []
 
         template_id = template_data.get("id", "")
-        if not isinstance(template_id, str) or not re.match(r"^[a-z0-9\-]{1,64}$", template_id):
-            errors.append({"field": "id", "message": f"id must match [a-z0-9-]{{1,64}}, got {template_id!r}"})
+        # Underscores allowed: worca init's auto-migrated `_legacy-settings`
+        # template (and any intentionally-private id) must round-trip
+        # through save() without tripping the validator.
+        if not isinstance(template_id, str) or not re.match(r"^[a-z0-9_\-]{1,64}$", template_id):
+            errors.append({"field": "id", "message": f"id must match [a-z0-9_-]{{1,64}}, got {template_id!r}"})
 
         name = template_data.get("name", "")
         if not isinstance(name, str) or not name or len(name) > 80:
@@ -258,14 +606,6 @@ class TemplateResolver:
                 "Template validation failed.",
                 code="validation_error",
                 details=errors,
-            )
-
-        # Check for builtin ID conflict
-        if self._builtin_dir is not None and (self._builtin_dir / template_id).is_dir():
-            raise TemplateError(
-                f"Cannot save template with built-in ID '{template_id}'.",
-                code="builtin_conflict",
-                details={"template_id": template_id},
             )
 
         scope_path = Path(scope_dir)
@@ -303,18 +643,15 @@ class TemplateResolver:
         )
 
     def delete(self, template_id: str, scope: str = "project") -> bool:
-        """Delete a template directory. Cannot delete built-ins.
+        """Delete a template directory from project or user scope.
 
-        Raises TemplateError(builtin) if template_id matches a built-in.
+        Deleting a project/user template whose id matches a built-in is
+        explicitly allowed: it un-shadows the built-in, which is the
+        symmetric inverse of `save()`'s shadow-create. scope is restricted
+        to 'project'|'user' so this never touches the built-in tier.
+
         Raises TemplateError(not_found) if not found in the given scope.
         """
-        if self._builtin_dir is not None and (self._builtin_dir / template_id).is_dir():
-            raise TemplateError(
-                f"Cannot delete built-in template '{template_id}'.",
-                code="builtin",
-                details={"template_id": template_id},
-            )
-
         scope_dir = self._user_dir if scope == "user" else self._project_dir
         if scope_dir is None:
             raise TemplateError(
@@ -350,6 +687,267 @@ class TemplateResolver:
             )
         rendered_config = _render_params_in_dict(template.config, params or {}, template.params)
         return deep_merge_config(current_worca, rendered_config)
+
+    def validate(
+        self, template_id: str, base_settings: dict, params: dict | None = None
+    ) -> list[dict]:
+        """Simulate apply() over base_settings (or {}); return a list of validation issues.
+
+        Renders params, deep-merges the template config with base settings,
+        then runs `validate_merged_config` on the merged result. Use
+        `validate_merged_config` directly when the caller already has a
+        merged config in hand (e.g. the CLI's interactive `--config` mode).
+
+        Issue schema:
+            {"field": <dot.path>, "severity": "error" | "warning", "message": <str>}
+        """
+        template = self.get(template_id)
+        if template is None:
+            raise TemplateError(
+                f"Template '{template_id}' not found.",
+                code="not_found",
+                details={"template_id": template_id},
+            )
+
+        rendered_config = _render_params_in_dict(template.config, params or {}, template.params)
+        merged = deep_merge_config(base_settings or {}, rendered_config)
+        return validate_merged_config(merged)
+
+    def _find_core_dir(self) -> Path | None:
+        """Locate the directory holding core agent prompts (`*.md`/`*.block.md`).
+
+        Self-contained duplication composes each core prompt with the source
+        template's overlay, so we need the core prompt set. It lives as a
+        sibling of the templates dir in both supported layouts:
+
+        - runtime install: ``.claude/worca/templates`` → ``.claude/worca/agents/core``
+        - package/dev:      ``src/worca/templates``    → ``src/worca/agents/core``
+
+        We probe the parent of each known tier dir (builtin/project/user) for an
+        ``agents/core`` sibling. Returns the first that exists, else None — in
+        which case duplication gracefully skips the self-containment pass.
+        """
+        candidates: list[Path] = []
+        for tier_dir in (self._builtin_dir, self._project_dir, self._user_dir):
+            if tier_dir is None:
+                continue
+            # Sibling of the templates dir: <parent>/agents/core
+            candidates.append(tier_dir.parent / "agents" / "core")
+        for cand in candidates:
+            if cand.is_dir():
+                return cand
+        return None
+
+    def resolve_self_contained_agents(
+        self,
+        src_template: "Template",
+        core_dir: Path,
+    ) -> dict[str, str]:
+        """Return ``{filename: content}`` for a fully-resolved, self-contained
+        prompt set: every core role + block composed with the source template's
+        overlay.
+
+        The resolution chain is core → (source) template overlay only — project
+        overrides (``.claude/agents``) are deliberately excluded by pointing the
+        OverlayResolver at a non-existent overrides dir. Placeholders
+        (``{{...}}`` / ``{{block:...}}`` / ``{{#if}}``) are preserved verbatim;
+        they are filled at runtime, not at resolution time.
+
+        Shared by ``duplicate`` (writes the result to disk) and standalone
+        ``export`` (carries the result as ``_overlays`` in the bundle).
+        """
+        from worca.orchestrator.overlay import OverlayResolver
+
+        # An overrides_dir that cannot exist → the project-overlay tier is
+        # always skipped, so only core + template overlay are composed.
+        non_existent_overrides = str(core_dir / "__no_project_overrides__")
+        resolver = OverlayResolver(overrides_dir=non_existent_overrides)
+
+        src_agents_dir = (
+            str(src_template.agents_dir) if src_template.agents_dir else None
+        )
+
+        roles: list[str] = []
+        blocks: list[str] = []
+        for entry in sorted(core_dir.iterdir()):
+            if not entry.is_file() or entry.suffix != ".md":
+                continue
+            name = entry.name
+            if name.endswith(".block.md"):
+                blocks.append(name[: -len(".block.md")])
+            else:
+                roles.append(name[: -len(".md")])
+
+        out: dict[str, str] = {}
+        for role in roles:
+            core_content = (core_dir / f"{role}.md").read_text(encoding="utf-8")
+            out[f"{role}.md"] = resolver.resolve(role, core_content, src_agents_dir)
+
+        for block in blocks:
+            resolved = resolver.resolve_block(block, str(core_dir), src_agents_dir)
+            if resolved is None:
+                continue
+            out[f"{block}.block.md"] = resolved
+
+        return out
+
+    def _write_self_contained_agents(
+        self,
+        src_template: "Template",
+        dest_agents_dir: Path,
+        core_dir: Path,
+    ) -> None:
+        """Compose every core role + block with the source template's overlay
+        and write the fully-resolved prompts into ``dest_agents_dir``.
+
+        The written files OVERWRITE any raw overlays already copied by the
+        copytree step, leaving a uniform, resolved, self-contained set.
+        """
+        dest_agents_dir.mkdir(parents=True, exist_ok=True)
+        for fname, content in self.resolve_self_contained_agents(
+            src_template, core_dir
+        ).items():
+            (dest_agents_dir / fname).write_text(content, encoding="utf-8")
+
+    def duplicate(
+        self,
+        src_id: str,
+        dst_id: str,
+        dst_scope: str = "project",
+        core_dir: str | Path | None = None,
+    ) -> "Template":
+        """Resolve src_id from any tier, write a copy to dst_scope as dst_id.
+
+        Duplicating a built-in to project/user scope with the SAME id is
+        the canonical "shadow a built-in to edit it" UX path — that is
+        explicitly supported. `dst_scope` is already restricted to
+        'project' or 'user', so there is no path by which `duplicate`
+        can overwrite a built-in on disk.
+
+        The duplicate is made **self-contained**: its ``agents/`` dir carries a
+        complete, resolved prompt file for every core agent role and block —
+        the core prompt composed with the source template's overlay — so the
+        copy no longer depends on the shipped core prompts at runtime.
+        Placeholders are preserved (filled at runtime); project overrides are
+        NOT baked in. If a core prompt dir can't be located, the self-contained
+        pass is skipped gracefully (the duplicate keeps the source's raw
+        overlays only).
+
+        Args:
+            src_id: Template id to copy from (resolves from any tier: project → user → builtin)
+            dst_id: Id to assign to the copy in the destination scope
+            dst_scope: "project" or "user" (builtin is not a valid destination)
+            core_dir: Optional explicit core-prompt directory. None → auto-detect
+                as a sibling of the templates tier dir. Mainly for tests.
+
+        Returns:
+            Template instance representing the copied template
+
+        Raises:
+            TemplateError(name_collision): if dst_id already exists in dst_scope
+            TemplateError(not_found): if src_id not found
+            TemplateError(validation_error): if dst_scope is invalid or unavailable
+        """
+        # Validate destination scope
+        if dst_scope not in ("project", "user"):
+            raise TemplateError(
+                f"dst_scope must be 'project' or 'user', got {dst_scope!r}",
+                code="validation_error",
+                details={"dst_scope": dst_scope},
+            )
+
+        # Determine destination directory
+        scope_dir = self._user_dir if dst_scope == "user" else self._project_dir
+        if scope_dir is None:
+            raise TemplateError(
+                f"Destination scope '{dst_scope}' is not available.",
+                code="validation_error",
+                details={"dst_scope": dst_scope},
+            )
+
+        scope_path = Path(scope_dir)
+        tmpl_dir = scope_path / dst_id
+
+        # Check for name collision in target scope
+        if tmpl_dir.is_dir():
+            raise TemplateError(
+                f"Template ID '{dst_id}' already exists in {dst_scope} scope.",
+                code="name_collision",
+                details={"template_id": dst_id, "scope": dst_scope},
+            )
+
+        # Load source template using existing get() method (resolves by priority)
+        src_template = self.get(src_id)
+        if src_template is None:
+            raise TemplateError(
+                f"Template '{src_id}' not found.",
+                code="not_found",
+                details={"template_id": src_id},
+            )
+
+        # Create destination directory
+        scope_path.mkdir(parents=True, exist_ok=True)
+        tmpl_dir.mkdir(parents=True, exist_ok=True)
+
+        # Prepare destination template data - preserve all fields from source
+        now = datetime.now(timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ")
+        dst_data = {
+            "id": dst_id,
+            "name": src_template.name,
+            "description": src_template.description,
+            "builtin": False,  # Duplicates are never built-in
+            "created_at": now,
+            "tags": list(src_template.tags),  # Copy tags
+            "params": copy.deepcopy(src_template.params),  # Deep copy params
+            "config": copy.deepcopy(src_template.config),  # Deep copy config
+        }
+
+        # Read the source template.json to preserve any custom fields
+        source_manifest = Path(src_template.source_dir) / "template.json"
+        if source_manifest.is_file():
+            source_data = json.loads(source_manifest.read_text(encoding="utf-8"))
+            # Preserve any additional fields not in our base set
+            for key, value in source_data.items():
+                if key not in ["id", "name", "description", "builtin", "created_at", "tags", "params", "config"]:
+                    dst_data[key] = value
+
+        # Write template.json
+        (tmpl_dir / "template.json").write_text(json.dumps(dst_data, indent=2), encoding="utf-8")
+
+        dest_agents_dir = tmpl_dir / "agents"
+
+        # Copy agents directory if present
+        if src_template.agents_dir and Path(src_template.agents_dir).is_dir():
+            src_agents_dir = Path(src_template.agents_dir)
+            if dest_agents_dir.is_dir():
+                shutil.rmtree(dest_agents_dir)
+            shutil.copytree(src_agents_dir, dest_agents_dir)
+
+        # Self-containment pass: compose every core role + block with the
+        # source template's overlay and write the resolved prompts, overwriting
+        # the raw overlays copied above. Skips gracefully if no core dir found.
+        resolved_core_dir = Path(core_dir) if core_dir else self._find_core_dir()
+        if resolved_core_dir is not None and resolved_core_dir.is_dir():
+            self._write_self_contained_agents(
+                src_template, dest_agents_dir, resolved_core_dir
+            )
+
+        # Return new Template instance
+        tier = "user" if dst_scope == "user" else "project"
+        agents_path = tmpl_dir / "agents"
+        return Template(
+            id=dst_id,
+            name=dst_data["name"],
+            description=dst_data["description"],
+            builtin=False,
+            created_at=now,
+            tags=dst_data["tags"],
+            params=dst_data["params"],
+            config=dst_data["config"],
+            agents_dir=str(agents_path) if agents_path.is_dir() else None,
+            source_dir=str(tmpl_dir),
+            tier=tier,
+        )
 
 
 def _render_params_in_dict(obj, params: dict, param_defs: dict):

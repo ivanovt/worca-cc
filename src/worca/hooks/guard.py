@@ -159,9 +159,14 @@ def _is_file_write_via_bash(command: str) -> bool:
     if _is_safe_command(command):
         return False
 
+    # Strip /dev/null output suppression first (not a file write)
+    # Matches: 2>/dev/null, >/dev/null, 2>>/dev/null, > /dev/null, etc.
+    # The \b boundary prevents matching /dev/nullx as /dev/null.
+    stripped = re.sub(r'\d*>\s*/dev/null\b', '', command)
+
     # Shell redirection: > or >> to a file
     # Match: cat > file, echo > file, printf > file, etc.
-    if re.search(r'(?<!\|)\s*>\s*[^\s|&;]', command):
+    if re.search(r'(?<!\|)\s*>\s*[^\s|&;]', stripped):
         return True
 
     # Heredoc writes: << 'EOF' or <<EOF combined with > or cat >

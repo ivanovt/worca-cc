@@ -79,6 +79,12 @@ High-volume — subscribers should filter these unless you need deep observabili
 | `pipeline.agent.text` | `AGENT_TEXT` |
 | `pipeline.agent.completed` | `AGENT_COMPLETED` |
 
+### `pipeline.iteration.*` — iteration-level analytics
+
+| Type | Constant |
+|---|---|
+| `pipeline.iteration.access` | `ITERATION_ACCESS` |
+
 ### `pipeline.bead.*` — beads tracker integration
 
 | Type | Constant |
@@ -97,7 +103,21 @@ High-volume — subscribers should filter these unless you need deep observabili
 | `pipeline.git.branch_created` | `GIT_BRANCH_CREATED` |
 | `pipeline.git.commit` | `GIT_COMMIT` |
 | `pipeline.git.pr_created` | `GIT_PR_CREATED` |
+| `pipeline.git.pr_deferred` | `GIT_PR_DEFERRED` |
 | `pipeline.git.pr_merged` | `GIT_PR_MERGED` |
+
+**`pipeline.git.pr_deferred` — PR creation skipped, deferred to operator**
+
+Emitted by the guardian stage when `worca.stages.pr.defer` is `true` (or `WORCA_DEFER_PR=1` is set by the workspace executor). Signals that a PR-ready branch exists but the pipeline intentionally did not open a PR — an operator or UI action is expected to do so. Chat-rendered (Tier 1).
+
+**Payload fields:**
+
+| Field | Type | Description |
+|---|---|---|
+| `pr_title` | string | Proposed PR title (from the guardian's draft) |
+| `base_branch` | string | Target branch the PR would merge into |
+| `head_branch` | string | Branch containing the changes |
+| `commit_sha` | string? | HEAD commit SHA at the time of deferral |
 
 ### `pipeline.test.*` — test loop
 
@@ -149,6 +169,9 @@ High-volume — subscribers should filter these unless you need deep observabili
 | `pipeline.hook.test_gate` | `HOOK_TEST_GATE` |
 | `pipeline.hook.dispatch_blocked` | `HOOK_DISPATCH_BLOCKED` |
 | `pipeline.hook.dispatch_allowed` | `HOOK_DISPATCH_ALLOWED` |
+| `pipeline.hook.graph_query` | `HOOK_GRAPH_QUERY` |
+
+`pipeline.hook.graph_query` is emitted live by the `post_tool_use` hook on every knowledge-graph query (graphify CLI read or CRG MCP tool); payload `{engine, op, agent?}`. The UI server (`graph-query-aggregator.js`) folds these into live `graphify_invocations` / `crg_invocations` / `crg_tool_counts` for the still-running iteration so the graphify/CRG badges update during the run, mirroring how `dispatch_{allowed,blocked}` feed the skills/subagents badges. The runner's completion-time tally remains authoritative. Like the dispatch events, it is high-frequency telemetry and is **not** chat-notifiable (no Tier 1 renderer).
 
 ### `pipeline.plan_review.*` — plan review detail
 
@@ -231,7 +254,7 @@ The integrations layer (`worca-ui/server/integrations/`) renders a curated subse
 
 Today's Tier 1 typically includes:
 - `pipeline.run.completed`, `pipeline.run.failed`, `pipeline.run.interrupted`
-- `pipeline.git.pr_created`, `pipeline.git.pr_merged`
+- `pipeline.git.pr_created`, `pipeline.git.pr_deferred`, `pipeline.git.pr_merged`
 - `pipeline.circuit_breaker.tripped`
 - `pipeline.cost.budget_warning`
 

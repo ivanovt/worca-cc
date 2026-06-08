@@ -2,7 +2,7 @@
 title: Controlling a run
 description: Pause, resume, and stop a pipeline, plus the optional approval gates.
 sidebar:
-  order: 3
+  order: 5
 ---
 
 The run-detail header carries the lifecycle controls — **pause**, **resume**, and **stop** — with a live status badge that tracks every transition.
@@ -17,9 +17,7 @@ The run-detail header carries the lifecycle controls — **pause**, **resume**, 
 
 A paused or interrupted run keeps its worktree, so resuming loses nothing. A run you've stopped can still be resumed later, as long as its worktree hasn't been [cleaned up](/advanced/worktree-cleanup/).
 
-:::note[Screenshot — coming soon]
-The run-detail header: the status badge with pause / resume / stop buttons.
-:::
+![The run-detail header: the status badge with pause / resume / stop buttons.](/screenshots/controlling-a-run/01-header.png)
 
 ## Approval gates
 

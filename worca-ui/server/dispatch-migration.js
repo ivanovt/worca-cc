@@ -63,7 +63,9 @@ function _absorbFlatDispatchKeys(dispatch) {
 //   v1: collapse stale Explore-only subagent default; narrow worca-* skills glob.
 //   v2: move general-purpose from subagents.always_disallowed to default_denied
 //       (still denied by default, but allowable per-agent).
-export const DISPATCH_MIGRATION_VERSION = 2;
+//   v3: release general-purpose from default_denied entirely (now allowed under
+//       the "*" wildcard, matching the shipped default after the policy change).
+export const DISPATCH_MIGRATION_VERSION = 3;
 
 // Pre-W-054 (W-038-era) shipped subagent default: every pipeline agent capped
 // to Explore-only. coordinator:[] / empty lists fall through to _defaults and
@@ -185,6 +187,30 @@ export function adoptGeneralPurposeAllowable(subagentsCfg) {
 }
 
 /**
+ * Remove general-purpose from default_denied to match the shipped default,
+ * which now allows it under the '*' wildcard. Reverses the untouched v2
+ * artifact (default_denied exactly `['general-purpose']`); a customized
+ * denylist (extra entries) is left alone. Returns true if changed. Mirror of
+ * release_general_purpose_default_deny() in tracking.py.
+ *
+ * @param {object} subagentsCfg
+ * @returns {boolean}
+ */
+export function releaseGeneralPurposeDefaultDeny(subagentsCfg) {
+  if (!subagentsCfg || typeof subagentsCfg !== 'object') return false;
+  const denied = subagentsCfg.default_denied;
+  if (
+    !Array.isArray(denied) ||
+    denied.length !== 1 ||
+    denied[0] !== 'general-purpose'
+  ) {
+    return false;
+  }
+  subagentsCfg.default_denied = [];
+  return true;
+}
+
+/**
  * Apply one-time dispatch-default normalizations, gated by a version stamp.
  * Brings an *untouched* config up to current shipped defaults for the two
  * things that changed after W-054 (subagent per_agent_allow, skills denylist).
@@ -213,6 +239,14 @@ export function normalizeDispatchDefaults(governanceCfg) {
   if (adoptGeneralPurposeAllowable(dispatch.subagents)) {
     changes.push(
       'governance.dispatch.subagents: moved general-purpose from always_disallowed to default_denied (now allowable per-agent)',
+    );
+  }
+  // Runs AFTER adoptGeneralPurposeAllowable so a v1 config that just had
+  // general-purpose moved into default_denied gets it released in the same
+  // pass — net result: general-purpose allowed under "*", matching the default.
+  if (releaseGeneralPurposeDefaultDeny(dispatch.subagents)) {
+    changes.push(
+      'governance.dispatch.subagents: released general-purpose from default_denied (now allowed under "*", matching the shipped default)',
     );
   }
   governanceCfg.dispatch_migration_version = DISPATCH_MIGRATION_VERSION;

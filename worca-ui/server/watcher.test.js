@@ -255,7 +255,7 @@ describe('watcher', () => {
     ]);
   });
 
-  it('enriches iterations with aggregated dispatch_events when events.jsonl is present', () => {
+  it('enriches iterations with aggregated dispatch_events when events.jsonl is present (enrich:true)', () => {
     const runId = 'run-disp-1';
     const runDir = join(dir, 'runs', runId);
     mkdirSync(runDir, { recursive: true });
@@ -329,7 +329,7 @@ describe('watcher', () => {
       `${events.map((e) => JSON.stringify(e)).join('\n')}\n`,
     );
 
-    const runs = discoverRuns(dir);
+    const runs = discoverRuns(dir, { enrich: true });
     const run = runs.find((r) => r.id === runId);
     expect(run).toBeDefined();
     const iter = run.stages.implement.iterations[0];
@@ -349,6 +349,75 @@ describe('watcher', () => {
     expect(blocked.candidate).toBe('general-purpose');
     expect(blocked.count).toBe(1);
     expect(blocked.reason).toBe('Blocked: denylist');
+  });
+
+  // ---- list-path enrichment opt-out (#296) ----
+  // The run list / sidebar never render dispatch_events, so discoverRuns
+  // defaults to enrich:false and skips reading every project's events.jsonl —
+  // the hot-path fix. findRun (detailed view) still enriches.
+  const _writeRunWithEvents = (runId) => {
+    const runDir = join(dir, 'runs', runId);
+    mkdirSync(runDir, { recursive: true });
+    writeFileSync(
+      join(runDir, 'status.json'),
+      JSON.stringify({
+        run_id: runId,
+        started_at: '2026-04-13T11:00:00.000Z',
+        completed_at: '2026-04-13T11:05:00.000Z',
+        pipeline_status: 'completed',
+        stages: {
+          implement: {
+            status: 'completed',
+            iterations: [
+              {
+                number: 1,
+                started_at: '2026-04-13T11:00:00.000Z',
+                completed_at: '2026-04-13T11:05:00.000Z',
+              },
+            ],
+          },
+        },
+      }),
+    );
+    writeFileSync(
+      join(runDir, 'events.jsonl'),
+      `${JSON.stringify({
+        event_type: 'pipeline.hook.dispatch_allowed',
+        timestamp: '2026-04-13T11:01:00.000Z',
+        payload: { section: 'subagents', candidate: 'Explore' },
+      })}\n`,
+    );
+  };
+
+  it('discoverRuns defaults to enrich:false — no dispatch_events even when events.jsonl is present', () => {
+    // Enrichment is the only thing that reads events.jsonl in discoverRuns, so
+    // the absence of dispatch_events here transitively proves the list path
+    // performs no events.jsonl read (the #296 hot-path fix).
+    const runId = 'run-optout-1';
+    _writeRunWithEvents(runId);
+    const run = discoverRuns(dir).find((r) => r.id === runId);
+    expect(run).toBeDefined();
+    expect(run.stages.implement.iterations[0].dispatch_events).toBeUndefined();
+  });
+
+  it('discoverRuns({ enrich: true }) DOES enrich the same run (parity counterpart)', () => {
+    const runId = 'run-optout-enriched';
+    _writeRunWithEvents(runId);
+    const run = discoverRuns(dir, { enrich: true }).find((r) => r.id === runId);
+    expect(run.stages.implement.iterations[0].dispatch_events).toBeDefined();
+  });
+
+  it('findRun still enriches a runs/ run while discoverRuns (default) does not', () => {
+    const runId = 'run-optout-2';
+    _writeRunWithEvents(runId);
+    const viaFind = findRun(dir, runId);
+    const viaListScan = discoverRuns(dir).find((r) => r.id === runId);
+    expect(
+      viaFind.stages.implement.iterations[0].dispatch_events,
+    ).toBeDefined();
+    expect(
+      viaListScan.stages.implement.iterations[0].dispatch_events,
+    ).toBeUndefined();
   });
 
   it('discoverRuns_no_active_run: finds runs in runs/ without active_run file present', () => {
@@ -563,6 +632,119 @@ describe('watcher', () => {
     const asyncRuns = await discoverRunsAsync(dir);
     const asyncRun = asyncRuns.find((r) => r.run_id === wtRunId);
     expect(asyncRun.head_branch).toBeNull();
+  });
+
+  // ---- source_type / source_ref passthrough (#W-067) ----
+  it('source_type and source_ref pass through from status.json for a regular run', () => {
+    const runId = 'run-pr-src-1';
+    const runDir = join(dir, 'runs', runId);
+    mkdirSync(runDir, { recursive: true });
+    writeFileSync(
+      join(runDir, 'status.json'),
+      JSON.stringify({
+        run_id: runId,
+        started_at: '2026-06-04T10:00:00Z',
+        pipeline_status: 'running',
+        source_type: 'github_pr',
+        source_ref: 'gh:pr:42',
+        work_request: { title: 'pr revision' },
+        stages: { plan: { status: 'in_progress' } },
+      }),
+    );
+    const run = discoverRuns(dir).find((r) => r.run_id === runId);
+    expect(run).toBeDefined();
+    expect(run.source_type).toBe('github_pr');
+    expect(run.source_ref).toBe('gh:pr:42');
+  });
+
+  it('source_type and source_ref default to null when absent from status.json', () => {
+    const runId = 'run-no-src-1';
+    const runDir = join(dir, 'runs', runId);
+    mkdirSync(runDir, { recursive: true });
+    writeFileSync(
+      join(runDir, 'status.json'),
+      JSON.stringify({
+        run_id: runId,
+        started_at: '2026-06-04T10:00:00Z',
+        pipeline_status: 'running',
+        work_request: { title: 'no source' },
+        stages: { plan: { status: 'in_progress' } },
+      }),
+    );
+    const run = discoverRuns(dir).find((r) => r.run_id === runId);
+    expect(run).toBeDefined();
+    expect(run.source_type).toBeNull();
+    expect(run.source_ref).toBeNull();
+  });
+
+  it('worktree run passes source_type and source_ref from status.json', async () => {
+    const wtDir = join(dir, 'worktrees', 'wt-pr-src');
+    const wtRunId = 'run-wt-pr-src-1';
+    const wtRunDir = join(wtDir, '.worca', 'runs', wtRunId);
+    mkdirSync(wtRunDir, { recursive: true });
+    writeFileSync(
+      join(wtRunDir, 'status.json'),
+      JSON.stringify({
+        run_id: wtRunId,
+        started_at: '2026-06-04T10:00:00Z',
+        pipeline_status: 'running',
+        source_type: 'github_pr',
+        source_ref: 'gh:pr:99',
+        work_request: { title: 'wt pr revision' },
+        stages: { plan: { status: 'in_progress' } },
+      }),
+    );
+    const pipelinesDir = join(dir, 'multi', 'pipelines.d');
+    mkdirSync(pipelinesDir, { recursive: true });
+    writeFileSync(
+      join(pipelinesDir, `${wtRunId}.json`),
+      JSON.stringify({
+        run_id: wtRunId,
+        worktree_path: wtDir,
+        title: 'wt pr revision',
+        pid: 99994,
+        status: 'running',
+      }),
+    );
+    const run = discoverRuns(dir).find((r) => r.run_id === wtRunId);
+    expect(run).toBeDefined();
+    expect(run.is_worktree_run).toBe(true);
+    expect(run.source_type).toBe('github_pr');
+    expect(run.source_ref).toBe('gh:pr:99');
+  });
+
+  it('worktree run source_type and source_ref default to null when absent', async () => {
+    const wtDir = join(dir, 'worktrees', 'wt-no-src');
+    const wtRunId = 'run-wt-no-src-1';
+    const wtRunDir = join(wtDir, '.worca', 'runs', wtRunId);
+    mkdirSync(wtRunDir, { recursive: true });
+    writeFileSync(
+      join(wtRunDir, 'status.json'),
+      JSON.stringify({
+        run_id: wtRunId,
+        started_at: '2026-06-04T10:00:00Z',
+        pipeline_status: 'running',
+        work_request: { title: 'wt no source' },
+        stages: { plan: { status: 'in_progress' } },
+      }),
+    );
+    const pipelinesDir = join(dir, 'multi', 'pipelines.d');
+    mkdirSync(pipelinesDir, { recursive: true });
+    writeFileSync(
+      join(pipelinesDir, `${wtRunId}.json`),
+      JSON.stringify({
+        run_id: wtRunId,
+        worktree_path: wtDir,
+        title: 'wt no source',
+        pid: 99993,
+        status: 'running',
+      }),
+    );
+    const run = discoverRuns(dir).find((r) => r.run_id === wtRunId);
+    expect(run).toBeDefined();
+    expect(run.is_worktree_run).toBe(true);
+    expect(run.source_type).toBeNull();
+    expect(run.source_ref).toBeNull();
   });
 
   it('in-place run does not have head_branch', () => {

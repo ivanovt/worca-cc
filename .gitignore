@@ -15,6 +15,11 @@ node_modules/
 # Local overrides (machine-specific, never committed)
 .claude/settings.local.json
 .claude/agents/overrides/
+# Personal project-tier templates created via `worca templates create` /
+# `worca templates import --scope project`. Built-in templates that ship to
+# consumer projects live in `src/worca/templates/`; this directory is for
+# personal experiments only.
+.claude/templates/
 
 # Runtime copy created by `worca init .` — not tracked (source of truth is src/worca/)
 .claude/worca
@@ -22,6 +27,7 @@ node_modules/
 # Skills installed by `worca init` from src/worca/skills/ (source of truth lives there)
 .claude/skills/worca-analyze/
 .claude/skills/worca-template/
+.claude/skills/worca-notify/
 
 # Test artifacts
 test-results/
@@ -53,3 +59,12 @@ coverage.json
 coverage-out/
 htmlcov/
 worca-ui/app/utils/status-constants.js
+.playwright-mcp/
+watch-page-live.png
+
+# Local screenshots from Playwright debugging
+collision-dialog.png
+collision-dialog-fixed.png
+dual-collision-dialog.png
+import-complete.png
+legacy-settings-picker-with-aliases.png

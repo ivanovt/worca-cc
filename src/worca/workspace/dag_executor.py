@@ -106,6 +106,7 @@ def _build_child_cmd(
     prompt: str,
     guide_paths: list[str],
     plan_path: str | None,
+    max_beads: int | None = None,
 ) -> list[str]:
     run_worktree = os.path.join(
         os.path.dirname(os.path.dirname(__file__)), "scripts", "run_worktree.py"
@@ -119,6 +120,9 @@ def _build_child_cmd(
 
     if plan_path:
         cmd.extend(["--plan", plan_path])
+
+    if max_beads is not None:
+        cmd.extend(["--max-beads", str(max_beads)])
 
     return cmd
 
@@ -291,7 +295,7 @@ def _emit(event_type: str, payload: dict, *, workspace_id: str, settings_path: s
 class DagExecutor:
     """Dispatch workspace children in tier order via ThreadPoolExecutor."""
 
-    def __init__(self, manifest: dict, run_dir: str, *, settings_path: str | None = None):
+    def __init__(self, manifest: dict, run_dir: str, *, settings_path: str | None = None, max_beads: int | None = None):
         self._manifest = manifest
         self._run_dir = run_dir
         self._settings_path = settings_path
@@ -311,6 +315,7 @@ class DagExecutor:
         self._total_projects = sum(len(t["projects"]) for t in manifest["dag"]["tiers"])
         self._terminal_count = 0
         self._failed_count = 0
+        self._max_beads = max_beads
 
         self._completed_projects: dict[str, dict] = {}
         for child in manifest.get("children", []):
@@ -666,6 +671,7 @@ class DagExecutor:
             prompt=self._prompt,
             guide_paths=self._guide_paths + context_guides,
             plan_path=plan_path,
+            max_beads=self._max_beads,
         )
 
         project_path = self._projects_by_name.get(project, project)

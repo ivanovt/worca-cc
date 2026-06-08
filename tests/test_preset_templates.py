@@ -122,8 +122,11 @@ class TestFeatureConfig:
     def test_learn_enabled(self):
         assert self._config()["stages"]["learn"]["enabled"] is True
 
-    def test_no_effort_override(self):
-        assert "effort" not in self._config()
+    def test_effort_matches_shipped_defaults(self):
+        # Post-Phase-1: built-ins enumerate effort explicitly. `feature` doesn't
+        # override either knob — values must match the shipped settings.json
+        # defaults so picking this template is behaviorally a no-op for effort.
+        assert self._config()["effort"] == {"auto_mode": "adaptive", "auto_cap": "xhigh"}
 
 
 class TestFeatureFastConfig:
@@ -151,8 +154,9 @@ class TestFeatureFastConfig:
     def test_loop_plan_review(self):
         assert self._config()["loops"]["plan_review"] == 3
 
-    def test_no_effort_override(self):
-        assert "effort" not in self._config()
+    def test_effort_matches_shipped_defaults(self):
+        # Same as `feature`: enriched, but no actual override.
+        assert self._config()["effort"] == {"auto_mode": "adaptive", "auto_cap": "xhigh"}
 
 
 class TestRefactorConfig:

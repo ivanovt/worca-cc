@@ -180,6 +180,8 @@ def backfill_prompt_context(prompt_builder, status: dict, logs_dir: str = None) 
         output = stage_outputs.get(stage_name)
         if not output:
             continue
+        if "structured_output" in output:
+            output = output["structured_output"]
         for output_field, context_key in field_mappings:
             if prompt_builder.get_context(context_key, _ABSENT) is not _ABSENT:
                 continue

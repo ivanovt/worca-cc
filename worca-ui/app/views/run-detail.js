@@ -2,14 +2,17 @@ import { html, nothing } from 'lit-html';
 import { unsafeHTML } from 'lit-html/directives/unsafe-html.js';
 import { elapsed, formatDuration, formatTimestamp } from '../utils/duration.js';
 import { effortLevelBadge } from '../utils/effort-badge.js';
+import { helpFor } from '../utils/help-links.js';
 import {
   AlertTriangle,
+  BarChart3,
   CircleCheck,
   ClipboardCopy,
   Clock,
   Coins,
   ExternalLink,
   FileText,
+  FolderTree,
   GitBranch,
   GitPullRequest,
   iconSvg,
@@ -33,8 +36,12 @@ import {
   priorityVariant,
   statusVariant,
 } from './beads-panel.js';
+import { prCommentsView } from './run-detail-pr-comments.js';
 import { resolveIterationTab } from './stage-tab-memory.js';
 import { stageTimelineView } from './stage-timeline.js';
+
+// ── deferred PR creation: client-side in-flight tracking ─────────────────
+export const _prCreationState = new Map(); // run.id -> { inFlight, error, created?, createdPrUrl? }
 
 // ── plan artifact: lazy fetch + dialog state ─────────────────────────────
 // The PLAN stage's plan_file (or {worktree}/MASTER_PLAN.md) is fetched from
@@ -45,8 +52,9 @@ import { stageTimelineView } from './stage-timeline.js';
 // W-061: plans are append-only numbered revisions (plan-001.md, …). The dialog
 // lists them and lets the user view any revision; the latest is the current
 // plan. Content is cached per (run, revision); the iteration list per run.
-const _runPlanText = new Map(); // `${runId}#${n|'latest'}` -> markdown | null (404)
+const _runPlanText = new Map(); // `${runId}#${n|'latest'}` -> markdown string
 const _runPlanTextFetching = new Set();
+export const _runPlanTextNotFound = new Set();
 const _runPlanIters = new Map(); // run_id -> [{n, file}]  (empty for legacy runs)
 const _runPlanItersFetching = new Set();
 let _planDialogRunId = null; // null when closed; run_id when open
@@ -69,7 +77,7 @@ function _planTextKey(runId, n) {
   return `${runId}#${n == null ? 'latest' : n}`;
 }
 
-function _ensurePlanItersFetched(run, rerender) {
+export function _ensurePlanItersFetched(run, rerender) {
   const runId = run?.id;
   if (!runId) return;
   if (_runPlanIters.has(runId) || _runPlanItersFetching.has(runId)) return;
@@ -79,28 +87,29 @@ function _ensurePlanItersFetched(run, rerender) {
   })
     .then(async (r) => {
       _runPlanItersFetching.delete(runId);
+      if (!r.ok) {
+        rerender?.();
+        return;
+      }
       let list = [];
-      if (r.ok) {
-        try {
-          const j = await r.json();
-          if (Array.isArray(j?.iterations)) list = j.iterations;
-        } catch {
-          list = [];
-        }
+      try {
+        const j = await r.json();
+        if (Array.isArray(j?.iterations)) list = j.iterations;
+      } catch {
+        list = [];
       }
       _runPlanIters.set(runId, list);
       rerender?.();
     })
     .catch(() => {
       _runPlanItersFetching.delete(runId);
-      _runPlanIters.set(runId, []);
       rerender?.();
     });
 }
 
 // n === null fetches the current (latest) plan via /plan; a number fetches a
 // specific revision via /plan?iteration=N.
-function _ensureRunPlanFetched(run, n, rerender) {
+export function _ensureRunPlanFetched(run, n, rerender) {
   const runId = run?.id;
   if (!runId) return;
   const key = _planTextKey(runId, n);
@@ -114,12 +123,16 @@ function _ensureRunPlanFetched(run, n, rerender) {
   fetch(url, { headers: { Accept: 'text/markdown' } })
     .then(async (r) => {
       _runPlanTextFetching.delete(key);
-      _runPlanText.set(key, r.ok ? await r.text() : null);
+      if (r.ok) {
+        _runPlanText.set(key, await r.text());
+        _runPlanTextNotFound.delete(key);
+      } else {
+        _runPlanTextNotFound.add(key);
+      }
       rerender?.();
     })
     .catch(() => {
       _runPlanTextFetching.delete(key);
-      _runPlanText.set(key, null);
       rerender?.();
     });
 }
@@ -147,6 +160,7 @@ function _planIterationButton(key, iter, run, rerender) {
   // it; in that case surface the editor's output here. Review-mode revisions
   // are produced by the NEXT planner iter, so plan_review iter N still ends
   // at plan-N.
+  if (iter?.status !== 'completed') return nothing;
   const iterNum = iter?.number || 1;
   const isEditOutput =
     key === 'plan_review' && iter?.outcome === 'approve_with_edits';
@@ -214,6 +228,7 @@ function _planArtifactDialog(run, rerender) {
     iters.length > 1
       ? html`
         <div class="plan-iter-selector" role="group" aria-label="Plan revisions">
+          ${helpFor('plans-guides')}
           ${iters.map((it) => {
             const isLatest = it.n === latestN;
             const active =
@@ -246,13 +261,22 @@ function _planArtifactDialog(run, rerender) {
       : nothing;
 
   const body = (() => {
-    if (planText === undefined) {
+    if (planText !== undefined) {
+      return html`<div class="markdown-body">${unsafeHTML(renderMarkdown(planText || ''))}</div>`;
+    }
+    if (_runPlanTextFetching.has(textKey)) {
       return html`<div class="plan-loading"><sl-spinner></sl-spinner> Loading plan…</div>`;
     }
-    if (planText === null) {
+    if (_runPlanTextNotFound.has(textKey)) {
+      const planInProgress =
+        run?.stages?.plan?.status === 'in_progress' ||
+        run?.stages?.plan_review?.status === 'in_progress';
+      if (planInProgress) {
+        return html`<div class="plan-loading">Planner is still writing this revision.</div>`;
+      }
       return html`<div class="plan-error">No plan file found for this run.</div>`;
     }
-    return html`<div class="markdown-body">${unsafeHTML(renderMarkdown(planText || ''))}</div>`;
+    return html`<div class="plan-loading"><sl-spinner></sl-spinner> Loading plan…</div>`;
   })();
   return html`
     <sl-dialog
@@ -309,13 +333,19 @@ function _sortedEntries(stages) {
 
 /**
  * Format a pipeline_template value for display.
- * Maps "builtin:xxx" to "worca:xxx" for legacy compatibility.
+ *
+ * Maps the legacy "worca:<id>" prefix produced by older worca-cc
+ * versions to "builtin:<id>" so historical runs render with the same
+ * tier vocabulary the rest of the UI uses (page header, dialogs,
+ * API, URLs). Current worca-cc emits "builtin:<id>" directly; this
+ * translation only fires on run records written before the rename.
+ *
  * Returns null for empty/null/undefined input.
  */
 export function formatPipelineTemplate(value) {
   if (!value) return null;
-  if (value.startsWith('builtin:'))
-    return `worca:${value.slice('builtin:'.length)}`;
+  if (value.startsWith('worca:'))
+    return `builtin:${value.slice('worca:'.length)}`;
   return value;
 }
 
@@ -698,7 +728,7 @@ function _issuesToMarkdown(issues, stageMode, baseHeading, iterNum) {
       i.suggestion ? `\n  - _Suggestion:_ ${i.suggestion}` : ''
     }`;
   if (stageMode !== 'review_and_edit') {
-    return head + issues.map(row).join('\n') + '\n';
+    return `${head}${issues.map(row).join('\n')}\n`;
   }
   const groups = _groupIssuesByResolution(issues, stageMode);
   const fmt = (h, rows) =>
@@ -735,8 +765,20 @@ function _effortRowView(iter, graphifyEnabled, crgEnabled) {
     ? html`<sl-badge class="effort-source-chip" variant="neutral" pill>capped</sl-badge>`
     : nothing;
 
+  // Bead chip — only surface when it conveys real divergence info.
+  // Suppress when the coordinator's bead label matches the resolved
+  // effort level (no divergence) or when the run is in
+  // `mode_disabled` (the label was never going to be consulted, so
+  // showing "ignored" is noise). The chip also stays suppressed
+  // when bead_classified.applied is true (level already matches and
+  // is implied by the source chip).
   const bc = e.bead_classified;
-  const showBeadRow = bc && bc.level != null && bc.applied === false;
+  const showBeadChip =
+    bc &&
+    bc.level != null &&
+    bc.applied === false &&
+    bc.level !== e.level &&
+    bc.skip_reason !== 'mode_disabled';
   const divergenceLabel =
     bc?.skip_reason === 'explicit_override' ? 'overridden' : 'ignored';
 
@@ -747,20 +789,19 @@ function _effortRowView(iter, graphifyEnabled, crgEnabled) {
       <sl-badge class="effort-source-chip" variant="neutral" pill>${sourceLabel}</sl-badge>
       ${escalationChips}
       ${cappedChip}
-      ${gfx}
-      ${crg}
-    </div>
-    ${
-      showBeadRow
-        ? html`
-      <div class="iteration-tags-row">
+      ${
+        showBeadChip
+          ? html`
+        <span class="iteration-tags-sep">·</span>
         <span class="meta-label">Bead:</span>
         ${unsafeHTML(effortLevelBadge(bc.level))}
         <sl-badge class="effort-divergence-chip" variant="warning" pill>${divergenceLabel}</sl-badge>
-      </div>
-    `
-        : nothing
-    }
+      `
+          : nothing
+      }
+      ${gfx}
+      ${crg}
+    </div>
   `;
 }
 
@@ -878,7 +919,7 @@ function _dispatchSectionInlineView(label, sectionKey, events) {
   return html`<span
     class="dispatch-events-section"
     data-dispatch-section="${sectionKey}"
-    ><span class="meta-label">${label}</span>${body}</span
+    ><span class="meta-label">${label}</span>${body}${helpFor('dispatch')}</span
   >`;
 }
 
@@ -915,6 +956,7 @@ function _circuitBreakerBannerView(run, settings) {
     return html`
       <sl-alert class="circuit-breaker-banner" variant="danger" open>
         <strong>Circuit breaker tripped:</strong> ${cb.tripped_reason || 'Pipeline halted due to repeated errors.'}
+        ${helpFor('loops')}
       </sl-alert>
     `;
   }
@@ -924,6 +966,7 @@ function _circuitBreakerBannerView(run, settings) {
     return html`
       <sl-alert class="circuit-breaker-banner" variant="warning" open>
         <strong>Circuit breaker warning:</strong> ${String(failures)}/${String(threshold)} consecutive failures.
+        ${helpFor('loops')}
       </sl-alert>
     `;
   }
@@ -966,7 +1009,7 @@ function _prReviewStatusVariant(status) {
   return 'neutral';
 }
 
-function _prInfoStripView(run) {
+function _prInfoStripView(run, { isReviseInput = false } = {}) {
   const pr = run?.pr;
   const prUrl = pr?.url || run?.pr_url;
   if (!prUrl) return nothing;
@@ -1015,6 +1058,7 @@ function _prInfoStripView(run) {
       ${
         reviewStatus
           ? html`<span class="pr-info-item">
+        ${isReviseInput ? html`<span class="meta-label">Trigger:</span>` : nothing}
         <sl-badge class="pr-review-status-badge" variant="${_prReviewStatusVariant(reviewStatus)}" pill>${reviewStatus.replace(/_/g, ' ')}</sl-badge>
       </span>`
           : nothing
@@ -1227,7 +1271,70 @@ function _preflightGraphBadgesRow(stage, run) {
   return html`<div class="iteration-tags-row">${gfx}${crg}</div>`;
 }
 
-function _preflightChecksView(stage, iter) {
+// Launch-time pipeline params (set via the new-run UI) surfaced on the preflight
+// row. Each is shown only when explicitly set; values render as neutral pills,
+// matching the Graphify / Code Review Graph badges. Returns `nothing` when no
+// param was set so the row collapses entirely.
+function _preflightParamsRow(run) {
+  if (!run) return nothing;
+  const pill = (text, tip) =>
+    html`<sl-tooltip content="${tip}"><sl-badge class="preflight-param-badge" variant="neutral" pill>${text}</sl-badge></sl-tooltip>`;
+  const sourcePill = (text, tip) =>
+    html`<sl-tooltip content="${tip}"><sl-badge class="preflight-param-badge preflight-param-source-badge" variant="neutral" pill>${text}</sl-badge></sl-tooltip>`;
+  const items = [];
+  const size = run.size_multiplier;
+  const loops = run.loop_multiplier;
+  if (typeof size === 'number' && size > 1) {
+    items.push(
+      html`<span class="meta-label">Size Multiplier:</span> ${pill(`${size}×`, 'Turn multiplier (msize) set at launch — multiplies each agent’s max_turns.')}`,
+    );
+  }
+  if (typeof loops === 'number' && loops > 1) {
+    items.push(
+      html`<span class="meta-label">Loop Multiplier:</span> ${pill(`${loops}×`, 'Loop multiplier (mloops) set at launch — multiplies the test/review/plan retry-loop limits.')}`,
+    );
+  }
+
+  // Max Beads is ALWAYS shown — the EFFECTIVE resolved cap plus a second pill
+  // for where it came from. Resolution degrades gracefully on old runs:
+  //   1. new fields present → effective value + its persisted source
+  //   2. legacy max_beads_override only → that value, source "explicit"
+  //   3. neither (legacy auto run) → 0 (Auto), source unknown (pill omitted)
+  let beadValue;
+  let beadSource;
+  if (typeof run.max_beads_effective === 'number') {
+    beadValue = run.max_beads_effective;
+    beadSource = run.max_beads_source;
+  } else if (typeof run.max_beads_override === 'number') {
+    beadValue = run.max_beads_override;
+    beadSource = 'explicit';
+  } else {
+    beadValue = 0;
+    beadSource = undefined;
+  }
+  const beadText = beadValue > 0 ? String(beadValue) : '0 (Auto)';
+  const beadPills = [
+    pill(
+      beadText,
+      'Effective cap on the number of beads the coordinator may create (0 = Auto / no cap).',
+    ),
+  ];
+  if (beadSource !== undefined) {
+    beadPills.push(
+      sourcePill(
+        beadSource,
+        beadSource === 'explicit'
+          ? 'Cap set explicitly at launch via --max-beads.'
+          : 'Cap came from the template / project config (or was suppressed for a PR-revision run).',
+      ),
+    );
+  }
+  items.push(html`<span class="meta-label">Max Beads:</span> ${beadPills}`);
+
+  return html`<div class="iteration-tags-row preflight-params-row">${items}</div>`;
+}
+
+function _preflightChecksView(stage, iter, run) {
   const isSkipped = stage.skipped || iter.outcome === 'skipped';
   if (isSkipped) {
     return html`<div class="preflight-checks-view"><sl-badge variant="neutral" pill>Skipped</sl-badge></div>`;
@@ -1235,10 +1342,19 @@ function _preflightChecksView(stage, iter) {
   const output = iter.output || {};
   const checks = output.checks || [];
   const summary = output.summary || '';
-  if (!checks.length && !summary) return nothing;
+  const paramsRow = _preflightParamsRow(run);
+  // The params row now always carries the Max Beads cap (value + source) for any
+  // real run, so it renders even with no checks/summary. Only collapse when
+  // there is genuinely nothing to show — no params row, no checks, no summary.
+  if (paramsRow === nothing && !checks.length && !summary) return nothing;
   return html`
     <div class="preflight-checks-view">
-      ${summary ? html`<div class="preflight-summary markdown-body">${unsafeHTML(renderMarkdown(summary))}</div>` : nothing}
+      ${paramsRow}
+      ${
+        summary
+          ? html`<div class="iteration-tags-row preflight-status-row"><span class="meta-label">Status:</span> <span class="meta-value markdown-body markdown-inline">${unsafeHTML(renderMarkdown(summary))}</span></div>`
+          : nothing
+      }
       ${
         checks.length > 0
           ? html`
@@ -1374,19 +1490,30 @@ function timingStripView(startedAt, completedAt, extra = nothing) {
   `;
 }
 
-// Render the Model: (alias) + ID: (resolved id) pair when an alias was
-// recorded on the stage/iteration. Backward-compatible: when model_alias is
-// missing (old runs, plain-model configs) or matches the resolved id, falls
-// back to the single "Model: <id>" label so existing runs render unchanged.
+// Timing row for an expanded stage panel. A pending stage has no started_at, so
+// the normal timing strip would render empty — leaving the panel body nearly
+// blank and letting the absolutely-positioned "Copy" button float up against
+// the divider. Show a "not started" placeholder instead (keeping the
+// .timing-strip border so the divider is intact); once the stage runs this is
+// replaced by the real Started / Finished / Duration line.
+export function _stageTimingRow(stage) {
+  if (!stage.started_at) {
+    return html`<div class="timing-strip timing-strip--pending">
+      <span class="timing-strip-pending">This stage hasn't started yet.</span>
+    </div>`;
+  }
+  return timingStripView(stage.started_at, stage.completed_at);
+}
+
 function _modelInfoView(model, modelAlias) {
   if (!model) return nothing;
   const hasAlias = !!modelAlias && modelAlias !== model;
   if (!hasAlias) {
-    return html`<span class="stage-info-item"><span class="meta-label">Model:</span> <span class="meta-value">${model}</span></span>`;
+    return html`<span class="stage-info-item"><span class="meta-label">Model ID:</span> <span class="meta-value">${model}</span></span>`;
   }
   return html`
-    <span class="stage-info-item"><span class="meta-label">Model:</span> <span class="meta-value">${modelAlias}</span></span>
-    <span class="stage-info-item"><span class="meta-label">ID:</span> <span class="meta-value">${model}</span></span>
+    <span class="stage-info-item"><span class="meta-label">Model Alias:</span> <span class="meta-value">${modelAlias}</span></span>
+    <span class="stage-info-item"><span class="meta-label">Model ID:</span> <span class="meta-value">${model}</span></span>
   `;
 }
 
@@ -1421,6 +1548,7 @@ function _iterationDetailView(
         ${iter.duration_api_ms ? html`<span class="stage-info-item"><span class="meta-label">API:</span> <span class="meta-value">${formatDuration(iter.duration_api_ms)}${iter.started_at && iter.completed_at ? ` (${Math.round((iter.duration_api_ms / elapsed(iter.started_at, iter.completed_at)) * 100)}%)` : ''}</span></span>` : nothing}
         ${iter.cost_usd != null ? html`<span class="stage-info-item"><span class="meta-label">Cost:</span> <span class="meta-value">$${Number(iter.cost_usd).toFixed(2)}</span></span>` : nothing}
         ${iterDur ? html`<span class="stage-info-item"><span class="meta-label">Duration:</span> <span class="meta-value">${iterDur}</span></span>` : nothing}
+        ${iter.context_final_pct != null ? html`<span class="stage-info-item"><sl-tooltip content="Context consumed at completion"><span class="meta-label">Context:</span> <span class="meta-value">${iter.context_final_pct}%</span></sl-tooltip></span>` : nothing}
       </div>
       ${
         iter.trigger || iter.outcome
@@ -1458,6 +1586,7 @@ function _agentPromptSection(_stageKey, promptData) {
       <div slot="summary" class="agent-prompt-header">
         <span class="stage-meta-icon">${unsafeHTML(iconSvg(FileText, 12))}</span>
         Agent Instructions
+        ${helpFor('agent-prompt')}
       </div>
       ${
         agentInstructions
@@ -1535,6 +1664,114 @@ export function guideConflictsPanelView(conflicts, options = {}) {
   `;
 }
 
+export function _createPrClickHandler(run, rerender, options) {
+  return async () => {
+    _prCreationState.set(run.id, { inFlight: true, error: null });
+    rerender?.();
+    try {
+      const r = await fetch(`${_runApiBase(run)}/pr`, { method: 'POST' });
+      if (r.ok) {
+        const data = await r.json().catch(() => ({}));
+        // Mark created so the button can't reappear (and fire a duplicate PR)
+        // while the local run object is still stale — the server-side pr_url
+        // won't be on `run` until the next status refresh. Carry the parsed
+        // pr_url so we can show "View PR" optimistically in the meantime.
+        _prCreationState.set(run.id, {
+          inFlight: false,
+          error: null,
+          created: true,
+          createdPrUrl: data.pr_url || '',
+        });
+        options?.onCreatePr?.(run.id, data.pr_url);
+      } else {
+        const err = await r.json().catch(() => ({}));
+        _prCreationState.set(run.id, {
+          inFlight: false,
+          error: err.error || `Server error ${r.status}`,
+        });
+      }
+    } catch (err) {
+      _prCreationState.set(run.id, {
+        inFlight: false,
+        error: err.message || 'Network error',
+      });
+    }
+    rerender?.();
+  };
+}
+
+export function prDeferredSectionView(run, rerender, options) {
+  const prUrl = run?.pr?.url || run?.pr_url;
+  if (prUrl) return nothing;
+  if (!run?.pr_deferred) return nothing;
+
+  const clientState = _prCreationState.get(run?.id);
+  const serverState = run?.pr_creation?.state;
+
+  const isInFlight = clientState?.inFlight || serverState === 'in_progress';
+  const isFailed =
+    !isInFlight && (clientState?.error || serverState === 'failed');
+  const errorMsg = clientState?.error || run?.pr_creation?.error;
+
+  if (isInFlight) {
+    const startedAt = run?.pr_creation?.started_at;
+    const elapsedStr = startedAt
+      ? ` (${formatDuration(elapsed(startedAt, null))})`
+      : '';
+    return html`
+      <div class="pr-deferred-section">
+        <sl-badge class="pr-deferred-badge" variant="warning" pill>deferred</sl-badge>
+        <button class="action-btn action-btn--primary" disabled>
+          <sl-spinner style="--track-width: 2px; font-size: 0.75rem"></sl-spinner>
+          Creating PR…${elapsedStr}
+        </button>
+      </div>
+    `;
+  }
+
+  if (isFailed) {
+    return html`
+      <div class="pr-deferred-section">
+        <sl-badge class="pr-deferred-badge" variant="warning" pill>deferred</sl-badge>
+        ${errorMsg ? html`<div class="pr-deferred-error">${errorMsg}</div>` : nothing}
+        <button
+          class="action-btn action-btn--primary"
+          @click=${_createPrClickHandler(run, rerender, options)}
+        >Retry</button>
+      </div>
+    `;
+  }
+
+  // PR was just created client-side but the server-refreshed pr_url hasn't
+  // reached this `run` yet. Show a success line (with the link if we parsed
+  // one) INSTEAD of the create button, so a second click can't open a
+  // duplicate PR. Once the status refresh lands run.pr_url, the early
+  // `if (prUrl) return nothing` above takes over and the normal PR line shows.
+  if (clientState?.created) {
+    const createdUrl = clientState.createdPrUrl;
+    return html`
+      <div class="pr-deferred-section">
+        <sl-badge class="pr-deferred-badge" variant="success" pill>PR created</sl-badge>
+        ${
+          createdUrl
+            ? html`<a class="run-pr-link" href="${createdUrl}" target="_blank">View PR</a>`
+            : nothing
+        }
+      </div>
+    `;
+  }
+
+  return html`
+    <div class="pr-deferred-section">
+      <sl-badge class="pr-deferred-badge" variant="warning" pill>deferred</sl-badge>
+      <button
+        class="action-btn action-btn--primary"
+        @click=${_createPrClickHandler(run, rerender, options)}
+      >Create PR</button>
+    </div>
+  `;
+}
+
 export function prApprovalPanelView(run, options = {}) {
   if (
     !(
@@ -1549,6 +1786,7 @@ export function prApprovalPanelView(run, options = {}) {
     <sl-card class="approval-panel" data-testid="pr-approval-panel">
       <div slot="header">
         <strong>PR creation paused — approval required</strong>
+        ${helpFor('reviewing')}
       </div>
       <p>The pipeline is ready to create a pull request for this run. Approve to proceed, or reject to stop the pipeline.</p>
       <div class="approval-actions">
@@ -1658,7 +1896,11 @@ export function runDetailView(run, settings = {}, options = {}) {
 
   const overview = html`
     <div class="run-detail-overview">
-      ${stageTimelineView(stages, stageUi, run.active)}
+      ${helpFor('lifecycle')}
+      <div class="run-detail-stage-timeline-wrap">
+        ${stageTimelineView(stages, stageUi, run.active)}
+        ${helpFor('pipeline-stages')}
+      </div>
       ${_circuitBreakerBannerView(run, settings)}
       ${prVerificationBannerView(run)}
       ${guideConflictsPanelView(run.guide_conflicts, options)}
@@ -1728,6 +1970,19 @@ export function runDetailView(run, settings = {}, options = {}) {
             : nothing
         }
         ${
+          run.source_type
+            ? html`
+          <div class="run-source">
+            <span class="meta-label">Source:</span>
+            <span class="meta-value run-source-type">${run.source_type}</span>
+            ${run.source_ref ? html`<span class="meta-value run-source-ref">${run.source_ref}</span>` : nothing}
+          </div>
+        `
+            : nothing
+        }
+        ${run.revises_pr ? _prInfoStripView(run, { isReviseInput: true }) : nothing}
+        ${prCommentsView(run.review_feedback)}
+        ${
           pipelineTemplate
             ? html`
           <div class="run-template">
@@ -1780,6 +2035,30 @@ export function runDetailView(run, settings = {}, options = {}) {
               <div class="pipeline-cost-strip">
                 ${pipelineCost > 0 ? html`<span class="pipeline-cost-item"><span class="meta-label">Cost:</span> <span class="meta-value">$${pipelineCost.toFixed(2)}</span></span>` : nothing}
                 ${pipelineTurns > 0 ? html`<span class="pipeline-cost-item"><span class="meta-label">Total Turns:</span> <span class="meta-value">${pipelineTurns}</span></span>` : nothing}
+              </div>
+            `
+                : nothing
+            }
+            ${
+              options.onOpenTimeline || options.onOpenAccess
+                ? html`
+              <div class="pipeline-timing-bar-actions">
+                ${
+                  options.onOpenAccess
+                    ? html`<button
+                  class="action-btn action-btn--primary"
+                  @click=${options.onOpenAccess}
+                ><span aria-hidden="true">${unsafeHTML(iconSvg(FolderTree, 14))}</span> Access</button>`
+                    : nothing
+                }
+                ${
+                  options.onOpenTimeline
+                    ? html`<button
+                  class="action-btn action-btn--primary"
+                  @click=${options.onOpenTimeline}
+                ><span aria-hidden="true">${unsafeHTML(iconSvg(BarChart3, 14))}</span> Timeline</button>`
+                    : nothing
+                }
               </div>
             `
                 : nothing
@@ -1937,7 +2216,8 @@ export function runDetailView(run, settings = {}, options = {}) {
                           </div>`;
                       })()}
                       ${key === 'pr' ? _prVerifiedBadgeView(run) : nothing}
-                      ${key === 'pr' ? _prInfoStripView(run) : nothing}
+                      ${key === 'pr' && !run?.revises_pr ? _prInfoStripView(run) : nothing}
+                      ${key === 'pr' ? prDeferredSectionView(run, options.rerender, options) : nothing}
                       ${key === 'preflight' ? _preflightGraphBadgesRow(stage, run) : nothing}
                       <sl-tab-group @sl-tab-show=${(e) => {
                         const panel = e.detail.name;
@@ -1968,13 +2248,14 @@ export function runDetailView(run, settings = {}, options = {}) {
                   <div class="stage-content-wrapper">
                     ${copyBtn}
                     <div class="stage-detail">
-                      ${timingStripView(stage.started_at, stage.completed_at)}
+                      ${_stageTimingRow(stage)}
                       <div class="stage-info-strip">
                         ${stageAgent ? html`<span class="stage-info-item"><span class="meta-label">Agent:</span> <span class="meta-value">${stageAgent}</span></span>` : nothing}
                         ${_modelInfoView(stageModel, stage.model_alias)}
                         ${iterations.length === 1 && iterations[0].turns ? html`<span class="stage-info-item"><span class="meta-label">Turns:</span> <span class="meta-value">${iterations[0].turns}</span></span>` : nothing}
                         ${iterations.length === 1 && iterations[0].duration_api_ms ? html`<span class="stage-info-item"><span class="meta-label">API:</span> <span class="meta-value">${formatDuration(iterations[0].duration_api_ms)}${stageMs > 0 ? ` (${Math.round((iterations[0].duration_api_ms / stageMs) * 100)}%)` : ''}</span></span>` : nothing}
                         ${iterations.length === 1 && iterations[0].cost_usd != null ? html`<span class="stage-info-item"><span class="meta-label">Cost:</span> <span class="meta-value">$${Number(iterations[0].cost_usd).toFixed(2)}</span></span>` : nothing}
+                        ${iterations.length === 1 && iterations[0].context_final_pct != null ? html`<span class="stage-info-item"><sl-tooltip content="Context consumed at completion"><span class="meta-label">Context:</span> <span class="meta-value">${iterations[0].context_final_pct}%</span></sl-tooltip></span>` : nothing}
                       </div>
                       ${
                         iterations.length === 1 &&
@@ -1993,9 +2274,10 @@ export function runDetailView(run, settings = {}, options = {}) {
                       ${iterations.length === 1 ? _classificationRowView(iterations[0]) : nothing}
                       ${iterations.length === 1 ? _dispatchEventsRowsView(iterations[0]) : nothing}
                       ${key === 'pr' ? _prVerifiedBadgeView(run) : nothing}
-                      ${key === 'pr' ? _prInfoStripView(run) : nothing}
+                      ${key === 'pr' && !run?.revises_pr ? _prInfoStripView(run) : nothing}
+                      ${key === 'pr' ? prDeferredSectionView(run, options.rerender, options) : nothing}
                       ${key === 'preflight' ? _preflightGraphBadgesRow(stage, run) : nothing}
-                      ${key === 'preflight' && iterations.length === 1 ? _preflightChecksView(stage, iterations[0]) : nothing}
+                      ${key === 'preflight' && iterations.length === 1 ? _preflightChecksView(stage, iterations[0], run) : nothing}
                       ${_planIterationButton(key, iterations[0], run, options.rerender)}
                       ${promptData ? _agentPromptSection(key, promptData) : nothing}
                     </div>

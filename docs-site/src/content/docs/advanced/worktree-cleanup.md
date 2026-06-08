@@ -11,9 +11,7 @@ Every run executes in its own git worktree under `<project>/.worktrees/pipeline-
 
 The dashboard's **Worktrees** view lists every worktree across registered projects with its disk usage and age, plus one-click cleanup. The sidebar badge flips orange when total worktree disk usage crosses the warning threshold (default 2 GB), so you get a nudge before it grows unbounded. Both that threshold and the automatic **cleanup policy** are configurable in **Settings → Worktrees** — they aren't fixed.
 
-:::note[Screenshot — coming soon]
-The Worktrees view: worktrees with disk usage, age, and Cleanup actions.
-:::
+![The Worktrees view: worktrees with disk usage, age, and Cleanup actions.](/screenshots/worktree-cleanup/01-view.png)
 
 ## From the CLI
 

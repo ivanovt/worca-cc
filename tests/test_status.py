@@ -243,6 +243,30 @@ def test_init_status_worktree_path_key_absent():
     assert "worktree_path" not in result
 
 
+def test_init_status_pr_revision_fields_defaults():
+    wr = {"title": "Task"}
+    result = init_status(wr, "feat/task")
+    assert result["source_type"] is None
+    assert result["source_ref"] is None
+    assert result["revises_pr"] is None
+    assert result["review_feedback"] == []
+
+
+def test_init_status_pr_revision_fields_from_work_request():
+    wr = {
+        "title": "Fix auth",
+        "source_type": "github_pr",
+        "source_ref": "gh:pr:42",
+        "pr_number": 42,
+        "review_comments": [{"body": "Needs tests", "path": "auth.py"}],
+    }
+    result = init_status(wr, "feat/fix-auth")
+    assert result["source_type"] == "github_pr"
+    assert result["source_ref"] == "gh:pr:42"
+    assert result["revises_pr"] == 42
+    assert result["review_feedback"] == [{"body": "Needs tests", "path": "auth.py"}]
+
+
 # --- start_iteration ---
 
 def test_start_iteration_creates_list():
@@ -335,6 +359,48 @@ def test_start_iteration_effort_none_omits_key():
     status = {"stages": {"plan": {}}}
     iteration = start_iteration(status, "plan", agent="planner")
     assert "effort" not in iteration
+
+
+def test_start_iteration_persists_bead_fields():
+    status = {"stages": {"implement": {}}}
+    iteration = start_iteration(
+        status,
+        "implement",
+        agent="implementer",
+        bead_id="bd-abc123",
+        bead_title="Add user auth",
+    )
+    assert iteration["bead_id"] == "bd-abc123"
+    assert iteration["bead_title"] == "Add user auth"
+
+
+def test_start_iteration_bead_id_without_title_persists_only_id():
+    status = {"stages": {"implement": {}}}
+    iteration = start_iteration(
+        status,
+        "implement",
+        agent="implementer",
+        bead_id="bd-fallback",
+    )
+    assert iteration["bead_id"] == "bd-fallback"
+    assert "bead_title" not in iteration
+
+
+def test_start_iteration_bead_fields_roundtrip_through_json(tmp_path):
+    status = {"stages": {"implement": {}}}
+    start_iteration(
+        status,
+        "implement",
+        agent="implementer",
+        bead_id="bd-xyz",
+        bead_title="Refactor auth middleware",
+    )
+    path = str(tmp_path / "status.json")
+    save_status(status, path)
+    loaded = load_status(path)
+    it = loaded["stages"]["implement"]["iterations"][0]
+    assert it["bead_id"] == "bd-xyz"
+    assert it["bead_title"] == "Refactor auth middleware"
 
 
 def test_start_iteration_effort_explicit_none_omits_key():

@@ -245,4 +245,131 @@ describe('runDetailView preflight stage', () => {
     const html = renderToString(runDetailView(run));
     expect(html).not.toContain('preflight-checks-view');
   });
+
+  it('renders the summary as a labeled "Status:" meta row (not the old muted style)', () => {
+    const run = _makeRun({
+      outcome: 'success',
+      output: { status: 'pass', checks: [], summary },
+      _stageExtras: {},
+    });
+    const html = renderToString(runDetailView(run));
+    // New: "Status:" meta-label in an iteration-tags row, value carries meta-value.
+    expect(html).toContain('preflight-status-row');
+    expect(html).toContain('Status:');
+    expect(html).toContain('meta-value');
+    expect(html).toContain(summary);
+    // Old muted markdown-only style is gone.
+    expect(html).not.toContain('preflight-summary');
+  });
+
+  // Helper: wrap top-level run fields around a minimal completed preflight stage.
+  function _runWith(fields) {
+    return {
+      ...fields,
+      stages: {
+        preflight: {
+          status: 'completed',
+          iterations: [
+            {
+              number: 1,
+              status: 'completed',
+              outcome: 'success',
+              output: { status: 'pass', checks: [], summary },
+            },
+          ],
+        },
+      },
+    };
+  }
+
+  it('shows Size/Loop multiplier pills only when explicitly set', () => {
+    const html = renderToString(
+      runDetailView(
+        _runWith({
+          size_multiplier: 3,
+          loop_multiplier: 2,
+          max_beads_effective: 12,
+          max_beads_source: 'explicit',
+        }),
+      ),
+    );
+    expect(html).toContain('preflight-params-row');
+    expect(html).toContain('Size Multiplier:');
+    expect(html).toContain('Loop Multiplier:');
+    expect(html).toContain('Max Beads:');
+    expect(html).toContain('preflight-param-badge');
+  });
+
+  it('still renders the params row (Max Beads always shown) with Size/Loop omitted at defaults', () => {
+    const html = renderToString(
+      runDetailView(
+        _runWith({
+          // size/loop default to 1 → omitted; Max Beads is always present.
+          size_multiplier: 1,
+          loop_multiplier: 1,
+          max_beads_effective: 0,
+          max_beads_source: 'template',
+        }),
+      ),
+    );
+    expect(html).toContain('preflight-params-row');
+    expect(html).toContain('Max Beads:');
+    // Size/Loop are still gated on > 1.
+    expect(html).not.toContain('Size Multiplier:');
+    expect(html).not.toContain('Loop Multiplier:');
+  });
+
+  // --- Max Beads resolution: three branches + (Auto)/source-omitted ---
+
+  it('branch 1: new fields → effective value pill + source pill', () => {
+    const html = renderToString(
+      runDetailView(
+        _runWith({ max_beads_effective: 1, max_beads_source: 'template' }),
+      ),
+    );
+    expect(html).toContain('Max Beads:');
+    expect(html).toContain('>1<'); // value pill text
+    expect(html).toContain('preflight-param-source-badge');
+    expect(html).toContain('template'); // source pill text
+  });
+
+  it('branch 1: explicit source renders "explicit" pill', () => {
+    const html = renderToString(
+      runDetailView(
+        _runWith({ max_beads_effective: 4, max_beads_source: 'explicit' }),
+      ),
+    );
+    expect(html).toContain('>4<');
+    expect(html).toContain('preflight-param-source-badge');
+    expect(html).toContain('explicit');
+  });
+
+  it('branch 2 (legacy): max_beads_override only → value + "explicit" source', () => {
+    const html = renderToString(
+      runDetailView(_runWith({ max_beads_override: 7 })),
+    );
+    expect(html).toContain('Max Beads:');
+    expect(html).toContain('>7<');
+    expect(html).toContain('preflight-param-source-badge');
+    expect(html).toContain('explicit');
+  });
+
+  it('branch 3 (legacy auto): neither field → "0 (Auto)" and NO source pill', () => {
+    const html = renderToString(runDetailView(_runWith({})));
+    expect(html).toContain('Max Beads:');
+    expect(html).toContain('0 (Auto)');
+    // Source is unknown for legacy auto runs → source pill omitted.
+    expect(html).not.toContain('preflight-param-source-badge');
+  });
+
+  it('renders "0 (Auto)" for an effective cap of 0 (with known source)', () => {
+    const html = renderToString(
+      runDetailView(
+        _runWith({ max_beads_effective: 0, max_beads_source: 'template' }),
+      ),
+    );
+    expect(html).toContain('0 (Auto)');
+    expect(html).toContain('preflight-param-source-badge');
+    expect(html).toContain('template');
+  });
 });

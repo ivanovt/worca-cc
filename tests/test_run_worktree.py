@@ -756,3 +756,174 @@ class TestAwaitPipelineStartup:
         from worca.scripts.run_worktree import _spawn_log_tail
 
         assert _spawn_log_tail(str(tmp_path / "missing.log")) == ""
+
+
+# ---------------------------------------------------------------------------
+# W-067: github_pr source — branch flag rejection and target_branch derivation
+# ---------------------------------------------------------------------------
+
+def _pr_wr(
+    title="Fix auth bug",
+    pr_number=42,
+    pr_head_branch="worca/fix-auth-abc",
+    pr_base_branch="main",
+    pr_is_cross_repo=False,
+):
+    return WorkRequest(
+        source_type="github_pr",
+        title=title,
+        pr_number=pr_number,
+        pr_head_branch=pr_head_branch,
+        pr_base_branch=pr_base_branch,
+        pr_is_cross_repo=pr_is_cross_repo,
+    )
+
+
+class TestGithubPrSource:
+    """W-067: worktree behaviour for source_type==github_pr."""
+
+    def test_worktree_pr_source_rejects_branch_flag(self, capsys):
+        """--branch must be rejected when source is a github PR."""
+        from worca.scripts.run_worktree import main
+        plist = _patches()
+        with plist[0], plist[1] as mock_norm, plist[2], \
+             plist[3], plist[4], plist[5], plist[6], plist[7], plist[8], plist[9], plist[10]:
+            mock_norm.return_value = _pr_wr()
+            rc = main(["--source", "gh:pr:42", "--branch", "feature/other"])
+        assert rc == 2
+        captured = capsys.readouterr()
+        assert "branch" in captured.err.lower() or "branch" in captured.out.lower()
+
+    def test_worktree_pr_target_branch_from_base(self):
+        """target_branch in registry must come from pr_base_branch, not --branch."""
+        from worca.scripts.run_worktree import main
+        plist = _patches()
+        with plist[0], plist[1] as mock_norm, plist[2] as mock_create, \
+             plist[3], plist[4] as mock_reg, plist[5], plist[6], plist[7], plist[8], plist[9], plist[10], \
+             patch("worca.scripts.run_worktree.find_worktree_for_branch", return_value=""), \
+             patch("worca.scripts.run_worktree.checkout_pr_worktree", return_value=_WORKTREE_PATH), \
+             patch("worca.scripts.run_worktree.load_settings",
+                   return_value={"worca": {"parallel": {}}}):
+            mock_norm.return_value = _pr_wr(pr_base_branch="develop")
+            rc = main(["--source", "gh:pr:42"])
+        assert rc == 0
+        kwargs = mock_reg.call_args[1]
+        assert kwargs["target_branch"] == "develop"
+        # create_pipeline_worktree must NOT be called; checkout_pr_worktree handles it
+        mock_create.assert_not_called()
+
+    def test_worktree_pr_uses_checkout_pr_worktree(self):
+        """For github_pr source, checkout_pr_worktree is called (not create_pipeline_worktree)."""
+        from worca.scripts.run_worktree import main
+        plist = _patches()
+        with plist[0], plist[1] as mock_norm, plist[2] as mock_create, \
+             plist[3], plist[4], plist[5], plist[6], plist[7], plist[8], plist[9], plist[10], \
+             patch("worca.scripts.run_worktree.find_worktree_for_branch", return_value=""), \
+             patch("worca.scripts.run_worktree.checkout_pr_worktree", return_value=_WORKTREE_PATH) as mock_checkout, \
+             patch("worca.scripts.run_worktree.load_settings",
+                   return_value={"worca": {"parallel": {}}}):
+            mock_norm.return_value = _pr_wr(pr_number=42, pr_is_cross_repo=False)
+            rc = main(["--source", "gh:pr:42"])
+        assert rc == 0
+        mock_checkout.assert_called_once()
+        mock_create.assert_not_called()
+
+    def test_worktree_pr_head_branch_preserved_in_registry(self):
+        """The worktree branch stored in the registry is the PR head branch (L2)."""
+        from worca.scripts.run_worktree import main
+        plist = _patches()
+        with plist[0], plist[1] as mock_norm, plist[2], \
+             plist[3], plist[4] as mock_reg, plist[5], plist[6], plist[7], plist[8], plist[9], plist[10], \
+             patch("worca.scripts.run_worktree.find_worktree_for_branch", return_value=""), \
+             patch("worca.scripts.run_worktree.checkout_pr_worktree", return_value=_WORKTREE_PATH), \
+             patch("worca.scripts.run_worktree.load_settings",
+                   return_value={"worca": {"parallel": {}}}):
+            mock_norm.return_value = _pr_wr(pr_head_branch="feature/my-fix")
+            rc = main(["--source", "gh:pr:42"])
+        assert rc == 0
+        kwargs = mock_reg.call_args[1]
+        assert kwargs["branch"] == "feature/my-fix"
+
+    def test_worktree_pr_reuses_existing_worktree(self):
+        """When the PR head branch is already checked out (the run that opened
+        the PR), reuse that worktree instead of calling checkout_pr_worktree."""
+        from worca.scripts.run_worktree import main
+        existing = "/tmp/wt/pipeline-original"
+        plist = _patches()
+        with plist[0], plist[1] as mock_norm, plist[2] as mock_create, \
+             plist[3], plist[4] as mock_reg, plist[5], plist[6], plist[7], plist[8], plist[9], plist[10], \
+             patch("worca.scripts.run_worktree.find_worktree_for_branch", return_value=existing), \
+             patch("worca.scripts.run_worktree._worktree_pipeline_is_live", return_value=False), \
+             patch("worca.scripts.run_worktree.checkout_pr_worktree") as mock_checkout, \
+             patch("worca.scripts.run_worktree.load_settings",
+                   return_value={"worca": {"parallel": {}}}):
+            mock_norm.return_value = _pr_wr(pr_head_branch="worca/fix-auth-abc")
+            rc = main(["--source", "gh:pr:42"])
+        assert rc == 0
+        # Reused — neither worktree-creation path is invoked
+        mock_checkout.assert_not_called()
+        mock_create.assert_not_called()
+        kwargs = mock_reg.call_args[1]
+        assert kwargs["worktree_path"] == existing
+        assert kwargs["branch"] == "worca/fix-auth-abc"
+
+    def test_worktree_pr_refuses_reuse_when_pipeline_live(self):
+        """If a pipeline is still live in the existing worktree, refuse with a
+        clear error rather than corrupting the running run."""
+        from worca.scripts.run_worktree import main
+        existing = "/tmp/wt/pipeline-original"
+        plist = _patches()
+        with plist[0], plist[1] as mock_norm, plist[2], \
+             plist[3], plist[4] as mock_reg, plist[5], plist[6], plist[7], plist[8], plist[9], plist[10], \
+             patch("worca.scripts.run_worktree.find_worktree_for_branch", return_value=existing), \
+             patch("worca.scripts.run_worktree._worktree_pipeline_is_live", return_value=True), \
+             patch("worca.scripts.run_worktree.checkout_pr_worktree") as mock_checkout, \
+             patch("worca.scripts.run_worktree.load_settings",
+                   return_value={"worca": {"parallel": {}}}):
+            mock_norm.return_value = _pr_wr(pr_head_branch="worca/fix-auth-abc")
+            rc = main(["--source", "gh:pr:42"])
+        assert rc == 1
+        mock_checkout.assert_not_called()
+        mock_reg.assert_not_called()
+
+
+# ---------------------------------------------------------------------------
+# W-069: --max-beads passthrough
+# ---------------------------------------------------------------------------
+
+
+class TestMaxBeadsPassthrough:
+    """--max-beads is accepted by create_parser and forwarded by _build_pipeline_cmd."""
+
+    def _parse(self, argv):
+        from worca.scripts.run_worktree import create_parser
+        return create_parser().parse_args(argv)
+
+    def test_max_beads_flag_default_none(self):
+        args = self._parse(["--prompt", "x"])
+        assert args.max_beads is None
+
+    def test_max_beads_flag_parsed(self):
+        args = self._parse(["--prompt", "x", "--max-beads", "5"])
+        assert args.max_beads == 5
+
+    def test_max_beads_zero_accepted(self):
+        args = self._parse(["--prompt", "x", "--max-beads", "0"])
+        assert args.max_beads == 0
+
+    def test_build_pipeline_cmd_includes_max_beads_when_set(self):
+        from worca.scripts.run_worktree import _build_pipeline_cmd
+        cmd = _build_pipeline_cmd(self._parse(["--prompt", "x", "--max-beads", "3"]))
+        idx = cmd.index("--max-beads")
+        assert cmd[idx + 1] == "3"
+
+    def test_build_pipeline_cmd_omits_max_beads_when_none(self):
+        from worca.scripts.run_worktree import _build_pipeline_cmd
+        cmd = _build_pipeline_cmd(self._parse(["--prompt", "x"]))
+        assert "--max-beads" not in cmd
+
+    def test_build_pipeline_cmd_includes_max_beads_zero(self):
+        from worca.scripts.run_worktree import _build_pipeline_cmd
+        cmd = _build_pipeline_cmd(self._parse(["--prompt", "x", "--max-beads", "0"]))
+        idx = cmd.index("--max-beads")
+        assert cmd[idx + 1] == "0"

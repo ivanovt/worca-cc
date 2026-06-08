@@ -219,7 +219,7 @@ class TestGetStageConfig:
 
         config = get_stage_config(Stage.PLAN, settings_path=str(settings_file))
         assert config["agent"] == "planner"
-        assert config["model"] == "claude-opus-4-6"  # "opus" resolved via default map
+        assert config["model"] == "claude-opus-4-7"  # "opus" resolved via default map
         assert config["max_turns"] == 10
         assert config["schema"] == "plan.json"
 
@@ -356,7 +356,7 @@ class TestGetStageConfigWithStages:
         settings_file.write_text(json.dumps(settings))
         config = get_stage_config(Stage.PLAN, settings_path=str(settings_file))
         assert config["agent"] == "guardian"
-        assert config["model"] == "claude-opus-4-6"
+        assert config["model"] == "claude-opus-4-7"
         assert config["max_turns"] == 30
 
     def test_falls_back_to_hardcoded_when_no_stages_config(self, tmp_path):
@@ -371,7 +371,7 @@ class TestGetStageConfigWithStages:
         settings_file.write_text(json.dumps(settings))
         config = get_stage_config(Stage.PLAN, settings_path=str(settings_file))
         assert config["agent"] == "planner"
-        assert config["model"] == "claude-opus-4-6"
+        assert config["model"] == "claude-opus-4-7"
 
     def test_falls_back_to_hardcoded_when_stage_missing_from_stages(self, tmp_path):
         settings = {
@@ -389,6 +389,34 @@ class TestGetStageConfigWithStages:
         # coordinate is not in stages config, falls back to STAGE_AGENT_MAP
         config = get_stage_config(Stage.COORDINATE, settings_path=str(settings_file))
         assert config["agent"] == "coordinator"
+
+
+class TestGetStageConfigMaxBeads:
+    """Tests for max_beads key in get_stage_config return value."""
+
+    def test_max_beads_present_with_default_zero(self, tmp_path):
+        missing = str(tmp_path / "nonexistent.json")
+        config = get_stage_config(Stage.COORDINATE, settings_path=missing)
+        assert "max_beads" in config
+        assert config["max_beads"] == 0
+
+    def test_max_beads_reads_from_coordinator_config(self, tmp_path):
+        settings = {
+            "worca": {
+                "agents": {
+                    "coordinator": {"model": "opus", "max_turns": 300, "max_beads": 3}
+                }
+            }
+        }
+        settings_file = tmp_path / "settings.json"
+        settings_file.write_text(json.dumps(settings))
+        config = get_stage_config(Stage.COORDINATE, settings_path=str(settings_file))
+        assert config["max_beads"] == 3
+
+    def test_max_beads_absent_for_non_coordinator_stage(self, tmp_path):
+        missing = str(tmp_path / "nonexistent.json")
+        config = get_stage_config(Stage.PLAN, settings_path=missing)
+        assert config.get("max_beads") == 0
 
 
 class TestGetEnabledStages:
@@ -613,7 +641,7 @@ class TestModelResolution:
         assert model_env == {}
 
     def test_resolve_model_falls_back_to_default_map(self):
-        assert _resolve_model("opus", {})[0] == "claude-opus-4-6"
+        assert _resolve_model("opus", {})[0] == "claude-opus-4-7"
         assert _resolve_model("sonnet", {})[0] == "claude-sonnet-4-6"
         assert _resolve_model("haiku", {})[0] == "claude-haiku-4-5-20251001"
 
@@ -702,9 +730,10 @@ class TestStageConfigModelEnv:
         config = get_stage_config(Stage.PLAN, settings_path=str(settings_file))
         assert config["model"] == "full-id"
 
-    def test_stage_config_records_model_alias_when_distinct_from_id(self, tmp_path):
-        """The user-typed alias survives next to the resolved id, so the UI can
-        render ``Model: glm-ds  ID: opus`` without re-resolving."""
+    def test_stage_config_records_model_alias_for_alt_endpoint(self, tmp_path):
+        """Aliases that rewire Claude CLI via ANTHROPIC_BASE_URL get a
+        model_alias so the cost-override path fires — that's the one case
+        Claude CLI's total_cost_usd is computed against the wrong table."""
         settings = {
             "worca": {
                 "models": {
@@ -718,10 +747,12 @@ class TestStageConfigModelEnv:
         config = get_stage_config(Stage.PLAN, settings_path=str(settings_file))
         assert config["model"] == "opus"
         assert config["model_alias"] == "glm-ds"
+        assert config["cost_alias"] == "glm-ds"
 
-    def test_stage_config_model_alias_is_none_when_alias_equals_id(self, tmp_path):
-        """Plain-model configs (no alias->id mapping) record model_alias=None so
-        the UI falls back to the single 'Model:' line — backward-compatible."""
+    def test_stage_config_model_alias_set_for_shorthand_without_env(self, tmp_path):
+        """Built-in-style shorthand (``"opus"`` → ``"claude-opus-4-6"``) records
+        model_alias for UI display, but cost_alias stays None because no
+        alt-endpoint env key is present."""
         settings = {
             "worca": {
                 "models": {"opus": "claude-opus-4-6"},
@@ -731,14 +762,47 @@ class TestStageConfigModelEnv:
         settings_file = tmp_path / "settings.json"
         settings_file.write_text(json.dumps(settings))
         config = get_stage_config(Stage.PLAN, settings_path=str(settings_file))
-        # The user typed "opus", resolve_model returns "claude-opus-4-6",
-        # so they differ — alias preserved.
         assert config["model"] == "claude-opus-4-6"
         assert config["model_alias"] == "opus"
+        assert config["cost_alias"] is None
+
+    def test_stage_config_model_alias_set_for_rename_without_endpoint_env(self, tmp_path):
+        """A user rename (``"tuned-opus"`` → ``"claude-opus-4-6"``) records
+        model_alias for UI display, but cost_alias stays None because the env
+        block has no alt-endpoint key."""
+        settings = {
+            "worca": {
+                "models": {
+                    "tuned-opus": {
+                        "id": "claude-opus-4-6",
+                        "env": {"CLAUDE_CODE_MAX_OUTPUT_TOKENS": "8000"}
+                    }
+                },
+                "agents": {"planner": {"model": "tuned-opus"}}
+            }
+        }
+        settings_file = tmp_path / "settings.json"
+        settings_file.write_text(json.dumps(settings))
+        config = get_stage_config(Stage.PLAN, settings_path=str(settings_file))
+        assert config["model"] == "claude-opus-4-6"
+        assert config["model_alias"] == "tuned-opus"
+        assert config["cost_alias"] is None
+
+    def test_stage_config_cost_alias_none_on_vanilla_install(self, tmp_path):
+        """No ``worca.models`` at all, agent uses the default ``"sonnet"`` →
+        model_alias is ``"sonnet"`` for UI display, cost_alias is None so
+        Claude CLI's authoritative cost is preserved."""
+        settings = {"worca": {"agents": {"planner": {"model": "sonnet"}}}}
+        settings_file = tmp_path / "settings.json"
+        settings_file.write_text(json.dumps(settings))
+        config = get_stage_config(Stage.PLAN, settings_path=str(settings_file))
+        assert config["model"] == "claude-sonnet-4-6"
+        assert config["model_alias"] == "sonnet"
+        assert config["cost_alias"] is None
 
     def test_stage_config_model_alias_is_none_for_passthrough_id(self, tmp_path):
-        """When the user types an id with no model-map entry (passthrough), the
-        alias equals the id, so model_alias stays None — no UI churn."""
+        """When the user types an id with no model-map entry (passthrough), no
+        env is attached either — model_alias stays None."""
         settings = {
             "worca": {
                 "agents": {"planner": {"model": "claude-opus-4-6"}}
@@ -749,6 +813,7 @@ class TestStageConfigModelEnv:
         config = get_stage_config(Stage.PLAN, settings_path=str(settings_file))
         assert config["model"] == "claude-opus-4-6"
         assert config["model_alias"] is None
+        assert config["cost_alias"] is None
 
 
 class TestResolvePlanReviewMode:

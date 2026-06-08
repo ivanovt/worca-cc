@@ -358,3 +358,67 @@ describe('new-run project picker — state and interactions', () => {
     expect(getEffectiveProjectId(state)).toBe(null);
   });
 });
+
+describe('new-run source type dropdown', () => {
+  let newRunView;
+
+  beforeEach(async () => {
+    vi.resetModules();
+    vi.doMock('lit-html', () => {
+      function html(strings, ...values) {
+        return { strings: Array.from(strings), values };
+      }
+      return { html, nothing: Symbol('nothing') };
+    });
+    vi.doMock('lit-html/directives/unsafe-html.js', () => ({
+      unsafeHTML: (s) => s,
+    }));
+    vi.doMock('../utils/icons.js', () => ({
+      iconSvg: () => '<svg></svg>',
+      FileText: 'FileText',
+      Circle: 'Circle',
+      CircleAlert: 'CircleAlert',
+      CircleCheck: 'CircleCheck',
+      CircleSlash: 'CircleSlash',
+      Loader: 'Loader',
+      Pause: 'Pause',
+    }));
+    globalThis.fetch = vi.fn(() =>
+      Promise.resolve({ ok: true, json: () => Promise.resolve([]) }),
+    );
+    const mod = await import('./new-run.js');
+    newRunView = mod.newRunView;
+  });
+
+  function makeState() {
+    return {
+      runs: {},
+      currentProjectId: 'p1',
+      projects: [{ name: 'p1' }],
+      maxConcurrentPipelines: 10,
+      totalRunning: 0,
+    };
+  }
+
+  // The value="none" source type means "no external source — use the prompt".
+  // Its label must read "Prompt" (not the misleading "None"), since the run
+  // still submits the typed prompt. value stays 'none' (internal wiring).
+  it('labels the value="none" source option "Prompt"', () => {
+    const html = renderToString(newRunView(makeState(), { rerender: vi.fn() }));
+    expect(html).toContain('<sl-option value="none">Prompt</sl-option>');
+  });
+
+  it('no longer labels the default source option "None"', () => {
+    const html = renderToString(newRunView(makeState(), { rerender: vi.fn() }));
+    expect(html).not.toContain('<sl-option value="none">None</sl-option>');
+  });
+
+  it('keeps the other source options unchanged', () => {
+    const html = renderToString(newRunView(makeState(), { rerender: vi.fn() }));
+    expect(html).toContain(
+      '<sl-option value="source">GitHub Issue</sl-option>',
+    );
+    expect(html).toContain('<sl-option value="spec">Specification</sl-option>');
+    expect(html).toContain('<sl-option value="pr">GitHub PR</sl-option>');
+  });
+});

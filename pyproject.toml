@@ -4,7 +4,7 @@ build-backend = "setuptools.build_meta"
 
 [project]
 name = "worca-cc"
-version = "0.43.0"
+version = "0.52.0"
 description = "Autonomous software development pipeline combining orchestration with governance enforcement"
 readme = "src/worca/README.md"
 license = "MIT"
@@ -53,7 +53,12 @@ worca = [
     "templates/*.json",
     "templates/*/template.json",
     "templates/*/agents/*.md",
+    # Skills ship with SKILL.md plus any sibling assets (e.g. worca-notify
+    # sends through a Node shim at skills/worca-notify/send.mjs).
     "skills/*/SKILL.md",
+    "skills/*/*.mjs",
+    "skills/*/*.js",
+    "skills/*/*.py",
 ]
 
 [tool.pytest.ini_options]

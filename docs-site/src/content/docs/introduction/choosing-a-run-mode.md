@@ -19,8 +19,6 @@ Every mode runs each pipeline in its **own git worktree**, so working trees are 
 - **Fleet** fans a single work-request out to a list of projects — for example, "update the linter config" across ten repos.
 - **Workspace** decomposes one prompt into per-project sub-plans and runs them tier by tier, feeding each tier's changes to the next.
 
-:::note[Screenshot — coming soon]
-The Run Pipeline split-button in the sidebar, expanded to show **Run Fleet** and **Run Workspace**.
-:::
+![The Run Pipeline split-button in the sidebar, expanded to show Run Fleet and Run Workspace.](/screenshots/run-modes/01-split-button.png)
 
 Start with a single run in [Your first run](/getting-started/your-first-run/). Fleet and workspace runs get their own guides in the Running Pipelines section (coming soon).

@@ -44,12 +44,13 @@ PIPELINE_CONSTANTS = [
     ("STAGE_COMPLETED",   "pipeline.stage.completed"),
     ("STAGE_FAILED",      "pipeline.stage.failed"),
     ("STAGE_INTERRUPTED", "pipeline.stage.interrupted"),
-    # Agent telemetry (5)
-    ("AGENT_SPAWNED",     "pipeline.agent.spawned"),
-    ("AGENT_TOOL_USE",    "pipeline.agent.tool_use"),
-    ("AGENT_TOOL_RESULT", "pipeline.agent.tool_result"),
-    ("AGENT_TEXT",        "pipeline.agent.text"),
-    ("AGENT_COMPLETED",   "pipeline.agent.completed"),
+    # Agent telemetry (6)
+    ("AGENT_SPAWNED",        "pipeline.agent.spawned"),
+    ("AGENT_TOOL_USE",       "pipeline.agent.tool_use"),
+    ("AGENT_TOOL_RESULT",    "pipeline.agent.tool_result"),
+    ("AGENT_TEXT",           "pipeline.agent.text"),
+    ("AGENT_COMPLETED",      "pipeline.agent.completed"),
+    ("ITERATION_ACCESS",     "pipeline.iteration.access"),
     # Bead lifecycle (6)
     ("BEAD_CREATED",      "pipeline.bead.created"),
     ("BEAD_ASSIGNED",     "pipeline.bead.assigned"),
@@ -57,10 +58,11 @@ PIPELINE_CONSTANTS = [
     ("BEAD_FAILED",       "pipeline.bead.failed"),
     ("BEAD_LABELED",      "pipeline.bead.labeled"),
     ("BEAD_NEXT",         "pipeline.bead.next"),
-    # Git operations (4)
+    # Git operations (5)
     ("GIT_BRANCH_CREATED", "pipeline.git.branch_created"),
     ("GIT_COMMIT",         "pipeline.git.commit"),
     ("GIT_PR_CREATED",     "pipeline.git.pr_created"),
+    ("GIT_PR_DEFERRED",    "pipeline.git.pr_deferred"),
     ("GIT_PR_MERGED",      "pipeline.git.pr_merged"),
     # Test detail (4)
     ("TEST_SUITE_STARTED", "pipeline.test.suite_started"),
@@ -84,17 +86,21 @@ PIPELINE_CONSTANTS = [
     ("MILESTONE_SET",       "pipeline.milestone.set"),
     ("LOOP_TRIGGERED",      "pipeline.loop.triggered"),
     ("LOOP_EXHAUSTED",      "pipeline.loop.exhausted"),
-    # Hook & governance (4)
+    # Hook & governance (5)
     ("HOOK_BLOCKED",          "pipeline.hook.blocked"),
     ("HOOK_TEST_GATE",        "pipeline.hook.test_gate"),
     ("HOOK_DISPATCH_BLOCKED", "pipeline.hook.dispatch_blocked"),
     ("HOOK_DISPATCH_ALLOWED", "pipeline.hook.dispatch_allowed"),
+    ("HOOK_GRAPH_QUERY",      "pipeline.hook.graph_query"),
     # Preflight (2)
     ("PREFLIGHT_COMPLETED", "pipeline.preflight.completed"),
     ("PREFLIGHT_SKIPPED",   "pipeline.preflight.skipped"),
     # Learn stage uses generic STAGE_STARTED/COMPLETED/FAILED with stage="learn"
     # Plan review detail (1)
     ("PLAN_EDITED", "pipeline.plan_review.edited"),
+    # Template lifecycle (2)
+    ("TEMPLATE_APPLIED", "pipeline.template.applied"),
+    ("TEMPLATE_DROPPED", "pipeline.template.dropped"),
 ]
 
 CONTROL_CONSTANTS = [
@@ -134,18 +140,19 @@ def test_pipeline_constant_values_unique():
 
 
 def test_total_pipeline_constants():
-    """There must be exactly 53 pipeline.* outbound constants.
+    """There must be exactly 57 pipeline.* outbound constants.
 
     48 original + 2 dedicated learn events (pipeline.learn.completed/failed)
-    + 1 dispatch_allowed hook event + 1 RUN_CANCELLED + 1 PLAN_EDITED = 53.
+    + 1 dispatch_allowed hook event + 1 RUN_CANCELLED + 1 PLAN_EDITED
+    + 2 template lifecycle events + 1 ITERATION_ACCESS + 1 GIT_PR_DEFERRED = 57.
     """
     import worca.events.types as T
     pipeline_vals = [
         v for k, v in vars(T).items()
         if k.isupper() and isinstance(v, str) and v.startswith("pipeline.")
     ]
-    assert len(pipeline_vals) == 53, (
-        f"Expected 53 pipeline.* constants, found {len(pipeline_vals)}"
+    assert len(pipeline_vals) == 58, (
+        f"Expected 58 pipeline.* constants, found {len(pipeline_vals)}"
     )
 
 
@@ -184,6 +191,7 @@ EXPECTED_BUILDERS = [
     "agent_tool_result_payload",
     "agent_text_payload",
     "agent_completed_payload",
+    "iteration_access_payload",
     # pipeline.bead.*
     "bead_created_payload",
     "bead_assigned_payload",
@@ -195,6 +203,7 @@ EXPECTED_BUILDERS = [
     "git_branch_created_payload",
     "git_commit_payload",
     "git_pr_created_payload",
+    "git_pr_deferred_payload",
     "git_pr_merged_payload",
     # pipeline.test.*
     "test_suite_started_payload",
@@ -223,12 +232,16 @@ EXPECTED_BUILDERS = [
     "hook_test_gate_payload",
     "hook_dispatch_blocked_payload",
     "hook_dispatch_allowed_payload",
+    "hook_graph_query_payload",
     # pipeline.preflight.*
     "preflight_completed_payload",
     "preflight_skipped_payload",
     # pipeline.learn.* — removed; learn uses generic stage events
     # pipeline.plan_review.*
     "plan_edited_payload",
+    # pipeline.template.*
+    "template_applied_payload",
+    "template_dropped_payload",
     # control.*
     "control_milestone_approve_payload",
     "control_pipeline_pause_payload",
@@ -474,6 +487,32 @@ def test_agent_completed_payload_required_fields():
     assert p["exit_code"] == 0
 
 
+def test_iteration_access_payload_required_fields():
+    from worca.events.types import iteration_access_payload
+    file_access = {
+        "reads": {"src/main.py": 3},
+        "writes": {"src/main.py": 1},
+        "searches": [],
+        "totals": {"distinct_read": 1, "total_read": 3},
+        "capture": {"hook_writes": 1, "git_writes": 1, "leakage_pct": 0.0},
+    }
+    p = iteration_access_payload(
+        run_id="run123",
+        stage="IMPLEMENT",
+        agent="implementer",
+        iteration=1,
+        bead_id="bead-001",
+        file_access=file_access,
+    )
+    assert p["run_id"] == "run123"
+    assert p["stage"] == "IMPLEMENT"
+    assert p["agent"] == "implementer"
+    assert p["iteration"] == 1
+    assert p["bead_id"] == "bead-001"
+    assert p["file_access"] == file_access
+    assert isinstance(p, dict)
+
+
 def test_bead_created_payload_required_fields():
     from worca.events.types import bead_created_payload
     p = bead_created_payload(bead_id="worca-cc-abc", title="Add feature X")
@@ -585,6 +624,22 @@ def test_git_pr_merged_payload_required_fields():
     )
     assert p["pr_url"] == "https://github.com/org/repo/pull/42"
     assert p["pr_number"] == 42
+
+
+def test_event_pr_deferred_payload():
+    from worca.events.types import git_pr_deferred_payload
+    p = git_pr_deferred_payload(
+        pr_title="Add deferrable PR creation",
+        base_branch="master",
+        head_branch="worca/w-065-feature",
+        commit_sha="abc1234567",
+    )
+    assert p["pr_title"] == "Add deferrable PR creation"
+    assert p["base_branch"] == "master"
+    assert p["head_branch"] == "worca/w-065-feature"
+    assert p["commit_sha"] == "abc1234567"
+    assert "pr_url" not in p
+    assert "pr_number" not in p
 
 
 def test_test_suite_started_payload_required_fields():
@@ -844,6 +899,22 @@ def test_hook_dispatch_allowed_payload_with_via():
     assert p["via"] == "explicit"
 
 
+def test_hook_graph_query_payload_required_fields():
+    from worca.events.types import hook_graph_query_payload
+    p = hook_graph_query_payload(engine="crg", op="query_graph_tool")
+    assert p["engine"] == "crg"
+    assert p["op"] == "query_graph_tool"
+    assert "agent" not in p
+
+
+def test_hook_graph_query_payload_with_agent():
+    from worca.events.types import hook_graph_query_payload
+    p = hook_graph_query_payload(engine="graphify", op="query", agent="planner")
+    assert p["engine"] == "graphify"
+    assert p["op"] == "query"
+    assert p["agent"] == "planner"
+
+
 def test_preflight_completed_payload_required_fields():
     from worca.events.types import preflight_completed_payload
     checks = [{"name": "git_clean", "status": "pass", "message": "OK"}]
@@ -936,6 +1007,10 @@ def test_all_builders_return_dicts():
             stage="PLAN", iteration=1, turns=1,
             cost_usd=0.0, duration_ms=1, exit_code=0,
         ),
+        "iteration_access_payload": dict(
+            run_id="r", stage="PLAN", agent="planner", iteration=1,
+            bead_id="b", file_access={"reads": {}, "writes": {}, "searches": [], "totals": {}, "capture": {}},
+        ),
         "bead_created_payload": dict(bead_id="b", title="t"),
         "bead_assigned_payload": dict(bead_id="b", title="t", iteration=1),
         "bead_completed_payload": dict(bead_id="b", reason="r"),
@@ -945,6 +1020,7 @@ def test_all_builders_return_dicts():
         "git_branch_created_payload": dict(branch="b"),
         "git_commit_payload": dict(stage="GUARDIAN", commit_hash="abc1234", message_summary="m"),
         "git_pr_created_payload": dict(pr_url="u", pr_number=1, title="t"),
+        "git_pr_deferred_payload": dict(pr_title="t", base_branch="master", head_branch="feat"),
         "git_pr_merged_payload": dict(pr_url="u", pr_number=1),
         "test_suite_started_payload": dict(stage="TEST", iteration=1, trigger="initial"),
         "test_suite_passed_payload": dict(iteration=1),
@@ -1105,3 +1181,97 @@ def test_plan_edited_payload_original_plan_path_omitted_when_none():
         issue_counts={"critical": 0, "major": 0, "minor": 0, "suggestion": 0},
     )
     assert "original_plan_path" not in p
+
+
+# ---------------------------------------------------------------------------
+# Template lifecycle payload builders
+# ---------------------------------------------------------------------------
+
+def test_template_applied_payload_required_fields():
+    from worca.events.types import template_applied_payload
+    p = template_applied_payload(
+        template_id="my-template",
+        source="launch",
+        tier="project",
+    )
+    assert p["template_id"] == "my-template"
+    assert p["source"] == "launch"
+    assert p["tier"] == "project"
+    assert isinstance(p, dict)
+
+
+def test_template_applied_payload_source_values():
+    from worca.events.types import template_applied_payload
+    for source in ("launch", "resume", "default"):
+        p = template_applied_payload(
+            template_id="tmpl", source=source, tier="builtin",
+        )
+        assert p["source"] == source
+
+
+def test_template_applied_payload_tier_optional():
+    from worca.events.types import template_applied_payload
+    p = template_applied_payload(template_id="tmpl", source="launch")
+    assert p["template_id"] == "tmpl"
+    assert p["source"] == "launch"
+    assert "tier" not in p
+
+
+def test_template_dropped_payload_required_fields():
+    from worca.events.types import template_dropped_payload
+    p = template_dropped_payload(
+        template_id="my-template",
+        reason="not_found",
+    )
+    assert p["template_id"] == "my-template"
+    assert p["reason"] == "not_found"
+    assert isinstance(p, dict)
+
+
+def test_template_dropped_payload_reason_values():
+    from worca.events.types import template_dropped_payload
+    for reason in ("not_found", "resolve_error", "missing_on_resume"):
+        p = template_dropped_payload(template_id="tmpl", reason=reason)
+        assert p["reason"] == reason
+
+
+# ---------------------------------------------------------------------------
+# context_final_pct in payload builders (Step 3 — TDD, written before impl)
+# ---------------------------------------------------------------------------
+
+def test_cost_stage_total_payload_includes_context_final_pct_when_provided():
+    from worca.events.types import cost_stage_total_payload
+    p = cost_stage_total_payload(
+        stage="IMPLEMENT", iteration=1, cost_usd=0.15,
+        input_tokens=1000, output_tokens=500, model="claude-sonnet-4-6",
+        context_final_pct=53.2,
+    )
+    assert p["context_final_pct"] == 53.2
+
+
+def test_cost_stage_total_payload_omits_context_final_pct_when_none():
+    from worca.events.types import cost_stage_total_payload
+    p = cost_stage_total_payload(
+        stage="IMPLEMENT", iteration=1, cost_usd=0.15,
+        input_tokens=1000, output_tokens=500, model="claude-sonnet-4-6",
+    )
+    assert "context_final_pct" not in p
+
+
+def test_agent_completed_payload_includes_context_final_pct_when_provided():
+    from worca.events.types import agent_completed_payload
+    p = agent_completed_payload(
+        stage="IMPLEMENT", iteration=1, turns=5,
+        cost_usd=0.10, duration_ms=30000, exit_code=0,
+        context_final_pct=72.5,
+    )
+    assert p["context_final_pct"] == 72.5
+
+
+def test_agent_completed_payload_omits_context_final_pct_when_none():
+    from worca.events.types import agent_completed_payload
+    p = agent_completed_payload(
+        stage="IMPLEMENT", iteration=1, turns=5,
+        cost_usd=0.10, duration_ms=30000, exit_code=0,
+    )
+    assert "context_final_pct" not in p

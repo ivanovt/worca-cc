@@ -15,9 +15,7 @@ A run needs a **work request**. The launcher accepts three sources:
 - **GitHub issue** — point at an issue; worca reads its body, and if the issue links a plan file, the Planner is skipped.
 - **Spec file** — point at a Markdown file already in the repo.
 
-:::note[Screenshot — coming soon]
-The Run Pipeline launcher: the source selector (prompt / issue / spec) and the prompt field.
-:::
+![The Run Pipeline launcher: the source selector (prompt / issue / spec) and the prompt field.](/screenshots/launching-a-run/01-launcher.png)
 
 ## Triage a GitHub issue (optional)
 
@@ -34,9 +32,24 @@ It reads the issue, surfaces open design decisions with a recommended option for
 
 ## Pick a template
 
-The **template** dropdown tailors the run to the kind of work — which stages run, how the agents are tuned, and the retry limits. `feature` is the default; the full set is described in [Pipeline templates](/concepts/pipeline-templates/).
+The **Pipeline** dropdown tailors the run to the kind of work — which stages run, how the agents are tuned, and the retry limits. The full set is described in [Pipeline templates](/concepts/pipeline-templates/).
 
-Pick the template that matches your task before launching. If you're unsure, `feature` runs the complete pipeline with every gate active.
+The first item in the dropdown reflects what runs if you don't pick a specific template:
+
+- **`No template (raw settings.json)`** — no `worca.default_template` is pinned for this project; the run uses project Settings as written.
+- **`★ Default template: <name>`** — `worca.default_template` is pinned and the dropdown will pre-select that template's behavior. Pick a different template from the list to override for just this run.
+
+The remaining options are **grouped by tier**, with section labels separating each group, in this order:
+
+1. **User** — templates from `~/.worca/templates/`.
+2. **Project** — templates from `.claude/templates/`.
+3. **Built-in** — the eight templates shipped with worca (`feature`, `feature-fast`, `feature-minor`, `bugfix`, `quick-fix`, `refactor`, `investigate`, `test-only`).
+
+The pinned default carries a **★** suffix wherever it appears in the list, so you can spot it at a glance regardless of which group it's in.
+
+Pick the template that matches your task before launching. If you're unsure and your project doesn't have a pinned default, `feature` runs the complete pipeline with every gate active.
+
+![The launcher's Pipeline dropdown open, with the User, Project, and Built-in group labels separating the templates and the project default suffixed ★.](/screenshots/launching-a-run/02-template-dropdown.png)
 
 ## Advanced options
 
@@ -48,9 +61,7 @@ The launcher exposes a few optional knobs:
 
 Leave these at their defaults for most runs.
 
-:::note[Screenshot — coming soon]
-The launcher's advanced section: size/loop multipliers, base branch, and the plan-file picker.
-:::
+![The launcher's advanced section: size/loop multipliers, base branch, and the plan-file picker.](/screenshots/launching-a-run/03-advanced.png)
 
 ## Launch
 

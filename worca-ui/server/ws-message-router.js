@@ -17,6 +17,7 @@ import {
   listIssuesByLabel,
   listUnlinkedIssues,
 } from './beads-reader.js';
+import { buildFileAccessModel } from './file-access-aggregator.js';
 import {
   listIterationFiles,
   listLogFiles,
@@ -33,7 +34,7 @@ import {
 } from './process-manager.js';
 import { resolveRunDir } from './run-dir-resolver.js';
 import { readSettings } from './settings-reader.js';
-import { discoverRuns, findRun } from './watcher.js';
+import { discoverRunsAsync, findRun } from './watcher.js';
 import { resolveBeadsCounts } from './ws-beads-watcher.js';
 
 /**
@@ -142,7 +143,8 @@ export function createMessageRouter({
     // list-runs
     if (req.type === 'list-runs') {
       const proj = resolveProject(ws, req.payload);
-      const runs = discoverRuns(proj.worcaDir);
+      // List/sidebar path: async scan, no events.jsonl enrichment (issue #296).
+      const runs = await discoverRunsAsync(proj.worcaDir, { enrich: false });
       const settings = readSettings(proj.settingsPath);
       ws.send(JSON.stringify(makeOk(req, { runs, settings })));
       return;
@@ -804,6 +806,25 @@ export function createMessageRouter({
         limit,
       });
       ws.send(JSON.stringify(makeOk(req, { events })));
+      return;
+    }
+
+    // get-file-access
+    if (req.type === 'get-file-access') {
+      const { runId } = req.payload || {};
+      if (typeof runId !== 'string') {
+        ws.send(
+          JSON.stringify(
+            makeError(req, 'bad_request', 'payload.runId required'),
+          ),
+        );
+        return;
+      }
+      const proj = resolveProject(ws, req.payload);
+      const runDir = resolveRunDir(proj.worcaDir, runId);
+      const eventsPath = runDir ? join(runDir, 'events.jsonl') : null;
+      const model = buildFileAccessModel(eventsPath, runDir);
+      ws.send(JSON.stringify(makeOk(req, { runId, ...model })));
       return;
     }
 

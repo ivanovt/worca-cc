@@ -155,6 +155,50 @@ _PATH_MIGRATIONS = [
 ]
 
 
+# Built-in model aliases that worca owns. Unlike the rest of settings.json
+# (which is preserved via non-destructive _deep_merge), these three track the
+# *installation*, not the project: every `worca init --upgrade` force-syncs them
+# to the template's current values. A project that needs custom model routing
+# must use a differently-named alias — customizing opus/sonnet/haiku directly is
+# intentionally overwritten on upgrade.
+_BUILTIN_MODEL_ALIASES = ("opus", "sonnet", "haiku")
+
+
+def _fmt_model(val: object) -> str:
+    """Render a model alias value (plain string or {id, env} dict) for logs."""
+    if isinstance(val, dict):
+        return json.dumps(val, sort_keys=True)
+    return str(val)
+
+
+def _reconcile_builtin_models(settings: dict, template: dict) -> list[str]:
+    """Force the worca-owned model aliases to the installation's values.
+
+    Overwrites ``worca.models.{opus,sonnet,haiku}`` in ``settings`` with the
+    template's values, discarding any project customization of those three.
+    Aliases the project added under other names are left untouched.
+
+    Mutates ``settings`` in place. Returns human-readable change descriptions
+    (empty when the built-ins already match the template).
+    """
+    tmpl_models = template.get("worca", {}).get("models", {})
+    if not tmpl_models:
+        return []
+    cur_models = settings.setdefault("worca", {}).setdefault("models", {})
+    changes: list[str] = []
+    for alias in _BUILTIN_MODEL_ALIASES:
+        if alias not in tmpl_models:
+            continue
+        new_val = tmpl_models[alias]
+        old_val = cur_models.get(alias)
+        if old_val == new_val:
+            continue
+        cur_models[alias] = copy.deepcopy(new_val)
+        old_repr = "(added)" if old_val is None else _fmt_model(old_val)
+        changes.append(f"  worca.models.{alias}: {old_repr} -> {_fmt_model(new_val)}")
+    return changes
+
+
 def _seed_dispatch_defaults(governance_cfg: dict) -> None:
     """Idempotently fill in any missing tiers/sections of governance.dispatch.
 
@@ -352,6 +396,60 @@ def _migrate_settings_paths(settings: dict) -> tuple[dict, list[str]]:
         })
         changes.append("  hooks.PreToolUse[Skill]: registered skill_use.py")
 
+    # Widen the worca-owned PostToolUse matcher to cover every tool the
+    # file-access recorder targets (W-064). Pre-W-064 projects shipped a
+    # "Bash"-only matcher; _deep_merge preserves the existing list verbatim
+    # on upgrade (lists are treated as scalars), so the recorder never fires
+    # for Read/Write/Edit/MultiEdit/NotebookEdit/Grep/Glob — nothing is
+    # written to .worca/runs/<id>/access/ and the Access Map stays empty.
+    # The matcher MUST stay a superset of post_tool_use.FILE_ACCESS_TOOLS
+    # (plus Bash, which drives the test-gate and graph-query recording) AND
+    # carry the CRG MCP patterns (CRG_MATCHER_PATTERNS) so CRG graph queries —
+    # reached over MCP, not Bash — are recorded into the graph-query ledger
+    # rather than silently dropped while the crg_invocations badge still counts
+    # them. Worktree runs inherit this file verbatim via copy_claude_config, so
+    # fixing the project file fixes future worktrees.
+    from worca.claude_hooks.post_tool_use import (
+        CRG_MATCHER_PATTERNS,
+        FILE_ACCESS_TOOLS,
+    )
+
+    required_tokens = {"Bash", *FILE_ACCESS_TOOLS, *CRG_MATCHER_PATTERNS}
+    canonical_matcher = "|".join(["Bash", *FILE_ACCESS_TOOLS, *CRG_MATCHER_PATTERNS])
+    for entry in hooks.get("PostToolUse", []):
+        is_worca = any(
+            "post_tool_use.py" in h.get("command", "") for h in entry.get("hooks", [])
+        )
+        if not is_worca:
+            continue
+        present = {tok.strip() for tok in entry.get("matcher", "").split("|") if tok.strip()}
+        if not required_tokens.issubset(present):
+            old_matcher = entry.get("matcher", "")
+            entry["matcher"] = canonical_matcher
+            changes.append(
+                f"  hooks.PostToolUse matcher: {old_matcher!r} -> "
+                f"{canonical_matcher!r} (W-064 file-access + CRG graph-query capture)"
+            )
+
+    # Grant the native Glob/Grep tools in permissions.allow. The shipped
+    # allowlist has always carried the Bash equivalents (Bash(grep:*),
+    # Bash(rg:*), Bash(find:*)) and Read(*) but omitted the native Glob/Grep
+    # tools. Top-level agents run with --dangerously-skip-permissions so they
+    # never hit it, but dispatched subagents do NOT inherit that bypass — they
+    # are bound by permissions.allow, so their Glob/Grep calls are denied while
+    # Read + Bash(grep/find) still work. The result: a planner that delegates
+    # codebase research to a subagent watches it limp (Glob/Grep denied) and
+    # thrashes. _deep_merge preserves the existing allow LIST verbatim on
+    # upgrade, so this never self-heals without an explicit migration (same
+    # list-preservation trap as the W-064 matcher above).
+    perms = migrated.get("permissions")
+    if isinstance(perms, dict) and isinstance(perms.get("allow"), list):
+        allow = perms["allow"]
+        for tool in ("Glob", "Grep"):
+            if tool not in allow:
+                allow.append(tool)
+                changes.append(f"  permissions.allow: added {tool!r} (native search tool)")
+
     return migrated, changes
 
 
@@ -459,6 +557,122 @@ def _strip_inert_milestone_keys(project_settings_path: str) -> list[str]:
     return removed
 
 
+def _migrate_to_legacy_template(git_root: Path) -> str | None:
+    """Phase 1 (template-driven pipelines): if the project has customized
+    template-owned keys (agents, stages, loops, circuit_breaker, effort,
+    governance.dispatch) in settings.json AND no default_template is set,
+    snapshot those keys into an auto-generated `_legacy-settings` template
+    and set it as worca.default_template.
+
+    - Idempotent: skips when worca.default_template is already set.
+    - Collision-safe: renames to `_legacy-settings-<unix-ts>` if a project
+      template by that name already exists.
+    - Scope: project (`.claude/templates/`). Committed; team-visible.
+
+    Returns the template id created, or None if migration was skipped.
+    """
+    import time
+    from datetime import datetime, timezone
+
+    from worca.orchestrator.templates import (
+        CROSS_TEMPLATE_CARVEOUTS,
+        TEMPLATE_OWNED_KEYS,
+    )
+
+    settings_path = git_root / ".claude" / "settings.json"
+    if not settings_path.exists():
+        return None
+
+    try:
+        with open(settings_path, encoding="utf-8") as f:
+            settings = json.load(f)
+    except (json.JSONDecodeError, OSError):
+        return None
+
+    worca_cfg = settings.get("worca", {})
+
+    # Gate 1: default_template already set → migration already ran OR user
+    # explicitly picked a default. Either way, leave it alone.
+    if worca_cfg.get("default_template"):
+        return None
+
+    # Gate 2: collect non-empty template-owned keys to capture.
+    captured: dict = {}
+    for path in TEMPLATE_OWNED_KEYS:
+        node = worca_cfg
+        for segment in path[:-1]:
+            if not isinstance(node, dict):
+                node = None
+                break
+            node = node.get(segment)
+        if not isinstance(node, dict):
+            continue
+        value = node.get(path[-1])
+        if value in (None, {}, []):
+            continue
+        target = captured
+        for segment in path[:-1]:
+            target = target.setdefault(segment, {})
+        target[path[-1]] = copy.deepcopy(value)
+
+    # Drop cross-template carve-outs (e.g. stages.preflight) from the snapshot
+    # so the template doesn't freeze project-Settings values that should keep
+    # flowing through on every run.
+    for path in CROSS_TEMPLATE_CARVEOUTS:
+        target = captured
+        for segment in path[:-1]:
+            if not isinstance(target, dict) or segment not in target:
+                target = None
+                break
+            target = target[segment]
+        if isinstance(target, dict) and path[-1] in target:
+            del target[path[-1]]
+        # If we just emptied a parent dict (e.g. captured["stages"] is now {}),
+        # remove it too so the snapshot doesn't ship hollow blocks.
+        if path[0] in captured and captured[path[0]] == {}:
+            del captured[path[0]]
+
+    if not captured:
+        return None  # clean project; nothing to capture
+
+    # Gate 3: collision-safe naming.
+    templates_dir = git_root / ".claude" / "templates"
+    base_id = "_legacy-settings"
+    template_id = base_id
+    if (templates_dir / base_id).exists():
+        template_id = f"{base_id}-{int(time.time())}"
+
+    tmpl_dir = templates_dir / template_id
+    tmpl_dir.mkdir(parents=True, exist_ok=True)
+    now = datetime.now(timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ")
+    template_data = {
+        "id": template_id,
+        "name": "Legacy Settings (auto-migrated)",
+        "description": (
+            "Auto-generated by `worca init --upgrade` to capture per-machine "
+            "pipeline customizations (agents, stages, loops, circuit_breaker, "
+            "effort, governance.dispatch) at the moment template-driven "
+            "pipelines were introduced. Edit or rename to claim ownership; "
+            "delete to follow the latest built-in defaults."
+        ),
+        "builtin": False,
+        "auto_generated": True,
+        "created_at": now,
+        "tags": ["auto-migrated"],
+        "params": {},
+        "config": captured,
+    }
+    (tmpl_dir / "template.json").write_text(
+        json.dumps(template_data, indent=2) + "\n", encoding="utf-8"
+    )
+
+    worca_cfg["default_template"] = template_id
+    settings["worca"] = worca_cfg
+    _atomic_write_json(str(settings_path), settings)
+
+    return template_id
+
+
 def _remove_files_from_dir(directory: Path, filenames: list[str], changes: list[str]) -> None:
     """Remove specific files from a directory, then clean up __pycache__/.DS_Store and empty dir."""
     if not directory.is_dir():
@@ -562,10 +776,11 @@ def _copy_worca_source(source: Path, target: Path) -> None:
 def _install_skills(source: Path, git_root: Path) -> list[str]:
     """Install worca-owned skills into <project>/.claude/skills/.
 
-    Each subdirectory of source/skills/ contains a SKILL.md. We mirror that
-    layout into git_root/.claude/skills/<name>/SKILL.md, overwriting any
-    existing copy (the package version is the source of truth). Unrelated
-    user-authored skills under .claude/skills/ are left untouched.
+    Each subdirectory of source/skills/ contains at minimum a SKILL.md. We
+    mirror the full skill directory (including any sibling assets like
+    ``send.mjs``) into git_root/.claude/skills/<name>/, overwriting existing
+    copies — the package version is the source of truth. Unrelated user-
+    authored skills under .claude/skills/ are left untouched.
 
     Returns a list of human-readable change descriptions.
     """
@@ -585,9 +800,21 @@ def _install_skills(source: Path, git_root: Path) -> list[str]:
             continue
         dst_dir = skills_dst / skill_dir.name
         dst_dir.mkdir(parents=True, exist_ok=True)
-        dst_md = dst_dir / "SKILL.md"
-        shutil.copy2(str(skill_md), str(dst_md))
-        changes.append(f"  Installed .claude/skills/{skill_dir.name}/SKILL.md")
+        # Copy every regular file at the top level of the skill dir — this
+        # carries SKILL.md plus any sibling assets (e.g. worca-notify's
+        # send.mjs). Subdirectories are walked too via shutil.copytree
+        # semantics, manually rolled to keep the per-file change log.
+        for item in sorted(skill_dir.iterdir()):
+            if item.name == "__pycache__":
+                continue
+            dst_item = dst_dir / item.name
+            if item.is_file():
+                shutil.copy2(str(item), str(dst_item))
+            elif item.is_dir():
+                if dst_item.exists():
+                    shutil.rmtree(str(dst_item))
+                shutil.copytree(str(item), str(dst_item))
+        changes.append(f"  Installed .claude/skills/{skill_dir.name}/")
 
     return changes
 
@@ -757,6 +984,14 @@ def _show_check(source: Path, git_root: Path) -> None:
             else:
                 print("\nSettings: no changes needed")
 
+            # Built-in model aliases are force-synced (not surfaced by the
+            # additive key diff above, since the keys already exist).
+            model_changes = _reconcile_builtin_models(copy.deepcopy(current), template)
+            if model_changes:
+                print("\nBuilt-in models that would be synced (opus/sonnet/haiku):")
+                for change in model_changes:
+                    print(change)
+
         # Check path migrations
         _, migration_changes = _migrate_settings_paths(current)
         if migration_changes:
@@ -921,10 +1156,15 @@ def run_init(
             with open(source_settings, encoding="utf-8") as f:
                 template = json.load(f)
             merged = _deep_merge(current, template)
+            model_changes = _reconcile_builtin_models(merged, template)
             with open(settings_path, "w", encoding="utf-8") as f:
                 json.dump(merged, f, indent=2)
                 f.write("\n")
             print("Settings: added new template keys (user values preserved)")
+            if model_changes:
+                print("Built-in models synced to installation (opus/sonnet/haiku):")
+                for change in model_changes:
+                    print(change)
     else:
         # Create from template
         if source_settings.exists():
@@ -944,6 +1184,16 @@ def run_init(
             print(
                 f"Reset {len(stripped)} template-default milestone key(s) "
                 f"({keys_str}) — gate now opt-in via Pipeline tab"
+            )
+
+        # --- Phase 1 template-driven pipelines migration ---
+        legacy_id = _migrate_to_legacy_template(git_root)
+        if legacy_id:
+            print(
+                f"Phase 1 migration: captured customized template-owned keys into "
+                f"`.claude/templates/{legacy_id}/template.json` and set "
+                f"worca.default_template={legacy_id}. To revert at any time, "
+                f"delete the template and clear default_template from settings.json."
             )
 
     # --- Graphify hook integration (after settings merge) ---

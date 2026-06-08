@@ -75,7 +75,7 @@ def load_settings(settings_path: str) -> dict:
 
 
 _DEFAULT_MODEL_MAP = {
-    "opus": "claude-opus-4-6",
+    "opus": "claude-opus-4-7",
     "sonnet": "claude-sonnet-4-6",
     "haiku": "claude-haiku-4-5-20251001",
 }

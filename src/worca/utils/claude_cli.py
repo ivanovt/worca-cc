@@ -346,7 +346,11 @@ def _format_log_line(event: dict) -> Optional[str]:
         cost = event.get("total_cost_usd", 0)
         turns = event.get("num_turns", 0)
         duration = event.get("duration_ms", 0)
-        return f"[done] turns={turns} cost=${cost:.3f} duration={duration / 1000:.1f}s"
+        line = f"[done] turns={turns} cost=${cost:.3f} duration={duration / 1000:.1f}s"
+        ctx_pct = event.get("_final_context_pct")
+        if ctx_pct is not None:
+            line += f" ctx_final={ctx_pct}%"
+        return line
 
     return None
 
@@ -407,6 +411,7 @@ def process_stream(
     _accum_num_turns = 0
     _accum_usage: dict = {}
     _result_count = 0
+    _last_assistant_usage = None
 
     for raw_line in stdout:
         line = raw_line.strip()
@@ -427,6 +432,30 @@ def process_stream(
         # Capture model from system.init event
         if event.get("type") == "system" and event.get("subtype") == "init":
             resolved_model = event.get("model")
+
+        # Track last assistant turn's token usage for context-window percentage
+        if event.get("type") == "assistant":
+            msg_usage = event.get("message", {}).get("usage")
+            if isinstance(msg_usage, dict):
+                _last_assistant_usage = msg_usage
+
+        # Enrich result event with _final_context_pct before formatting
+        if event.get("type") == "result" and _last_assistant_usage is not None:
+            model_usage = event.get("modelUsage", {})
+            ctx_win = None
+            if resolved_model and isinstance(model_usage.get(resolved_model), dict):
+                ctx_win = model_usage[resolved_model].get("contextWindow")
+            elif model_usage:
+                first = next(iter(model_usage.values()))
+                if isinstance(first, dict):
+                    ctx_win = first.get("contextWindow")
+            if ctx_win:
+                _final_used = (
+                    _last_assistant_usage.get("input_tokens", 0)
+                    + _last_assistant_usage.get("cache_read_input_tokens", 0)
+                    + _last_assistant_usage.get("cache_creation_input_tokens", 0)
+                )
+                event["_final_context_pct"] = round(_final_used / ctx_win * 100, 1)
 
         # Write human-readable summary to log
         if log_file:
@@ -496,10 +525,12 @@ def run_agent(
     on_event: Optional[Callable[[dict], None]] = None,
     settings: Optional[dict] = None,
     graphify_out: Optional[str] = None,
+    model_alias: Optional[str] = None,
     mcp_config: Optional[str] = None,
     run_dir: Optional[str] = None,
     stage: Optional[str] = None,
     iteration: Optional[int] = None,
+    bead_id: Optional[str] = None,
 ) -> dict:
     """Run a claude agent via the CLI and return parsed JSON output.
 
@@ -518,6 +549,9 @@ def run_agent(
             snapshot (graphify >=0.8.16 honors it for reads). The runner passes
             the resolved ``<snapshot>/graphify`` dir when the preflight graph is
             ready; None leaves the env untouched.
+        stage: When set, exported as ``WORCA_STAGE`` in the agent subprocess.
+        iteration: When set, exported as ``WORCA_ITERATION`` in the agent subprocess.
+        bead_id: When set, exported as ``WORCA_BEAD_ID`` in the agent subprocess.
 
     Raises RuntimeError on subprocess failure or missing result.
     """
@@ -544,6 +578,18 @@ def run_agent(
         )
 
     agent_env = get_env(WORCA_AGENT=agent_name, **safe_env)
+    if stage is not None:
+        agent_env["WORCA_STAGE"] = stage
+    else:
+        # Explicitly remove to avoid inheriting from os.environ.copy()
+        agent_env.pop("WORCA_STAGE", None)
+    if iteration is not None:
+        agent_env["WORCA_ITERATION"] = str(iteration)
+    else:
+        # Explicitly remove to avoid inheriting from os.environ.copy()
+        agent_env.pop("WORCA_ITERATION", None)
+    if bead_id is not None:
+        agent_env["WORCA_BEAD_ID"] = bead_id
     if graphify_out:
         # Set outside filter_model_env so it's never stripped (GRAPHIFY_OUT is
         # not a reserved key). graphify honors it for reads, so the agent's
@@ -659,5 +705,8 @@ def run_agent(
             + (f": {error_msg[:500]}" if error_msg else ""),
             returncode=proc.returncode,
         )
+
+    if model_alias and result_event:
+        result_event["_model_alias"] = model_alias
 
     return result_event

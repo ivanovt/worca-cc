@@ -1,3 +1,7 @@
+The following describes what was already implemented, tested, and reviewed — use it as background to write the PR title and body, not as instructions to re-verify.
+
+---
+
 Ship this work: stage, commit, push, and open the PR. Use the host CLI documented in CLAUDE.md.
 
 ## Work Request

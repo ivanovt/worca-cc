@@ -1,14 +1,18 @@
 import { html } from 'lit-html';
 import { unsafeHTML } from 'lit-html/directives/unsafe-html.js';
+import { helpFor } from '../utils/help-links.js';
 import {
   Activity,
   Archive,
   Boxes,
   ChevronDown,
   Coins,
+  FileText,
   GitBranch,
   iconSvg,
   List,
+  PanelLeftClose,
+  PanelLeftOpen,
   Plus,
   Settings,
   SlidersHorizontal,
@@ -61,7 +65,7 @@ export function sidebarView(
   state,
   route,
   connectionState,
-  { onNavigate, onProjectChange, onAddProject },
+  { onNavigate, onProjectChange, onAddProject, onToggleSidebar },
 ) {
   // Settings use nested shape only — read pre-resolved scalars from state, never flat-dot bracket keys.
   const {
@@ -171,10 +175,27 @@ export function sidebarView(
         ? 'Reconnecting\u2026'
         : 'Disconnected';
 
+  const collapsed = !!preferences.sidebarCollapsed;
+  const toggleIcon = collapsed ? PanelLeftOpen : PanelLeftClose;
+  const toggleLabel = collapsed ? 'Expand sidebar' : 'Collapse sidebar';
   return html`
-    <aside class="sidebar ${preferences.sidebarCollapsed ? 'collapsed' : ''}">
-      <div class="sidebar-logo" @click=${() => onNavigate('dashboard')} style="cursor:pointer">
-        <span class="logo-text">WORCA</span>
+    <aside class="sidebar ${collapsed ? 'collapsed' : ''}">
+      <div class="sidebar-logo">
+        <span
+          class="logo-text"
+          @click=${() => onNavigate('dashboard')}
+          style="cursor:pointer"
+        >WORCA</span>
+        <button
+          type="button"
+          class="sidebar-toggle-btn"
+          aria-label=${toggleLabel}
+          aria-expanded=${String(!collapsed)}
+          title="${toggleLabel} (⌘B)"
+          @click=${() => onToggleSidebar?.()}
+        >
+          ${unsafeHTML(iconSvg(toggleIcon, 16))}
+        </button>
       </div>
 
       ${
@@ -278,6 +299,7 @@ export function sidebarView(
       <div class="sidebar-section">
         <div class="sidebar-section-header">Pipeline</div>
         <div class="sidebar-item ${route.section === 'active' ? 'active' : ''}"
+             title=${collapsed ? 'Running' : ''}
              @click=${() => onNavigate('active')}>
           <span class="sidebar-item-left">
             ${unsafeHTML(iconSvg(Activity, 16))}
@@ -292,6 +314,7 @@ export function sidebarView(
           }
         </div>
         <div class="sidebar-item ${route.section === 'history' ? 'active' : ''}"
+             title=${collapsed ? 'History' : ''}
              @click=${() => onNavigate('history')}>
           <span class="sidebar-item-left">
             ${unsafeHTML(iconSvg(Archive, 16))}
@@ -306,6 +329,7 @@ export function sidebarView(
           }
         </div>
         <div class="sidebar-item ${route.section === 'worktrees' ? 'active' : ''}"
+             title=${collapsed ? 'Worktrees' : ''}
              @click=${() => onNavigate('worktrees')}>
           <span class="sidebar-item-left">
             ${unsafeHTML(iconSvg(GitBranch, 16))}
@@ -318,8 +342,10 @@ export function sidebarView(
                 ? html`<sl-badge variant="${worktreeDiskWarning ? 'warning' : 'neutral'}" pill class="worktrees-count-badge">${worktreeCount}</sl-badge>`
                 : ''
           }
+          ${helpFor('worktrees')}
         </div>
         <div class="sidebar-item ${route.section === 'fleet-runs' ? 'active' : ''}"
+             title=${collapsed ? 'Fleets' : ''}
              @click=${() => onNavigate('fleet-runs')}>
           <span class="sidebar-item-left">
             ${unsafeHTML(iconSvg(Workflow, 16))}
@@ -334,6 +360,7 @@ export function sidebarView(
           }
         </div>
         <div class="sidebar-item ${route.section === 'workspace-runs' ? 'active' : ''}"
+             title=${collapsed ? 'Workspaces' : ''}
              @click=${() => onNavigate('workspace-runs')}>
           <span class="sidebar-item-left">
             ${unsafeHTML(iconSvg(Boxes, 16))}
@@ -352,6 +379,7 @@ export function sidebarView(
       <div class="sidebar-section">
         <div class="sidebar-section-header">Work</div>
         <div class="sidebar-item ${route.section === 'beads' ? 'active' : ''}"
+             title=${collapsed ? 'Beads' : ''}
              @click=${() => onNavigate('beads')}>
           <span class="sidebar-item-left">
             ${unsafeHTML(iconSvg(List, 16))}
@@ -364,6 +392,7 @@ export function sidebarView(
       <div class="sidebar-section">
         <div class="sidebar-section-header">Analytics</div>
         <div class="sidebar-item ${route.section === 'costs' ? 'active' : ''}"
+             title=${collapsed ? 'Costs' : ''}
              @click=${() => onNavigate('costs')}>
           <span class="sidebar-item-left">
             ${unsafeHTML(iconSvg(Coins, 16))}
@@ -371,34 +400,46 @@ export function sidebarView(
           </span>
         </div>
         <div class="sidebar-item ${route.section === 'webhooks' ? 'active' : ''}"
+             title=${collapsed ? 'Webhooks' : ''}
              @click=${() => onNavigate('webhooks')}>
           <span class="sidebar-item-left">
             ${unsafeHTML(iconSvg(Zap, 16))}
             <span>Webhooks</span>
           </span>
           ${(state.webhookInbox?.events?.length || 0) > 0 ? html`<sl-badge variant="warning" pill>${state.webhookInbox.events.length}</sl-badge>` : ''}
+          ${helpFor('events')}
         </div>
       </div>
 
       <div class="sidebar-section">
-        <div class="sidebar-section-header">Configuration</div>
+        <div class="sidebar-section-header">Project Configuration</div>
         ${
-          // Hide Project Settings only in true All-Projects mode (multi-project
+          // Hide project-scoped entries in true All-Projects mode (multi-project
           // with no selection). In single-project mode (projects empty, server
-          // has worcaDir), the un-scoped settings endpoint works fine.
+          // has worcaDir), the un-scoped endpoints work fine.
           (projects || []).length > 1 && !currentProjectId
             ? ''
             : html`
         <div class="sidebar-item ${route.section === 'project-settings' ? 'active' : ''}"
+             title=${collapsed ? 'Project Settings' : ''}
              @click=${() => onNavigate('project-settings')}>
           <span class="sidebar-item-left">
             ${unsafeHTML(iconSvg(SlidersHorizontal, 16))}
             <span>Project Settings</span>
           </span>
         </div>
+        <div class="sidebar-item ${route.section === 'templates' ? 'active' : ''}"
+             title=${collapsed ? 'Pipeline Templates' : ''}
+             @click=${() => onNavigate('templates')}>
+          <span class="sidebar-item-left">
+            ${unsafeHTML(iconSvg(FileText, 16))}
+            <span>Pipeline Templates</span>
+          </span>
+        </div>
         `
         }
         <div class="sidebar-item ${route.section === 'workspaces' ? 'active' : ''}"
+             title=${collapsed ? 'Workspaces' : ''}
              @click=${() => onNavigate('workspaces')}>
           <span class="sidebar-item-left">
             ${unsafeHTML(iconSvg(Boxes, 16))}

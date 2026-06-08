@@ -201,7 +201,7 @@ What it does in order:
 1. **Analyze** the issue body (and any files it references) into a structured report — TL;DR, scope, risk, open questions — anchored with `path:line` references.
 2. **Decide** — for each open question, present 2-3 options with one marked **Recommended** and short rationale; you answer in one shot.
 3. **Update the issue** — drafts a `## Decisions` section, shows the diff, and only writes via `gh issue edit` after explicit "yes". Never touches the `## Plan` section.
-4. **Pick a template** — resolves user > project > built-in templates via `worca templates list --json` and recommends one (or surfaces top-2 for ambiguous cases) with a one-line config delta.
+4. **Pick a template** — resolves project > user > built-in templates via `worca templates list --json` and recommends one (or surfaces top-2 for ambiguous cases) with a one-line config delta.
 5. **Launch** — always worktree-based and detached, only after explicit confirmation. The skill prints the run ID and worktree path so you can tail it.
 
 Analyses are cached at `.worca/analyses/issue-<N>.md` keyed by a SHA-256 of the issue body — re-running on an unchanged issue reuses the cached analysis but still re-prompts for decisions and template selection.

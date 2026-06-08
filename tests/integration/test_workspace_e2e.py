@@ -53,10 +53,15 @@ _WORKSPACE_SCENARIO = {
                 "git commit -m 'workspace implementation'"
             ),
             "structured_output": {
+                "outcome": "success",
+                "deferred": True,
                 "commit_sha": "$HEAD",
                 "source_branch": "worca/ws-branch",
                 "target_branch": "main",
                 "provider": "github",
+                "pr_title": "workspace implementation",
+                "pr_body": "## Summary\n- workspace change",
+                "base_branch": "main",
             },
         },
     },
@@ -236,6 +241,7 @@ def test_workspace_e2e_3_repos(tmp_path):
         "MOCK_CLAUDE_SCENARIO": str(scenario_path),
         "WORCA_SKIP_BEADS": "1",
         "WORCA_AGENT": "",
+        "WORCA_DEFER_PR": "1",
         "PATH": f"{STUBS_DIR}{os.pathsep}{os.environ.get('PATH', '')}",
         "WORCA_STUB_GH_RESPONSE_FILE": str(gh_response_file),
         "WORCA_STUB_LOG": str(stub_log_path),

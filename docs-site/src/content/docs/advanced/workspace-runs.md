@@ -11,9 +11,7 @@ A **workspace** carries one prompt across *interdependent* projects, in the righ
 
 The simplest path is the dashboard. Register a workspace from the **+** add-project dialog (choose **Workspace**), manage its definition in **Configuration → Workspaces**, then launch from **Run Pipeline ▸ Run Workspace** — pick the workspace, enter the prompt, choose a planning strategy, and set concurrency. The detail page shows the dependency graph with propagation arrows and per-project run cards. That UI flow is covered in [Fleet & workspace runs](/running-pipelines/fleet-and-workspace-runs/).
 
-:::note[Screenshot — coming soon]
-The Run Workspace launcher (workspace picker + planning-strategy options) and the workspace detail page with its dependency graph.
-:::
+![The Run Workspace launcher (workspace picker + planning-strategy options) and the workspace detail page with its dependency graph.](/screenshots/workspace-runs/01-launcher.png)
 
 The rest of this page is the **CLI and automation** reference — the `workspace.json` schema, the full flag set, and the DAG/integration/PR mechanics.
 

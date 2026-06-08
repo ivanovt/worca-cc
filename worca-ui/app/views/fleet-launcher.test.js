@@ -62,13 +62,32 @@ describe('fleetLauncherView — project multi-select', () => {
 // ── work source (mirrors new-run.js Source Type select pattern) ─────────────
 
 describe('fleetLauncherView — work source', () => {
-  it('renders the Source Type select with default None', () => {
+  it('renders the Source Type select with default Prompt (Shared)', () => {
     resetLauncherState();
     const out = renderToString(fleetLauncherView({ projects: [] }, {}));
     expect(out).toContain('select-fleet-source-type');
-    expect(out).toContain('>None<');
+    expect(out).toContain('>Prompt (Shared)<');
     expect(out).toContain('>GitHub Issue<');
-    expect(out).toContain('>Spec File<');
+    expect(out).toContain('>Specification<');
+    expect(out).toContain('>GitHub PR<');
+  });
+
+  it('shows source value input when type is GitHub PR', () => {
+    resetLauncherState({ sourceType: 'pr' });
+    const out = renderToString(fleetLauncherView({ projects: [] }, {}));
+    expect(out).toContain('input-fleet-source');
+  });
+
+  it('shows gh:pr placeholder when type is GitHub PR', () => {
+    resetLauncherState({ sourceType: 'pr' });
+    const out = renderToString(fleetLauncherView({ projects: [] }, {}));
+    expect(out).toContain('gh:pr:');
+  });
+
+  it('shows PR hint text when type is GitHub PR', () => {
+    resetLauncherState({ sourceType: 'pr' });
+    const out = renderToString(fleetLauncherView({ projects: [] }, {}));
+    expect(out).toContain('revision mode');
   });
 
   it('does not show source value input when type is None', () => {
@@ -83,7 +102,7 @@ describe('fleetLauncherView — work source', () => {
     expect(out).toContain('input-fleet-source');
   });
 
-  it('shows source value input when type is Spec File', () => {
+  it('shows source value input when type is Specification', () => {
     resetLauncherState({ sourceType: 'spec' });
     const out = renderToString(fleetLauncherView({ projects: [] }, {}));
     expect(out).toContain('input-fleet-source');

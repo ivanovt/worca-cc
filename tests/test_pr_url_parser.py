@@ -192,7 +192,11 @@ class TestEdgeCases:
 
     def test_returns_dict_with_all_keys(self):
         result = parse_pr_url("https://github.com/a/b/pull/1")
-        assert set(result.keys()) == {"provider", "host", "repo_path"}
+        assert set(result.keys()) == {"provider", "host", "repo_path", "number"}
+
+    def test_pr_url_resolves_to_number(self):
+        result = parse_pr_url("https://github.com/owner/repo/pull/42")
+        assert result["number"] == 42
 
     def test_azure_devops_repo_path_includes_org_project_repo(self):
         url = "https://dev.azure.com/org/proj/_git/repo/pullrequest/1"

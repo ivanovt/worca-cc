@@ -81,3 +81,48 @@ export function readLocalSettings(settingsPath) {
     return {};
   }
 }
+
+/**
+ * Read the full effective settings stack the way the Python runtime resolves
+ * it: user-global base → user-global .local → project base → project .local.
+ * Each layer deep-merges over the previous. Missing files are treated as
+ * empty objects. Used by UI surfaces (model alias dropdowns, etc.) that must
+ * mirror what `worca.utils.settings.resolve_model` sees at run time.
+ *
+ * `globalSettingsPath` is passed in so callers can substitute it during
+ * tests; production callers thread the result of `paths.globalSettingsPath()`.
+ */
+export function readEffectiveSettings(projectSettingsPath, globalSettingsPath) {
+  const layers = [];
+  if (globalSettingsPath) {
+    try {
+      layers.push(JSON.parse(readFileSync(globalSettingsPath, 'utf8')));
+    } catch {
+      /* missing or invalid — treat as empty */
+    }
+    const globalLocal = localPathFor(globalSettingsPath);
+    if (existsSync(globalLocal)) {
+      try {
+        layers.push(JSON.parse(readFileSync(globalLocal, 'utf8')));
+      } catch {
+        /* invalid — skip */
+      }
+    }
+  }
+  if (projectSettingsPath) {
+    try {
+      layers.push(JSON.parse(readFileSync(projectSettingsPath, 'utf8')));
+    } catch {
+      /* missing or invalid — treat as empty */
+    }
+    const projectLocal = localPathFor(projectSettingsPath);
+    if (existsSync(projectLocal)) {
+      try {
+        layers.push(JSON.parse(readFileSync(projectLocal, 'utf8')));
+      } catch {
+        /* invalid — skip */
+      }
+    }
+  }
+  return layers.reduce((acc, layer) => deepMerge(acc, layer), {});
+}

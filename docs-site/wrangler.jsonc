@@ -2,13 +2,21 @@
 	"$schema": "node_modules/wrangler/config-schema.json",
 	"name": "worca-docs",
 	"compatibility_date": "2026-05-27",
-	// Assets-only Worker: there is no `main` script — we just serve Starlight's
-	// static build from ./dist. `account_id` is intentionally omitted: Workers
-	// Builds resolves the account from the connected repo, and local deploys use
-	// the CLOUDFLARE_ACCOUNT_ID env var. Never commit account IDs or tokens here.
+	// Worker with a thin script that wraps the Workers Assets binding so
+	// `<video>` elements on /introduction/watch/ can seek (HTTP Range →
+	// 206 Partial Content). The script lives at worker/index.ts; all
+	// non-video requests still pass straight through to the asset binding.
+	"main": "worker/index.ts",
 	"assets": {
 		"directory": "./dist",
-		"not_found_handling": "404-page"
+		"binding": "ASSETS",
+		"not_found_handling": "404-page",
+		// By default Workers Assets serves matching files BEFORE the script
+		// runs, so our Range-handler never sees video requests. Listing the
+		// video paths here makes the Worker fire first for them while every
+		// other asset (HTML, CSS, JS, fonts, images, posters) still goes
+		// straight through the binding with zero overhead.
+		"run_worker_first": ["/videos/*.mp4", "/videos/*.webm", "/videos/*.m4v", "/videos/*.mov"]
 	},
 	// Option B staging environment: a second Worker (worca-docs-staging) tracks
 	// the `master` branch and serves staging.docs.worca.dev. Its Workers Builds
@@ -17,9 +25,12 @@
 	"env": {
 		"staging": {
 			"name": "worca-docs-staging",
+			"main": "worker/index.ts",
 			"assets": {
 				"directory": "./dist",
-				"not_found_handling": "404-page"
+				"binding": "ASSETS",
+				"not_found_handling": "404-page",
+				"run_worker_first": ["/videos/*.mp4", "/videos/*.webm", "/videos/*.m4v", "/videos/*.mov"]
 			}
 		}
 	}

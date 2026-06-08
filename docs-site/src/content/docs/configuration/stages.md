@@ -5,11 +5,11 @@ sidebar:
   order: 2
 ---
 
-The pipeline's nine stages are described in [The pipeline & stages](/concepts/the-pipeline-and-stages/). **Every stage except Preflight has an on/off toggle.** The **Settings → Stages** panel lists all eight agent stages — Plan, Plan Review, Coordinate, Implement, Test, Review, PR, Learn — each with an enable switch. In practice you'll change the stage set by picking a [template](/concepts/pipeline-templates/) rather than flipping switches by hand.
+The pipeline's nine stages are described in [The pipeline & stages](/concepts/the-pipeline-and-stages/). **Every stage except Preflight has an on/off toggle.**
 
-:::note[Screenshot — coming soon]
-The Settings → Stages panel: every agent stage with its enable toggle and assigned agent.
-:::
+Stage enable/disable lives inside **Pipeline Templates**, not Project Settings — every run uses an active template, and the template decides which stages run. To change the stage set: open **Pipeline Templates**, edit your active template, and use the **Pipeline** tab.
+
+![The template editor's Pipeline tab: every agent stage with its enable toggle and assigned agent.](/screenshots/stages/01-stage-config.png)
 
 ## Off by default
 
@@ -34,8 +34,6 @@ So whether Test, Review, or PR runs depends on the template you launch with. See
 
 ## Preflight checks
 
-**Preflight** is the one stage without a simple agent toggle — it's a script-based stage that validates the environment before any tokens are spent (git state, dependencies, configuration). Each individual check can be toggled independently in **Settings → Preflight**, so you can relax a check that doesn't apply to your project without disabling the whole stage.
+**Preflight** is the one stage without a simple agent toggle — it's a script-based stage that validates the environment before any tokens are spent (git state, dependencies, configuration). Preflight is a cross-template carve-out: it lives in **Project Settings → Pipeline → Preflight** and applies regardless of the active template, so you can relax a check that doesn't fit your project without touching every template.
 
-:::note[Screenshot — coming soon]
-The Preflight panel with per-check toggles.
-:::
+![The Preflight panel with per-check toggles.](/screenshots/stages/02-preflight.png)

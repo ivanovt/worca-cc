@@ -35,9 +35,7 @@ worca-ui status
 
 Open **http://localhost:3400**. You'll see the dashboard with an empty project list — you'll add your first project next.
 
-:::note[Screenshot — coming soon]
-The dashboard on first launch: the empty global view with the sidebar project picker and the **+** add-project button.
-:::
+![The dashboard on first launch: the empty global view with the sidebar project picker and the + add-project button.](/screenshots/installation/01-first-launch.png)
 
 ## Keeping worca up to date
 

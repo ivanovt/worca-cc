@@ -5,20 +5,26 @@ import { navigate, onHashChange, parseHash } from './router.js';
 import { createStore, isArchivedRunExpired } from './state.js';
 import { createArchiveActions } from './utils/archive-actions.js';
 import { confirmDialogTemplate, showConfirm } from './utils/confirm-dialog.js';
+import { bindKeyboard as bindHelpKeyboard } from './utils/help-mode.js';
 import {
   AlertTriangle,
   ArrowLeft,
   CircleSlash,
+  Copy,
   Database,
+  Download,
   iconSvg,
   Loader,
   Pause,
+  Pencil,
   Play,
   Plus,
   RotateCcw,
   Save,
   Square,
+  Star,
   Trash2,
+  Upload,
 } from './utils/icons.js';
 import {
   mapProjectRunsResponse,
@@ -43,6 +49,8 @@ import {
   resetLauncherState,
   submitFleetLauncher,
 } from './views/fleet-launcher.js';
+import { gistExportDialogView } from './views/gist-export-dialog.js';
+import { mountHelpEdgeTab } from './views/help-edge-tab.js';
 import { buildRunMeta, learningsSectionView } from './views/learnings-panel.js';
 import {
   clearLiveTerminal,
@@ -65,17 +73,28 @@ import {
 import {
   getEffectiveProjectId,
   getNewRunSubmitState,
+  invalidateTemplateCache,
   isAtCapacity,
   newRunView,
   submitNewRun,
 } from './views/new-run.js';
+import {
+  createGist,
+  exportTemplate,
+  fetchTemplates,
+  pipelinesView,
+  setupTemplatePolling,
+} from './views/pipelines.js';
+import { pipelinesEditorView } from './views/pipelines-editor.js';
 import { runCardView } from './views/run-card.js';
 import {
   prApprovalPanelView,
   runBeadsSectionView,
   runDetailView,
 } from './views/run-detail.js';
+import { runFileAccessView } from './views/run-file-access.js';
 import { runListView } from './views/run-list.js';
+import { runTimelineView } from './views/run-timeline.js';
 import {
   loadSettings,
   projectSettingsView,
@@ -114,6 +133,7 @@ import '@shoelace-style/shoelace/dist/components/badge/badge.js';
 import '@shoelace-style/shoelace/dist/components/divider/divider.js';
 import '@shoelace-style/shoelace/dist/components/tooltip/tooltip.js';
 import '@shoelace-style/shoelace/dist/components/dialog/dialog.js';
+import '@shoelace-style/shoelace/dist/components/drawer/drawer.js';
 import '@shoelace-style/shoelace/dist/components/tab-group/tab-group.js';
 import '@shoelace-style/shoelace/dist/components/tab/tab.js';
 import '@shoelace-style/shoelace/dist/components/tab-panel/tab-panel.js';
@@ -143,7 +163,34 @@ import '@shoelace-style/shoelace/dist/components/progress-bar/progress-bar.js';
 import '@shoelace-style/shoelace/dist/components/range/range.js';
 import '@shoelace-style/shoelace/dist/components/tag/tag.js';
 
-const store = createStore();
+// Sidebar collapsed state is client-local — persisted in localStorage,
+// not server-side preferences. Different browsers/tabs may want different
+// widths. Hydrate before createStore so the first render is correct.
+const SIDEBAR_COLLAPSED_KEY = 'worca.sidebar-collapsed';
+function readSidebarCollapsed() {
+  try {
+    return localStorage.getItem(SIDEBAR_COLLAPSED_KEY) === '1';
+  } catch {
+    return false;
+  }
+}
+function writeSidebarCollapsed(value) {
+  try {
+    localStorage.setItem(SIDEBAR_COLLAPSED_KEY, value ? '1' : '0');
+  } catch {
+    /* localStorage unavailable */
+  }
+}
+
+const store = createStore({
+  preferences: { sidebarCollapsed: readSidebarCollapsed() },
+});
+
+function toggleSidebarCollapsed() {
+  const next = !store.getState().preferences.sidebarCollapsed;
+  writeSidebarCollapsed(next);
+  store.setState({ preferences: { sidebarCollapsed: next } });
+}
 
 function projectUrl(path) {
   const pid = store.getState().currentProjectId;
@@ -193,6 +240,31 @@ const notificationManager = createNotificationManager({
 });
 // ─── Session-level state (not reset on project switch) ────────────────
 let route = parseHash(location.hash);
+
+const TEMPLATE_TIERS = ['project', 'user', 'builtin'];
+
+/**
+ * Migrate legacy template URLs to the new (tier, id) shape:
+ *   - `#/pipelines/...` (pre-rename): redirect to the templates list.
+ *   - `#/templates/<id>/<action>` (pre tier-in-URL redesign): the tier
+ *     slot holds what was once the id; we can't safely guess the
+ *     intended tier, so redirect to the list as well.
+ *
+ * Mutates and returns the route object. Returns the same object back if
+ * no redirect was needed.
+ */
+function _migrateLegacyTemplatesRoute(r) {
+  if (r.section === 'pipelines') {
+    navigate('templates', null, r.projectId);
+    return parseHash(location.hash);
+  }
+  if (r.section === 'templates' && r.tier && !TEMPLATE_TIERS.includes(r.tier)) {
+    navigate('templates', null, r.projectId);
+    return parseHash(location.hash);
+  }
+  return r;
+}
+route = _migrateLegacyTemplatesRoute(route);
 let connectionState = ws.getState();
 let autoScroll = true;
 
@@ -205,6 +277,20 @@ let autoScroll = true;
 let settings = {};
 let _controlPending = null; // null | { action: 'pause'|'resume'|'stop', runId: string }
 let actionError = null; // null | string (error message, auto-clears)
+let _templateGuard = null; // null | { tid, scope, action: 'delete'|'edit', count: number }
+
+/**
+ * Open-dialog state for the New / Duplicate / Rename / Import flows.
+ * null when no dialog is open. Each dialog renders conditionally from
+ * this single source of truth so we never end up with two stacked.
+ *
+ *   { mode: 'create',    id: '',         scope: 'project', baseTid: '' }
+ *   { mode: 'duplicate', srcId, srcScope, id: srcId, scope: 'project' }
+ *   { mode: 'rename',    srcId, srcScope, id: srcId, scope: srcScope }
+ *   { mode: 'import',    file: null, parsed: null, scope: 'project', error: null }
+ */
+let _templateActionDialog = null;
+let _templateActionBusy = false;
 let restartStageKey = null;
 
 // -- Fleet views --
@@ -517,6 +603,7 @@ let beadsPriorityFilter = 'all';
 let beadsStarting = null; // null | issueId
 let beadsStartError = null; // null | string
 const runBeads = new Map(); // runId → issues[] | null (null = load failed)
+const runAccessModels = new Map(); // runId → access model | null (null = load failed)
 const beadsSpinner = new Set(); // runId → show the 150ms-gated loading spinner
 const beadsSpinnerTimers = new Map(); // runId → setTimeout handle
 let beadsCounts = {}; // { runId: count }
@@ -531,6 +618,46 @@ const stageIterationTab = new Map(); // stageKey → iterationNumber
 let costsTokenData = {}; // { runId: { stage: [ { inputTokens, outputTokens, ... } ] } }
 let costsExpanded = null; // runId or null
 let costsFetched = false;
+
+// -- Pipelines / Templates --
+let _templatesPollCleanup = null;
+let _worcaCliStatusFetching = false; // single in-flight probe guard
+let _editorTemplatesFetching = false; // single in-flight templates fetch for inline collision check
+// Editor state and cleanup from pipelines-editor module
+let _editorModule = null;
+let getEditorState = null;
+
+/**
+ * If the user is currently viewing one of the just-imported templates in the
+ * editor, the cached `editorState.template` is stale (the on-disk file changed
+ * but the editor only reloads on (tier,id) change). Force a fresh
+ * `loadTemplate` so the editor reflects the imported contents without needing
+ * a browser refresh.
+ *
+ * @param {Array<{id: string, tier: string}>} imported
+ */
+function _invalidateEditorCacheIfImported(imported) {
+  if (!Array.isArray(imported) || imported.length === 0) return;
+  if (!_editorModule || typeof getEditorState !== 'function') return;
+  let st;
+  try {
+    st = getEditorState();
+  } catch {
+    return;
+  }
+  if (!st?.templateId || !st?.tier) return;
+  const hit = imported.find(
+    (e) => e && e.id === st.templateId && e.tier === st.tier,
+  );
+  if (!hit) return;
+  const route = store.getState().currentRoute || {};
+  _editorModule
+    .loadTemplate(st.tier, st.templateId, route.projectId || null)
+    .then(() => rerender())
+    .catch(() => {
+      /* best-effort */
+    });
+}
 
 // ── Integrations state ──────────────────────────────────────────────────
 let integrationsStatus = null;
@@ -778,6 +905,11 @@ function resetProjectState() {
   costsTokenData = {};
   costsExpanded = null;
   costsFetched = false;
+  // Pipelines / Templates
+  if (_templatesPollCleanup) {
+    _templatesPollCleanup();
+    _templatesPollCleanup = null;
+  }
   // Webhook UI
   webhookSelectedId = null;
   webhookCategoryFilter = 'all';
@@ -829,6 +961,58 @@ function fetchRunBeads(runId) {
       runBeads.set(runId, null);
       rerender();
     });
+}
+
+function fetchRunAccessModel(runId, force = false) {
+  if (!runId) return;
+  // Cached one-shot for completed runs; `force` (the live poll) refetches so the
+  // server's live fragment folding reaches the page during an active run.
+  if (!force && runAccessModels.has(runId)) return;
+  ws.send('get-file-access', { runId, projectId: _runProjectId(runId) })
+    .then((payload) => {
+      runAccessModels.set(runId, payload);
+      rerender();
+    })
+    .catch(() => {
+      if (!runAccessModels.has(runId)) {
+        runAccessModels.set(runId, { enabled: false });
+        rerender();
+      }
+    });
+}
+
+// Live Access Map: while the access view of an active run is open, re-fetch the
+// model every few seconds so the in-progress iteration's fragment (folded live
+// server-side) keeps updating. Self-terminates when the run reaches a terminal
+// state, and is cleared on navigation away (route-change handler).
+let _accessPollTimer = null;
+let _accessPollRunId = null;
+const _ACCESS_POLL_MS = 3000;
+const _TERMINAL_RUN_STATUSES = new Set(['completed', 'failed', 'cancelled']);
+
+function _isRunPollable(runId) {
+  const r = store.getRunById(runId);
+  if (!r) return true; // status not known yet — poll until we learn otherwise
+  const ps = r.pipeline_status || (r.active ? 'running' : 'completed');
+  return !_TERMINAL_RUN_STATUSES.has(ps);
+}
+
+function startAccessPoll(runId) {
+  if (_accessPollRunId === runId && _accessPollTimer) return; // already polling
+  stopAccessPoll();
+  _accessPollRunId = runId;
+  _accessPollTimer = setInterval(() => {
+    fetchRunAccessModel(runId, true);
+    if (!_isRunPollable(runId)) stopAccessPoll(); // final fetch issued above
+  }, _ACCESS_POLL_MS);
+}
+
+function stopAccessPoll() {
+  if (_accessPollTimer) {
+    clearInterval(_accessPollTimer);
+    _accessPollTimer = null;
+  }
+  _accessPollRunId = null;
 }
 
 function fetchAgentPrompts(runId, stages) {
@@ -906,7 +1090,14 @@ ws.on('runs-list', (payload, msg) => {
     }
     const now = Date.now();
     for (const run of payload.runs || []) {
-      if (sourceProject) run._project = sourceProject;
+      const prev = existing[run.id] || archivedUpdates[run.id];
+      run._project =
+        sourceProject ||
+        run.project ||
+        run._project ||
+        prev?._project ||
+        prev?.project ||
+        null;
       if (run.archived) {
         if (isArchivedRunExpired(run, now)) continue;
         archivedUpdates[run.id] = run;
@@ -1516,6 +1707,19 @@ ws.onConnection((state) => {
 // --- Routing ---
 
 onHashChange((newRoute) => {
+  // Same legacy-templates migration as bootstrap — covers mid-session
+  // navigation (clicking a stale link with the old hash shape). The
+  // redirect re-enters this handler with the canonical hash, so we
+  // bail this pass when it fires.
+  if (
+    newRoute.section === 'pipelines' ||
+    (newRoute.section === 'templates' &&
+      newRoute.tier &&
+      !TEMPLATE_TIERS.includes(newRoute.tier))
+  ) {
+    navigate('templates', null, newRoute.projectId);
+    return;
+  }
   const prevRunId = route.runId;
   const prevProjectId = route.projectId;
   route = newRoute;
@@ -1562,6 +1766,25 @@ onHashChange((newRoute) => {
     stopIntegrationsPoll();
   }
 
+  // Access Map data load. Force a fresh fetch on every navigation into the
+  // access tab: the per-runId model cache is render-repaint state, not a
+  // freshness signal. Without this, a model cached mid-run (empty/partial) is
+  // served verbatim when the tab is reopened after the run completes — the live
+  // poll has stopped for the now-terminal run and the render path's fetch is a
+  // cache hit — so the final Access Map only appeared after a full page reload.
+  // For non-terminal runs the poll keeps refetching; for terminal runs this one
+  // forced fetch on open delivers the final folded model.
+  if (route.action === 'access' && route.runId) {
+    fetchRunAccessModel(route.runId, true);
+    if (_isRunPollable(route.runId)) {
+      startAccessPoll(route.runId);
+    } else {
+      stopAccessPoll();
+    }
+  } else {
+    stopAccessPoll();
+  }
+
   if (route.section === 'project-settings') {
     // In single-project mode the server has worcaDir, so loadSettings(null)
     // works. In All-Projects mode (multi-project + no selection) it hits
@@ -1572,6 +1795,10 @@ onHashChange((newRoute) => {
     if (!isAllProjects) {
       loadSettings(s.currentProjectId || null).then(() => rerender());
     }
+  }
+
+  if (route.section === 'new-run') {
+    invalidateTemplateCache();
   }
 
   if (route.section === 'costs') {
@@ -1626,6 +1853,1216 @@ function handleSaveSourceRepo(sourceRepo) {
   store.setState({ preferences: { source_repo: sourceRepo } });
 }
 
+// --- Pipelines / Templates handlers ---
+
+async function handleSetDefaultTemplate(tid, tier) {
+  // Set Default is a project-level setting; the UI only exposes the
+  // toggle on project-tier templates, so tier defaults to 'project'
+  // when the caller doesn't supply one. Passing `tid: null` clears
+  // the pointer (Unset Default).
+  const clearing = tid == null;
+  const useTier = clearing ? null : tier || 'project';
+  try {
+    const res = await fetch(projectUrl('/default-template'), {
+      method: 'PUT',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify(
+        clearing ? { tier: null, id: null } : { tier: useTier, id: tid },
+      ),
+    });
+    const data = await res.json();
+    if (!data.ok) {
+      _showToast(data.error || 'Failed to set default template', 'danger');
+      return;
+    }
+    const nextDefault = clearing ? null : { tier: useTier, id: tid };
+    settings = {
+      ...settings,
+      worca: {
+        ...settings.worca,
+        default_template: nextDefault,
+      },
+    };
+    // Keep state.defaultTemplate (the bundled-with-templates pointer
+    // used by the list view + editor header toggle) in sync — without
+    // this, the editor header would still read the stale value until
+    // the next /templates fetch.
+    store.setState({ defaultTemplate: nextDefault });
+    _showToast(
+      clearing
+        ? 'Default template cleared'
+        : `Default template set to "${tid}" (${useTier})`,
+      'success',
+    );
+    rerender();
+  } catch (err) {
+    _showToast(`Failed to set default template: ${err.message}`, 'danger');
+  }
+}
+
+function _countInflightRunsForTemplate(tid) {
+  const runs = store.getState().runs || {};
+  return Object.values(runs).filter(
+    (r) =>
+      r.pipeline_template === tid &&
+      (r.pipeline_status === 'running' || r.pipeline_status === 'paused'),
+  ).length;
+}
+
+async function handleDeleteTemplate(tid, tier) {
+  // In-flight runs get their own richer confirmation (count + edit-vs-delete
+  // copy) via the template-guard dialog — keep that path.
+  const count = _countInflightRunsForTemplate(tid);
+  if (count > 0) {
+    _templateGuard = { tid, tier, action: 'delete', count };
+    rerender();
+    requestAnimationFrame(() => {
+      document.querySelector('.template-guard-dialog')?.show();
+    });
+    return;
+  }
+  showConfirm(
+    {
+      label: 'Delete template',
+      message: html`
+        Are you sure you want to delete
+        <code>${tid}</code> from the <strong>${tier}</strong> scope?
+        <br /><br />
+        This removes the template directory on disk; running pipelines are
+        unaffected but new runs will no longer be able to launch with this id.
+      `,
+      confirmLabel: 'Delete',
+      confirmVariant: 'danger',
+      onConfirm: () => _executeDeleteTemplate(tid, tier),
+    },
+    rerender,
+  );
+}
+
+async function _executeDeleteTemplate(tid, tier) {
+  try {
+    const res = await fetch(projectUrl(`/templates/${tier}/${tid}`), {
+      method: 'DELETE',
+    });
+    const data = await res.json();
+    if (!data.ok) {
+      showActionError(data.error || 'Failed to delete template');
+      return;
+    }
+    const templates = await fetchTemplates(
+      store.getState().currentProjectId || null,
+    );
+    store.setState({ templates, defaultTemplate: templates.defaultTemplate });
+    rerender();
+  } catch (err) {
+    showActionError(`Failed to delete template: ${err.message}`);
+  }
+}
+
+function handleEditTemplate(tid, tier) {
+  const count = _countInflightRunsForTemplate(tid);
+  if (count > 0) {
+    _templateGuard = { tid, tier, action: 'edit', count };
+    rerender();
+    requestAnimationFrame(() => {
+      document.querySelector('.template-guard-dialog')?.show();
+    });
+    return;
+  }
+  navigate('templates', tid, route.projectId, 'edit', tier);
+}
+
+function _confirmTemplateGuard() {
+  const guard = _templateGuard;
+  _templateGuard = null;
+  document.querySelector('.template-guard-dialog')?.hide();
+  if (!guard) return;
+  if (guard.action === 'delete') {
+    _executeDeleteTemplate(guard.tid, guard.tier);
+  } else {
+    navigate('templates', guard.tid, route.projectId, 'edit', guard.tier);
+  }
+}
+
+function _dismissTemplateGuard() {
+  _templateGuard = null;
+  rerender();
+}
+
+/**
+ * Defer focus to the first input of the action dialog after the next
+ * paint. The sl-after-show event doesn't fire reliably when the dialog
+ * is mounted via lit-html's declarative `open` attribute (vs the
+ * imperative show() flow), so we schedule the focus shift ourselves
+ * once the DOM has settled. Two RAFs let Shoelace finish hooking up
+ * its shadow DOM before we reach for the field.
+ */
+function _focusActionDialogInput() {
+  requestAnimationFrame(() => {
+    requestAnimationFrame(() => {
+      const dialog = document.querySelector('sl-dialog.template-action-dialog');
+      if (!dialog) return;
+      const target =
+        dialog.querySelector('sl-input') ||
+        dialog.querySelector('input[type="file"]') ||
+        dialog.querySelector('sl-select');
+      if (target && typeof target.focus === 'function') {
+        target.focus();
+      }
+    });
+  });
+}
+
+/**
+ * Open the Duplicate dialog. The destination id defaults to the source
+ * id (the canonical "shadow & edit" flow); the user can override both
+ * the id and the target scope before confirming.
+ */
+function handleDuplicateTemplate(tid, tier) {
+  // Tier is passed directly from the card so we never have to guess
+  // by re-resolving the id against the list. Default destination tier
+  // for built-ins is 'project' (the canonical shadow flow);
+  // duplicating within project/user defaults to the same tier (so the
+  // dialog at least surfaces the no-op slot the server will reject).
+  const srcTier = tier || 'builtin';
+  _templateActionDialog = {
+    mode: 'duplicate',
+    srcId: tid,
+    srcTier,
+    id: tid,
+    tier: srcTier === 'builtin' ? 'project' : srcTier,
+    name: '',
+    nameDirty: false,
+    error: null,
+  };
+  rerender();
+  _focusActionDialogInput();
+}
+
+/**
+ * Open the New dialog — empty form, user picks an id + tier and
+ * optionally a base template to clone from. On confirm we POST a new
+ * minimal template (or call duplicate when a base is selected), then
+ * navigate into the editor on the new (tier, id).
+ */
+function handleCreateTemplate(_projectId) {
+  _templateActionDialog = {
+    mode: 'create',
+    id: '',
+    name: '',
+    tier: 'project',
+    // baseTid holds "<tier>:<id>" so the user can pick the exact copy
+    // they want to clone from (project vs built-in for the same id).
+    baseRef: '',
+    // Auto-slug id from name until the user touches the id field.
+    idDirty: false,
+    error: null,
+  };
+  rerender();
+  _focusActionDialogInput();
+}
+
+/**
+ * Open the Import dialog. The user picks a `.json` bundle exported via
+ * Export, plus a target tier. We parse client-side so the dialog can
+ * preview which template ids are about to land.
+ */
+function handleImportTemplate(_projectId) {
+  _templateActionDialog = {
+    mode: 'import',
+    file: null,
+    parsed: null,
+    tier: 'project',
+    error: null,
+  };
+  rerender();
+  _focusActionDialogInput();
+}
+
+function _dismissTemplateActionDialog() {
+  _templateActionDialog = null;
+  _templateActionBusy = false;
+  rerender();
+}
+
+function _onCollisionActionChange(alias, action, suggested) {
+  if (!_templateActionDialog) return;
+  const prev = _templateActionDialog.resolutions?.[alias] || {};
+  const next = { action };
+  if (action === 'rename') {
+    next.new_name = prev.new_name || suggested || `${alias}-01`;
+  }
+  _templateActionDialog = {
+    ..._templateActionDialog,
+    resolutions: {
+      ...(_templateActionDialog.resolutions || {}),
+      [alias]: next,
+    },
+  };
+  rerender();
+}
+
+function _onCollisionRenameInput(alias, newName) {
+  if (!_templateActionDialog) return;
+  const prev = _templateActionDialog.resolutions?.[alias] || {
+    action: 'rename',
+  };
+  _templateActionDialog = {
+    ..._templateActionDialog,
+    resolutions: {
+      ...(_templateActionDialog.resolutions || {}),
+      [alias]: { ...prev, action: 'rename', new_name: newName },
+    },
+  };
+  rerender();
+}
+
+function _onTemplateCollisionChange(tid, action) {
+  if (!_templateActionDialog) return;
+  _templateActionDialog = {
+    ..._templateActionDialog,
+    templateResolutions: {
+      ...(_templateActionDialog.templateResolutions || {}),
+      [tid]: { action },
+    },
+  };
+  rerender();
+}
+
+const _TEMPLATE_ID_RE = /^[a-z0-9_-]{1,64}$/;
+
+/**
+ * Produce a template id from a human-friendly name. Mirrors what
+ * worca-cc accepts: lowercase letters / digits / hyphens / underscores,
+ * 1–64 chars. Used by the Create dialog and the editor's Name field
+ * to auto-fill the Id field until the user manually edits it.
+ *
+ * Strategy: lowercase, replace any run of non-alnum-underscore with a
+ * single hyphen, trim leading/trailing hyphens, cap at 64 chars.
+ */
+function _slugifyId(name) {
+  if (!name) return '';
+  const slug = String(name)
+    .toLowerCase()
+    .replace(/[^a-z0-9_]+/g, '-')
+    .replace(/^-+|-+$/g, '')
+    .slice(0, 64);
+  return slug;
+}
+export { _slugifyId as slugifyId };
+
+function _validateActionDialog(dlg, state) {
+  if (!dlg) return null;
+  // Export only chooses a mode; nothing to validate.
+  if (dlg.mode === 'export') return null;
+  if (dlg.mode === 'import') {
+    if (dlg.importResult) return null;
+    if (!dlg.parsed) return 'Choose a bundle file to import.';
+    return null;
+  }
+  if (!dlg.id || !_TEMPLATE_ID_RE.test(dlg.id)) {
+    return 'Id must match [a-z0-9_-], 1–64 chars.';
+  }
+  // Inline collision check — faster feedback than waiting for the
+  // server. Compares against `(tier, id)` now that the API treats
+  // both as the primary key.
+  if (
+    dlg.mode === 'rename' ||
+    dlg.mode === 'duplicate' ||
+    dlg.mode === 'create'
+  ) {
+    if (
+      dlg.mode === 'rename' &&
+      dlg.id === dlg.srcId &&
+      dlg.tier === dlg.srcTier
+    ) {
+      return 'Pick a new id or tier (no change selected).';
+    }
+    const templates = state.templates || [];
+    const conflict = templates.find(
+      (t) => t.id === dlg.id && t.tier === dlg.tier,
+    );
+    if (conflict) {
+      return `An id "${dlg.id}" already exists in the ${dlg.tier} scope.`;
+    }
+  }
+  return null;
+}
+
+function _updateActionDialog(patch) {
+  if (!_templateActionDialog) return;
+  _templateActionDialog = { ..._templateActionDialog, ...patch };
+  rerender();
+}
+
+async function _onImportFileChange(e) {
+  const file = e.target.files?.[0];
+  if (!file) {
+    _updateActionDialog({ file: null, parsed: null, error: null });
+    return;
+  }
+
+  // Sniff first 4 bytes for ZIP magic (PK\x03\x04, PK\x05\x06, PK\x07\x08).
+  const headBytes = new Uint8Array(await file.slice(0, 4).arrayBuffer());
+  const isZipMagic =
+    headBytes[0] === 0x50 &&
+    headBytes[1] === 0x4b &&
+    (headBytes[2] === 0x03 || headBytes[2] === 0x05 || headBytes[2] === 0x07);
+  const isZipExt = /\.zip$/i.test(file.name);
+
+  if (isZipMagic || isZipExt) {
+    _updateActionDialog({
+      file,
+      parsed: { _kind: 'zip', name: file.name, size: file.size },
+      error: null,
+    });
+    return;
+  }
+
+  try {
+    const text = await file.text();
+    const parsed = JSON.parse(text);
+    if (!parsed || !Array.isArray(parsed.templates)) {
+      _updateActionDialog({
+        file,
+        parsed: null,
+        error: 'Bundle must contain a "templates" array.',
+      });
+      return;
+    }
+    _updateActionDialog({ file, parsed, error: null });
+  } catch (err) {
+    _updateActionDialog({
+      file,
+      parsed: null,
+      error: `Failed to parse bundle: ${err.message}`,
+    });
+  }
+}
+
+function _templateActionDialogTemplate(state) {
+  const dlg = _templateActionDialog;
+  if (!dlg) return nothing;
+  const labels = {
+    create: 'New template',
+    duplicate: 'Duplicate template',
+    rename: 'Rename or move template',
+    import: 'Import template bundle',
+    export: 'Export template bundle',
+  };
+  const confirmLabel = {
+    create: 'Create',
+    duplicate: 'Duplicate',
+    rename: 'Apply',
+    import: dlg.importResult ? 'Done' : 'Import',
+    export: 'Export',
+  };
+  const confirmIcon = {
+    create: Plus,
+    duplicate: Copy,
+    rename: Pencil,
+    import: Upload,
+    export: Download,
+  };
+  const validationError = _validateActionDialog(dlg, state);
+  const disabled = _templateActionBusy || !!validationError;
+
+  const idTierFields = html`
+    <div class="settings-field">
+      <label class="settings-label" for="dlg-id">Template ID</label>
+      <sl-input
+        id="dlg-id"
+        size="small"
+        autocomplete="off"
+        .value=${dlg.id || ''}
+        placeholder="e.g. feature-fast"
+        @sl-input=${(e) =>
+          _updateActionDialog({
+            id: e.target.value.trim(),
+            // Touching the id field stops the Create auto-slug behavior.
+            idDirty: dlg.mode === 'create' ? true : undefined,
+          })}
+      ></sl-input>
+      <span class="settings-field-hint">Lowercase letters, digits, hyphens, underscores. 1–64 chars.</span>
+    </div>
+    <div class="settings-field">
+      <label class="settings-label" for="dlg-tier">Storage</label>
+      <sl-select
+        id="dlg-tier"
+        size="small"
+        hoist
+        .value=${dlg.tier || 'project'}
+        @sl-change=${(e) => _updateActionDialog({ tier: e.target.value })}
+      >
+        <sl-option value="project">Project (.claude/templates/)</sl-option>
+        <sl-option value="user">User (~/.worca/templates/)</sl-option>
+      </sl-select>
+      <span class="settings-field-hint">Project templates are versioned with the repo; user templates are shared across all your projects.</span>
+    </div>
+  `;
+
+  let body;
+  if (dlg.mode === 'duplicate') {
+    body = html`
+      <p class="dialog-lead">
+        Copy <code>${dlg.srcId}</code> (${dlg.srcTier}) into a new template.
+      </p>
+      ${idTierFields}
+    `;
+  } else if (dlg.mode === 'rename') {
+    body = html`
+      <p class="dialog-lead">
+        Renames or moves <code>${dlg.srcId}</code> (${dlg.srcTier}). The
+        original is removed after the new copy lands.
+      </p>
+      ${idTierFields}
+    `;
+  } else if (dlg.mode === 'create') {
+    const templates = state.templates || [];
+    body = html`
+      <p class="dialog-lead">
+        Create a new template from scratch, or pick an existing one to base it on.
+      </p>
+      <div class="settings-field">
+        <label class="settings-label" for="dlg-base">Base template (optional)</label>
+        <sl-select
+          id="dlg-base"
+          size="small"
+          hoist
+          .value=${dlg.baseRef || ''}
+          @sl-change=${(e) => _updateActionDialog({ baseRef: e.target.value })}
+        >
+          <sl-option value="">(start blank)</sl-option>
+          ${(() => {
+            // Group by tier (USER → PROJECT → BUILT-IN) and show the
+            // human-readable name on the first line with `ID: <id>`
+            // as the description, mirroring the New Pipeline launcher.
+            // `worca` is a legacy alias for `builtin` from earlier
+            // resolver names — coerce it here so old caches don't
+            // create a phantom group.
+            const buckets = { user: [], project: [], builtin: [] };
+            for (const t of templates) {
+              const tier = t.tier === 'worca' ? 'builtin' : t.tier;
+              if (buckets[tier]) buckets[tier].push(t);
+            }
+            const groups = [
+              { tier: 'user', label: 'USER' },
+              { tier: 'project', label: 'PROJECT' },
+              { tier: 'builtin', label: 'BUILT-IN' },
+            ];
+            return groups
+              .filter(({ tier }) => buckets[tier].length > 0)
+              .map(
+                ({ tier, label }) => html`
+                  <sl-divider></sl-divider>
+                  <small class="template-group-label">${label}</small>
+                  ${buckets[tier].map(
+                    (t) => html`<sl-option
+                      class="template-grouped"
+                      value=${`${tier}:${t.id}`}
+                    >
+                      ${t.name || t.id}
+                      <span slot="suffix">ID: ${t.id}</span>
+                    </sl-option>`,
+                  )}
+                `,
+              );
+          })()}
+        </sl-select>
+        <span class="settings-field-hint">When set, the new template is a copy of the chosen one — exact (tier, id) source.</span>
+      </div>
+      <div class="settings-field">
+        <label class="settings-label" for="dlg-name">Display name</label>
+        <sl-input
+          id="dlg-name"
+          size="small"
+          autocomplete="off"
+          .value=${dlg.name || ''}
+          placeholder="e.g. Feature (fast)"
+          @sl-input=${(e) => {
+            const newName = e.target.value;
+            const patch = { name: newName };
+            // Auto-slug name → id until the user manually edits id.
+            if (!dlg.idDirty) {
+              patch.id = _slugifyId(newName);
+            }
+            _updateActionDialog(patch);
+          }}
+        ></sl-input>
+      </div>
+      ${idTierFields}
+    `;
+  } else if (dlg.mode === 'import') {
+    const isZip = dlg.parsed?._kind === 'zip';
+    body = html`
+      <p class="dialog-lead">
+        Choose a bundle file exported via the Export button on any
+        template card. The bundle's <code>templates[]</code> entries land
+        in the selected scope.
+      </p>
+      <div class="settings-field">
+        <label class="settings-label" for="dlg-import-file">Bundle file</label>
+        <input
+          id="dlg-import-file"
+          type="file"
+          accept="application/json,.json,application/zip,.zip"
+          @change=${_onImportFileChange}
+        />
+      </div>
+      ${
+        isZip
+          ? html`
+            <div class="settings-field dialog-zip-hint">
+              <sl-badge variant="neutral">Bundle contains prompt overlays</sl-badge>
+              <span class="settings-field-hint">
+                This zip bundle may include agent prompt overlays for one or more stages.
+                They will be written to the template's <code>agents/</code> directory on import.
+              </span>
+            </div>
+          `
+          : dlg.parsed
+            ? html`
+              <div class="settings-field">
+                <label class="settings-label">Templates in bundle</label>
+                <ul class="dialog-bundle-list">
+                  ${dlg.parsed.templates.map(
+                    (t) =>
+                      html`<li><code>${t.id}</code> — ${t.name || ''}</li>`,
+                  )}
+                </ul>
+              </div>
+            `
+            : ''
+      }
+      ${
+        dlg.importResult
+          ? html`
+            <div class="settings-field dialog-import-result">
+              <sl-badge variant="success">Import complete</sl-badge>
+              ${
+                dlg.importResult.overlaysByTemplate &&
+                Object.keys(dlg.importResult.overlaysByTemplate).length > 0
+                  ? html`
+                    <ul class="dialog-bundle-list">
+                      ${Object.entries(dlg.importResult.overlaysByTemplate).map(
+                        ([id, files]) =>
+                          html`<li>
+                            <code>${id}</code> — overlays:
+                            ${files.map((f) => html`<code>${f}</code> `)}
+                          </li>`,
+                      )}
+                    </ul>
+                  `
+                  : ''
+              }
+            </div>
+          `
+          : ''
+      }
+      ${
+        Array.isArray(dlg.templateCollisions) &&
+        dlg.templateCollisions.length > 0
+          ? html`
+            <div class="settings-field dialog-collisions">
+              <div class="dialog-collisions-header">
+                <sl-badge variant="warning">Template collisions</sl-badge>
+              </div>
+              <p class="settings-field-hint">
+                The bundle contains template ids that already exist in the
+                selected target storage. Pick whether to replace the existing
+                template or keep it.
+              </p>
+              <ul class="dialog-collision-list">
+                ${dlg.templateCollisions.map((t) => {
+                  const r = dlg.templateResolutions?.[t.id] || {
+                    action: 'replace',
+                  };
+                  return html`
+                    <li class="dialog-collision-row" data-rename="false">
+                      <div class="dialog-collision-alias">
+                        <code>${t.id}</code>
+                      </div>
+                      <sl-select
+                        size="small"
+                        hoist
+                        class="collision-action-select"
+                        data-template=${t.id}
+                        .value=${r.action}
+                        @sl-change=${(e) => _onTemplateCollisionChange(t.id, e.target.value)}
+                      >
+                        <sl-option value="skip">Skip (keep existing)</sl-option>
+                        <sl-option value="replace">Replace</sl-option>
+                      </sl-select>
+                    </li>
+                  `;
+                })}
+            </ul>
+            </div>
+          `
+          : ''
+      }
+      ${
+        Array.isArray(dlg.collisions) && dlg.collisions.length > 0
+          ? html`
+            <div class="settings-field dialog-collisions">
+              <div class="dialog-collisions-header">
+                <sl-badge variant="warning">Model alias collisions</sl-badge>
+              </div>
+              <p class="settings-field-hint">
+                The bundle includes model aliases that already exist in your
+                user-global settings (<code>~/.worca/settings.json</code>). Pick
+                a resolution per alias. Renames rewrite the template's
+                <code>config.agents.*.model</code> references so the imported
+                template keeps working.
+              </p>
+              <ul class="dialog-collision-list">
+                ${dlg.collisions.map((c) => {
+                  const r = dlg.resolutions?.[c.alias] || {
+                    action: 'rename',
+                    new_name: c.suggested_rename,
+                  };
+                  const isRename = r.action === 'rename';
+                  return html`
+                    <li class="dialog-collision-row" data-rename=${isRename ? 'true' : 'false'}>
+                      <div class="dialog-collision-alias">
+                        <code>${c.alias}</code>
+                      </div>
+                      <sl-select
+                        size="small"
+                        hoist
+                        class="collision-action-select"
+                        data-alias=${c.alias}
+                        .value=${r.action}
+                        @sl-change=${(e) => _onCollisionActionChange(c.alias, e.target.value, c.suggested_rename)}
+                      >
+                        <sl-option value="skip">Skip</sl-option>
+                        <sl-option value="overwrite">Overwrite</sl-option>
+                        <sl-option value="rename">Rename</sl-option>
+                      </sl-select>
+                      ${
+                        isRename
+                          ? html`
+                            <sl-input
+                              size="small"
+                              class="collision-rename-input"
+                              data-alias=${c.alias}
+                              placeholder="new alias name"
+                              .value=${r.new_name || c.suggested_rename || ''}
+                              @sl-input=${(e) => _onCollisionRenameInput(c.alias, e.target.value)}
+                            ></sl-input>
+                          `
+                          : ''
+                      }
+                    </li>
+                  `;
+                })}
+              </ul>
+              ${
+                dlg.newAliases && dlg.newAliases.length > 0
+                  ? html`
+                    <p class="settings-field-hint dialog-new-aliases-hint">
+                      ${dlg.newAliases.length} new alias${dlg.newAliases.length === 1 ? '' : 'es'}
+                      will land cleanly:
+                      ${dlg.newAliases.map((a) => html`<code>${a}</code> `)}
+                    </p>
+                  `
+                  : ''
+              }
+            </div>
+          `
+          : ''
+      }
+      <div class="settings-field">
+        <label class="settings-label" for="dlg-tier">Target storage</label>
+        <sl-select
+          id="dlg-tier"
+          size="small"
+          hoist
+          .value=${dlg.tier || 'project'}
+          @sl-change=${(e) => _updateActionDialog({ tier: e.target.value })}
+        >
+          <sl-option value="project">Project (.claude/templates/)</sl-option>
+          <sl-option value="user">User (~/.worca/templates/)</sl-option>
+        </sl-select>
+      </div>
+    `;
+  } else if (dlg.mode === 'export') {
+    const exportMode = dlg.exportMode || 'standalone';
+    body = html`
+      <p class="dialog-lead">
+        Export <code>${dlg.srcId}</code> (${dlg.srcTier}) as a bundle you can
+        import into another project.
+      </p>
+      <div class="settings-field">
+        <label class="settings-label" for="dlg-export-mode">Bundle contents</label>
+        <sl-radio-group
+          id="dlg-export-mode"
+          class="export-mode-group"
+          .value=${exportMode}
+          @sl-change=${(e) => _updateActionDialog({ exportMode: e.target.value })}
+        >
+          <sl-radio value="standalone">
+            <span class="export-mode-option">
+              <span class="export-mode-title">Standalone (self-contained)</span>
+              <span class="export-mode-hint">
+                Config materialised over the built-in defaults and prompts
+                resolved into a complete set. Behaves identically wherever it's
+                imported.
+              </span>
+            </span>
+          </sl-radio>
+          <sl-radio value="delta">
+            <span class="export-mode-option">
+              <span class="export-mode-title">Delta (overrides only)</span>
+              <span class="export-mode-hint">
+                Just this template's changes. Re-merges over the destination's
+                defaults at run launch — smaller, but version-dependent.
+              </span>
+            </span>
+          </sl-radio>
+        </sl-radio-group>
+      </div>
+    `;
+  }
+
+  return html`
+    <sl-dialog
+      class="template-action-dialog"
+      label=${labels[dlg.mode]}
+      open
+      @sl-initial-focus=${(e) => {
+        // sl-dialog's default focus lands on the close button. Pre-empt
+        // it so initial focus goes to the first form field instead —
+        // less keyboard friction (start typing immediately). Only
+        // intercept the dialog's own initial-focus event; bubbled
+        // events from children (e.g. sl-select) reach this listener
+        // too and must be ignored.
+        if (e.target !== e.currentTarget) return;
+        e.preventDefault();
+      }}
+      @sl-after-show=${(e) => {
+        // Same bubbling guard: sl-select / sl-tab-group inside the
+        // dialog fire their own sl-after-show events. Only the
+        // dialog's own settle matters for our focus shift.
+        if (e.target !== e.currentTarget) return;
+        const dialog = e.target;
+        const target =
+          dialog.querySelector('sl-input') ||
+          dialog.querySelector('input[type="file"]') ||
+          dialog.querySelector('sl-select');
+        if (target && typeof target.focus === 'function') {
+          target.focus();
+        }
+      }}
+      @sl-after-hide=${(e) => {
+        // Critical: sl-select's dropdown close fires sl-after-hide too,
+        // and the event bubbles up to this listener. Without this
+        // guard, changing the Storage dropdown would close the
+        // entire dialog as if the user had clicked Cancel.
+        if (e.target !== e.currentTarget) return;
+        _dismissTemplateActionDialog();
+      }}
+    >
+      ${body}
+      ${
+        dlg.error
+          ? html`<sl-alert variant="danger" open class="dialog-error">${dlg.error}</sl-alert>`
+          : ''
+      }
+      ${
+        validationError
+          ? html`<sl-alert variant="warning" open class="dialog-error">${validationError}</sl-alert>`
+          : ''
+      }
+      <sl-button
+        slot="footer"
+        variant="default"
+        ?disabled=${_templateActionBusy}
+        @click=${_dismissTemplateActionDialog}
+      >Cancel</sl-button>
+      <sl-button
+        slot="footer"
+        variant="primary"
+        ?disabled=${disabled}
+        @click=${_confirmTemplateActionDialog}
+      >${
+        _templateActionBusy
+          ? html`<sl-spinner></sl-spinner>`
+          : html`<span slot="prefix">${unsafeHTML(iconSvg(confirmIcon[dlg.mode], 14))}</span>${confirmLabel[dlg.mode]}`
+      }</sl-button>
+    </sl-dialog>
+  `;
+}
+
+async function _confirmTemplateActionDialog() {
+  const dlg = _templateActionDialog;
+  if (!dlg || _templateActionBusy) return;
+  _templateActionBusy = true;
+  rerender();
+
+  try {
+    if (dlg.mode === 'duplicate') {
+      const res = await fetch(
+        projectUrl(`/templates/${dlg.srcTier}/${dlg.srcId}/duplicate`),
+        {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ dst_tier: dlg.tier, dst_id: dlg.id }),
+        },
+      );
+      const data = await res.json();
+      if (!res.ok || !data.ok) {
+        _templateActionDialog = {
+          ...dlg,
+          error: data.error || 'Failed to duplicate',
+        };
+        _templateActionBusy = false;
+        rerender();
+        return;
+      }
+      _templateActionDialog = null;
+      _templateActionBusy = false;
+      const templates = await fetchTemplates(route.projectId || null);
+      store.setState({ templates, defaultTemplate: templates.defaultTemplate });
+      navigate('templates', dlg.id, route.projectId, 'edit', dlg.tier);
+      return;
+    }
+
+    if (dlg.mode === 'rename') {
+      // Server composes duplicate + delete; see templates-routes.js for
+      // the partial_rename failure mode.
+      const res = await fetch(
+        projectUrl(`/templates/${dlg.srcTier}/${dlg.srcId}/rename`),
+        {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ dst_tier: dlg.tier, dst_id: dlg.id }),
+        },
+      );
+      const data = await res.json();
+      if (!res.ok || !data.ok) {
+        _templateActionDialog = {
+          ...dlg,
+          error: data.error || 'Failed to rename',
+        };
+        _templateActionBusy = false;
+        rerender();
+        return;
+      }
+      _templateActionDialog = null;
+      _templateActionBusy = false;
+      const templates = await fetchTemplates(route.projectId || null);
+      store.setState({ templates, defaultTemplate: templates.defaultTemplate });
+      return;
+    }
+
+    if (dlg.mode === 'create') {
+      // With a base: clone the exact (tier, id) source. Without: POST
+      // a minimal new template into the chosen tier.
+      let res;
+      if (dlg.baseRef) {
+        const [baseTier, baseId] = dlg.baseRef.split(':');
+        res = await fetch(
+          projectUrl(`/templates/${baseTier}/${baseId}/duplicate`),
+          {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ dst_tier: dlg.tier, dst_id: dlg.id }),
+          },
+        );
+      } else {
+        res = await fetch(projectUrl(`/templates/${dlg.tier}`), {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({
+            id: dlg.id,
+            name: dlg.name || dlg.id,
+            description: '',
+            config: {},
+            params: {},
+            tags: [],
+          }),
+        });
+      }
+      const data = await res.json();
+      if (!res.ok || !data.ok) {
+        _templateActionDialog = {
+          ...dlg,
+          error: data.error || 'Failed to create',
+        };
+        _templateActionBusy = false;
+        rerender();
+        return;
+      }
+      _templateActionDialog = null;
+      _templateActionBusy = false;
+      const templates = await fetchTemplates(route.projectId || null);
+      store.setState({ templates, defaultTemplate: templates.defaultTemplate });
+      navigate('templates', dlg.id, route.projectId, 'edit', dlg.tier);
+      return;
+    }
+
+    if (dlg.mode === 'import') {
+      // "Done" button after a successful import result — just close.
+      if (dlg.importResult) {
+        _templateActionDialog = null;
+        _templateActionBusy = false;
+        rerender();
+        return;
+      }
+
+      if (!dlg.parsed) {
+        _templateActionDialog = { ...dlg, error: 'No bundle loaded' };
+        _templateActionBusy = false;
+        rerender();
+        return;
+      }
+
+      const tier = dlg.tier || 'project';
+      const isZip = dlg.parsed._kind === 'zip';
+
+      // Phase 1: preview surfaces alias collisions BEFORE any write. If
+      // collisions exist and the user hasn't resolved them yet, swap the
+      // dialog body to the collision resolver. On the next click (with
+      // resolutions in hand) we drop through to the commit POST.
+      if (!dlg.previewSeen) {
+        const previewUrl = `${projectUrl('/templates/import/preview')}?dst_tier=${encodeURIComponent(tier)}`;
+        const previewInit = isZip
+          ? {
+              method: 'POST',
+              headers: { 'Content-Type': 'application/zip' },
+              body: dlg.file,
+            }
+          : {
+              method: 'POST',
+              headers: { 'Content-Type': 'application/json' },
+              body: JSON.stringify({ bundle: dlg.parsed }),
+            };
+        const previewRes = await fetch(previewUrl, previewInit);
+        const previewData = await previewRes.json();
+        if (!previewRes.ok || !previewData.ok) {
+          _templateActionDialog = {
+            ...dlg,
+            error: previewData.error || 'Failed to preview import',
+          };
+          _templateActionBusy = false;
+          rerender();
+          return;
+        }
+        const collisions = previewData.collisions || [];
+        const templateCollisions = previewData.template_collisions || [];
+        if (collisions.length > 0 || templateCollisions.length > 0) {
+          const initialModels = {};
+          for (const c of collisions) {
+            initialModels[c.alias] = {
+              action: 'rename',
+              new_name: c.suggested_rename || `${c.alias}-01`,
+            };
+          }
+          const initialTemplates = {};
+          for (const t of templateCollisions) {
+            initialTemplates[t.id] = { action: 'replace' };
+          }
+          _templateActionDialog = {
+            ...dlg,
+            previewSeen: true,
+            collisions,
+            templateCollisions,
+            newAliases: previewData.new_aliases || [],
+            modelsScope: previewData.models_scope || 'user',
+            resolutions: initialModels,
+            templateResolutions: initialTemplates,
+          };
+          _templateActionBusy = false;
+          rerender();
+          return;
+        }
+      }
+
+      const bodyResolutions = {
+        models: dlg.resolutions || {},
+        templates: dlg.templateResolutions || {},
+      };
+      let res;
+      if (isZip) {
+        const importUrl = `${projectUrl('/templates/import')}?dst_tier=${encodeURIComponent(tier)}`;
+        res = await fetch(importUrl, {
+          method: 'POST',
+          headers: {
+            'Content-Type': 'application/zip',
+            'x-resolutions': JSON.stringify(bodyResolutions),
+          },
+          body: dlg.file,
+        });
+      } else {
+        res = await fetch(projectUrl('/templates/import'), {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({
+            bundle: dlg.parsed,
+            dst_tier: tier,
+            resolutions: bodyResolutions,
+          }),
+        });
+      }
+      const data = await res.json();
+      if (!res.ok || !data.ok) {
+        _templateActionDialog = {
+          ...dlg,
+          error: data.error || 'Failed to import',
+        };
+        _templateActionBusy = false;
+        rerender();
+        return;
+      }
+
+      if (isZip) {
+        const overlaysByTemplate = {};
+        for (const { id, tier: t } of data.imported || []) {
+          try {
+            const oRes = await fetch(
+              projectUrl(`/templates/${t}/${id}/overlays`),
+            );
+            const oData = await oRes.json();
+            if (oData.ok && oData.overlays) {
+              overlaysByTemplate[id] = Object.keys(oData.overlays);
+            }
+          } catch {
+            /* best-effort */
+          }
+        }
+        const templates = await fetchTemplates(route.projectId || null);
+        store.setState({
+          templates,
+          defaultTemplate: templates.defaultTemplate,
+        });
+        _invalidateEditorCacheIfImported(data.imported || []);
+        _templateActionDialog = {
+          ...dlg,
+          importResult: { imported: data.imported || [], overlaysByTemplate },
+        };
+        _templateActionBusy = false;
+        rerender();
+        return;
+      }
+
+      _templateActionDialog = null;
+      _templateActionBusy = false;
+      const templates = await fetchTemplates(route.projectId || null);
+      store.setState({ templates, defaultTemplate: templates.defaultTemplate });
+      _invalidateEditorCacheIfImported(data.imported || []);
+      return;
+    }
+
+    if (dlg.mode === 'export') {
+      // exportTemplate triggers a browser download and raises its own
+      // toast on success/failure; close the dialog once it returns.
+      const projectId = store.getState().currentProjectId || null;
+      await exportTemplate(
+        projectId,
+        dlg.srcId,
+        dlg.srcTier,
+        dlg.name,
+        dlg.exportMode || 'standalone',
+      );
+      _templateActionDialog = null;
+      _templateActionBusy = false;
+      rerender();
+      return;
+    }
+  } catch (err) {
+    _templateActionDialog = {
+      ...dlg,
+      error: `Request failed: ${err.message}`,
+    };
+    _templateActionBusy = false;
+    rerender();
+  }
+}
+
+function handleExportTemplate(tid, tier) {
+  // Open the export dialog so the user picks standalone (default) vs delta.
+  // The actual download happens on confirm via exportTemplate().
+  const template = (store.getState().templates || []).find(
+    (t) => t.id === tid && (!tier || t.tier === tier),
+  );
+  _templateActionDialog = {
+    mode: 'export',
+    srcId: tid,
+    srcTier: tier || template?.tier || 'project',
+    name: template?.name || tid,
+    exportMode: 'standalone',
+  };
+  _templateActionBusy = false;
+  rerender();
+}
+
+let _gistCopiedTimer = null;
+
+async function handleCopyGistUrl(tid, tier) {
+  const projectId = store.getState().currentProjectId || null;
+  const template = (store.getState().templates || []).find(
+    (t) => t.id === tid && (!tier || t.tier === tier),
+  );
+  const templateName = template?.name || tid;
+  const resolvedTier = tier || template?.tier;
+
+  // Open the dialog immediately in its loading state, before the network
+  // request resolves — no toast in this flow.
+  if (_gistCopiedTimer) {
+    clearTimeout(_gistCopiedTimer);
+    _gistCopiedTimer = null;
+  }
+  store.setState({
+    gistDialog: {
+      open: true,
+      status: 'loading',
+      url: null,
+      error: null,
+      templateName,
+      copied: false,
+    },
+  });
+
+  const result = await createGist(projectId, tid, resolvedTier);
+
+  // Bail if the dialog was dismissed while the request was in flight.
+  if (!store.getState().gistDialog?.open) return;
+
+  store.setState({
+    gistDialog: {
+      open: true,
+      status: result.ok ? 'done' : 'error',
+      url: result.ok ? result.gistUrl : null,
+      error: result.ok ? null : result.error,
+      templateName,
+      copied: false,
+    },
+  });
+}
+
+function handleGistDialogClose() {
+  if (_gistCopiedTimer) {
+    clearTimeout(_gistCopiedTimer);
+    _gistCopiedTimer = null;
+  }
+  const dlg = store.getState().gistDialog || {};
+  store.setState({ gistDialog: { ...dlg, open: false, copied: false } });
+}
+
+function handleGistDialogCopy(url) {
+  if (!url) return;
+  Promise.resolve(navigator.clipboard?.writeText(url)).catch(() => {});
+  const dlg = store.getState().gistDialog || {};
+  store.setState({ gistDialog: { ...dlg, copied: true } });
+  if (_gistCopiedTimer) clearTimeout(_gistCopiedTimer);
+  _gistCopiedTimer = setTimeout(() => {
+    _gistCopiedTimer = null;
+    const cur = store.getState().gistDialog || {};
+    if (cur.open) store.setState({ gistDialog: { ...cur, copied: false } });
+  }, 1500);
+}
+
 function handleStageFilter(stage) {
   logFilter = stage;
   // Auto-select last iteration when a stage is chosen
@@ -1672,6 +3109,27 @@ function handleToggleAutoScroll() {
   autoScroll = !autoScroll;
   rerender();
 }
+
+function _showToast(message, variant = 'success') {
+  const alert = Object.assign(document.createElement('sl-alert'), {
+    variant,
+    closable: true,
+    duration: 4000,
+  });
+  alert.textContent = String(message);
+  document.body.append(alert);
+  requestAnimationFrame(() => alert.toast());
+}
+
+// Single listener on `document` handles every `worca:toast` event —
+// because the dispatched CustomEvent has `bubbles: true`, both
+// document-target and document.dispatchEvent forms reach this. The
+// previous code also registered a `window` listener, which fired a
+// second time for any bubbled event (every Save = two toasts).
+document.addEventListener('worca:toast', (e) => {
+  const { message, variant } = e.detail || {};
+  if (message) _showToast(message, variant || 'success');
+});
 
 function showActionError(msg) {
   actionError = msg;
@@ -2114,6 +3572,83 @@ function handleCancelRun(runId) {
   );
 }
 
+// --- Shared run-page header helper ---
+
+function runPageHeaderParts(runId) {
+  const run = store.getRunById(runId);
+  const raw = run?.work_request?.title || 'Pipeline Details';
+  const firstLine = raw.split('\n')[0];
+  const title =
+    firstLine.length > 80 ? `${firstLine.slice(0, 80)}…` : firstLine;
+  let badge = null;
+  let actionButton = null;
+  if (run) {
+    const ps = run.pipeline_status || (run.active ? 'running' : 'completed');
+    const variantMap = {
+      running: 'primary',
+      paused: 'warning',
+      completed: 'success',
+      failed: 'danger',
+      cancelled: 'neutral',
+      interrupted: 'warning',
+    };
+    const variant = variantMap[ps] || 'neutral';
+    const label = ps.charAt(0).toUpperCase() + ps.slice(1);
+    badge = html`<sl-badge variant="${variant}" pill>
+      ${unsafeHTML(statusIcon(ps, 12))}
+      ${label}
+    </sl-badge>`;
+    const pending =
+      _controlPending?.runId === runId ? _controlPending.action : null;
+    if (pending === 'stop') {
+      actionButton = html`
+        <button class="action-btn action-btn--danger" disabled>
+          ${unsafeHTML(iconSvg(Loader, 14, 'icon-spin'))}
+          Stopping…
+        </button>`;
+    } else if (pending === 'pause') {
+      actionButton = html`
+        <button class="action-btn action-btn--amber" disabled>
+          ${unsafeHTML(iconSvg(Loader, 14, 'icon-spin'))}
+          Pausing…
+        </button>`;
+    } else if (pending === 'resume') {
+      actionButton = html`
+        <button class="action-btn action-btn--primary" disabled>
+          ${unsafeHTML(iconSvg(Loader, 14, 'icon-spin'))}
+          Resuming…
+        </button>`;
+    } else {
+      const pauseBtn = actionAllowed('pause', ps)
+        ? html`<button class="action-btn action-btn--amber" @click=${() => handlePauseRun(runId)}>
+            ${unsafeHTML(iconSvg(Pause, 14))} Pause
+          </button>`
+        : nothing;
+      const stopBtn = actionAllowed('stop', ps)
+        ? html`<button class="action-btn action-btn--danger" @click=${() => handleStopRun(runId)}>
+            ${unsafeHTML(iconSvg(Square, 14))} Stop
+          </button>`
+        : nothing;
+      const resumeBtn = actionAllowed('resume', ps)
+        ? html`<button class="action-btn action-btn--primary" @click=${() => handleResumeRun(runId)}>
+            ${unsafeHTML(iconSvg(Play, 14))} Resume
+          </button>`
+        : nothing;
+      const cancelBtn =
+        stopBtn === nothing && actionAllowed('cancel', ps)
+          ? html`<button class="action-btn action-btn--danger" @click=${() => handleCancelRun(runId)}>
+              ${unsafeHTML(iconSvg(Square, 14))} Cancel
+            </button>`
+          : nothing;
+      const btns = [pauseBtn, stopBtn, resumeBtn, cancelBtn].filter(
+        (b) => b !== nothing,
+      );
+      if (btns.length) actionButton = html`${btns}`;
+    }
+  }
+  return { title, badge, actionButton };
+}
+
 // --- PR Approval ---
 
 async function handleApprovePR(runId) {
@@ -2368,7 +3903,12 @@ async function handleConfirmRestartStage() {
 }
 
 function handleBack() {
-  if (route.runId) {
+  if (
+    (route.action === 'timeline' || route.action === 'access') &&
+    route.runId
+  ) {
+    navigate(route.section, route.runId, route.projectId, null);
+  } else if (route.runId) {
     navigate(route.section, null, route.projectId);
   } else if (route.section && route.section !== 'dashboard') {
     navigate('dashboard', null, route.projectId);
@@ -2831,78 +4371,19 @@ function contentHeaderView() {
     } else {
       title = 'Workspaces';
     }
-  } else if (route.runId) {
-    const run = store.getRunById(route.runId);
-    const raw = run?.work_request?.title || 'Pipeline Details';
-    const firstLine = raw.split('\n')[0];
-    title =
-      firstLine.length > 80 ? `${firstLine.slice(0, 80)}\u2026` : firstLine;
+  } else if (
+    (route.action === 'timeline' || route.action === 'access') &&
+    route.runId
+  ) {
     showBack = true;
-    if (run) {
-      const ps = run.pipeline_status || (run.active ? 'running' : 'completed');
-      const variantMap = {
-        running: 'primary',
-        paused: 'warning',
-        completed: 'success',
-        failed: 'danger',
-        cancelled: 'neutral',
-        interrupted: 'warning',
-      };
-      const variant = variantMap[ps] || 'neutral';
-      const label = ps.charAt(0).toUpperCase() + ps.slice(1);
-      badge = html`<sl-badge variant="${variant}" pill>
-        ${unsafeHTML(statusIcon(ps, 12))}
-        ${label}
-      </sl-badge>`;
-
-      const pending =
-        _controlPending?.runId === route.runId ? _controlPending.action : null;
-      if (pending === 'stop') {
-        actionButton = html`
-          <button class="action-btn action-btn--danger" disabled>
-            ${unsafeHTML(iconSvg(Loader, 14, 'icon-spin'))}
-            Stopping\u2026
-          </button>`;
-      } else if (pending === 'pause') {
-        actionButton = html`
-          <button class="action-btn action-btn--amber" disabled>
-            ${unsafeHTML(iconSvg(Loader, 14, 'icon-spin'))}
-            Pausing\u2026
-          </button>`;
-      } else if (pending === 'resume') {
-        actionButton = html`
-          <button class="action-btn action-btn--primary" disabled>
-            ${unsafeHTML(iconSvg(Loader, 14, 'icon-spin'))}
-            Resuming\u2026
-          </button>`;
-      } else {
-        const pauseBtn = actionAllowed('pause', ps)
-          ? html`<button class="action-btn action-btn--amber" @click=${() => handlePauseRun(route.runId)}>
-              ${unsafeHTML(iconSvg(Pause, 14))} Pause
-            </button>`
-          : nothing;
-        const stopBtn = actionAllowed('stop', ps)
-          ? html`<button class="action-btn action-btn--danger" @click=${() => handleStopRun(route.runId)}>
-              ${unsafeHTML(iconSvg(Square, 14))} Stop
-            </button>`
-          : nothing;
-        const resumeBtn = actionAllowed('resume', ps)
-          ? html`<button class="action-btn action-btn--primary" @click=${() => handleResumeRun(route.runId)}>
-              ${unsafeHTML(iconSvg(Play, 14))} Resume
-            </button>`
-          : nothing;
-        const cancelBtn =
-          stopBtn === nothing && actionAllowed('cancel', ps)
-            ? html`<button class="action-btn action-btn--danger" @click=${() => handleCancelRun(run.id)}>
-                ${unsafeHTML(iconSvg(Square, 14))} Cancel
-              </button>`
-            : nothing;
-        const btns = [pauseBtn, stopBtn, resumeBtn, cancelBtn].filter(
-          (b) => b !== nothing,
-        );
-        if (btns.length) actionButton = html`${btns}`;
-      }
-    }
+    ({ title, badge, actionButton } = runPageHeaderParts(route.runId));
+  } else if (route.runId && route.section !== 'templates') {
+    // The templates section also encodes its tid in `route.runId` (e.g.
+    // `#/templates/feature-glm-ds/edit`), so without the section guard
+    // this generic "run detail" handler would overwrite the dedicated
+    // "Edit Template" title below.
+    showBack = true;
+    ({ title, badge, actionButton } = runPageHeaderParts(route.runId));
   } else if (route.section === 'active') {
     title = 'Running Pipelines';
     showBack = true;
@@ -3000,6 +4481,102 @@ function contentHeaderView() {
   } else if (route.section === 'settings') {
     title = 'Settings';
     showBack = true;
+  } else if (route.section === 'templates') {
+    if (route.action === 'edit' || route.action === 'duplicate') {
+      // Built-ins open as a read-only inspector — title and badge
+      // make that explicit in the page header (no Save in the
+      // editor footer for these). Project/user templates stay as
+      // a normal "Edit Template" surface.
+      const builtinView = route.tier === 'builtin';
+      title = builtinView ? 'View Template' : 'Edit Template';
+      showBack = true;
+      if (builtinView) {
+        badge = html`<sl-badge
+          variant="warning"
+          pill
+          title="Built-in templates can't be modified. Use Duplicate to fork into project or user scope."
+          >Read-only</sl-badge
+        >`;
+      }
+      // Top-right Set/Unset Default toggle. Replaces the per-card
+      // "Set Default" button — one canonical surface, and the user
+      // can see whether the template they're looking at is the
+      // current default. Only meaningful for project-tier templates
+      // (default_template is a project-level setting that lives in
+      // settings.json and is shared with collaborators; pointing it
+      // at user or built-in scope doesn't make sense).
+      if (route.tier === 'project' && route.runId) {
+        const defaultRef = state.defaultTemplate;
+        const defaultId =
+          typeof defaultRef === 'string' ? defaultRef : defaultRef?.id || null;
+        const defaultTier =
+          typeof defaultRef === 'string' ? null : defaultRef?.tier || null;
+        const isThisDefault =
+          defaultId === route.runId &&
+          (!defaultTier || defaultTier === route.tier);
+        // When this template is the project default, show a "★
+        // Default" badge inline next to the title so the user can
+        // tell at a glance which template is pinned. Mirrors the
+        // ★ Default badge that the list card carries.
+        if (isThisDefault) {
+          badge = html`<sl-badge
+            variant="primary"
+            pill
+            class="template-default-badge"
+            title="This template is the project's default"
+            >★ Default</sl-badge
+          >`;
+        }
+        const cliOk = state.worcaCliStatus?.ok !== false;
+        actionButton = html`
+          <button
+            class="action-btn ${isThisDefault ? 'action-btn--secondary' : 'action-btn--primary'}"
+            ?disabled=${!cliOk}
+            title=${
+              isThisDefault
+                ? "Clear this project's default template"
+                : 'Pin this template as the project default'
+            }
+            @click=${() =>
+              isThisDefault
+                ? handleSetDefaultTemplate(null, null)
+                : handleSetDefaultTemplate(route.runId, route.tier)}
+          >
+            ${
+              isThisDefault
+                ? html`Unset Default`
+                : html`${unsafeHTML(iconSvg(Star, 14))} Set Default`
+            }
+          </button>
+        `;
+      }
+    } else {
+      title = 'Pipeline Templates';
+      showBack = false;
+      // Header actions, top-right: Import (left) + New (right).
+      // Disabled in degraded mode (banner already explains why).
+      const cliOk = state.worcaCliStatus?.ok !== false;
+      actionButton = html`
+        <button
+          class="action-btn action-btn--secondary"
+          ?disabled=${!cliOk}
+          title=${cliOk ? 'Import a template bundle (.json)' : 'Upgrade worca-cc to enable import'}
+          @click=${() => handleImportTemplate(route.projectId)}
+        >
+          ${unsafeHTML(iconSvg(Upload, 14))}
+          Import
+        </button>
+        <button
+          class="action-btn action-btn--primary"
+          ?disabled=${!cliOk}
+          title=${cliOk ? 'Create a new template from scratch' : 'Upgrade worca-cc to enable create'}
+          @click=${() => handleCreateTemplate(route.projectId)}
+        >
+          ${unsafeHTML(iconSvg(Plus, 14))}
+          New
+        </button>
+      `;
+    }
   } else if (route.section === 'project-settings') {
     title = 'Project Settings';
     showBack = true;
@@ -3025,8 +4602,8 @@ function contentHeaderView() {
       `
           : ''
       }
-      ${badge || ''}
       <h1 class="content-header-title">${title}</h1>
+      ${badge || ''}
       ${
         actionButton
           ? html`<div class="content-header-actions">
@@ -3096,14 +4673,92 @@ function mainContentView() {
     });
   }
 
+  // Access sub-view for a run: short-circuit to runFileAccessView.
+  if (route.action === 'access' && route.runId) {
+    const run = store.getRunById(route.runId);
+    if (!run) {
+      if (
+        state.runsLoaded &&
+        currentProjectId &&
+        (state.projects || []).length > 1
+      ) {
+        navigate(route.section, null, route.projectId);
+        return html``;
+      }
+      if (state.runsLoaded) {
+        return html`
+          <div class="run-detail run-detail-layout">
+            <div class="run-detail-layout__overview">
+              <sl-alert variant="warning" open>
+                <strong>Run not found.</strong>
+                No <code>status.json</code> exists for
+                <code>${route.runId}</code> — it may have been an orphan worktree
+                whose pipeline died before writing run state. Clean it up from the
+                <a href="#/worktrees" @click=${() => navigate('worktrees')}>Worktrees</a> view.
+              </sl-alert>
+            </div>
+          </div>
+        `;
+      }
+      return html``;
+    }
+    fetchRunAccessModel(route.runId);
+    return runFileAccessView(run, settings, {
+      section: route.section,
+      runId: route.runId,
+      projectId: route.projectId,
+      model: runAccessModels.get(route.runId),
+      onOpenTimeline: () =>
+        navigate(route.section, route.runId, route.projectId, 'timeline'),
+      onRerender: rerender,
+    });
+  }
+
+  // Timeline sub-view for a run: short-circuit to runTimelineView.
+  if (route.action === 'timeline' && route.runId) {
+    const run = store.getRunById(route.runId);
+    if (!run) {
+      if (
+        state.runsLoaded &&
+        currentProjectId &&
+        (state.projects || []).length > 1
+      ) {
+        navigate(route.section, null, route.projectId);
+        return html``;
+      }
+      if (state.runsLoaded) {
+        return html`
+          <div class="run-detail run-detail-layout">
+            <div class="run-detail-layout__overview">
+              <sl-alert variant="warning" open>
+                <strong>Run not found.</strong>
+                No <code>status.json</code> exists for
+                <code>${route.runId}</code> — it may have been an orphan worktree
+                whose pipeline died before writing run state. Clean it up from the
+                <a href="#/worktrees" @click=${() => navigate('worktrees')}>Worktrees</a> view.
+              </sl-alert>
+            </div>
+          </div>
+        `;
+      }
+      return html``;
+    }
+    return runTimelineView(run, settings, {
+      section: route.section,
+      runId: route.runId,
+      projectId: route.projectId,
+    });
+  }
+
   // The runId catch-all renders the per-run pipeline detail view. Exclude
   // sections that own their own :id sub-route (fleet-runs, workspace-runs,
-  // workspaces — the create-definition flow).
+  // workspaces — the create-definition flow, pipelines for template editing).
   if (
     route.runId &&
     route.section !== 'fleet-runs' &&
     route.section !== 'workspace-runs' &&
-    route.section !== 'workspaces'
+    route.section !== 'workspaces' &&
+    route.section !== 'templates'
   ) {
     const run = store.getRunById(route.runId);
     // If the run doesn't belong to the current project (e.g. after a project
@@ -3154,11 +4809,18 @@ function mainContentView() {
     if (run && !liveStage) {
       updateActiveStage(run);
     }
+    const fileAccessEnabled =
+      settings?.worca?.telemetry?.file_access?.enabled !== false;
     const { overview, stages: stagePanelsHtml } = runDetailView(run, settings, {
       promptCache: promptCache[route.runId] || {},
       onRestartStage: handleRestartStage,
       stageIterationTab,
       onStageTabChange: handleStageTabChange,
+      onOpenTimeline: () =>
+        navigate(route.section, route.runId, route.projectId, 'timeline'),
+      onOpenAccess: fileAccessEnabled
+        ? () => navigate(route.section, route.runId, route.projectId, 'access')
+        : undefined,
       // Plan-stage View plan dialog needs to redraw when the modal
       // toggles open/closed and when the lazy plan fetch resolves.
       rerender,
@@ -3228,6 +4890,161 @@ function mainContentView() {
 
   if (route.section === 'new-run') {
     return newRunView(viewState, { rerender });
+  }
+
+  if (route.section === 'templates') {
+    // Pipelines are project-scoped (the underlying CLI writes to
+    // `.claude/templates/` under the resolved project root). In true
+    // All-Projects mode there's no project to scope to, so show the
+    // same "select a project first" empty state used by Project Settings.
+    const isAllProjects =
+      (state.projects || []).length > 1 && !state.currentProjectId;
+    if (isAllProjects) {
+      return html`
+        <div class="empty-state pipelines-empty">
+          <p>Select a project from the sidebar to view its pipeline templates.</p>
+          <sl-button variant="primary" @click=${() => navigate('dashboard', null, null)}>
+            Back to Dashboard
+          </sl-button>
+        </div>
+      `;
+    }
+
+    // Set up template polling on first entry
+    if (!_templatesPollCleanup) {
+      _templatesPollCleanup = setupTemplatePolling(
+        { currentProjectId: route.projectId },
+        store,
+        rerender,
+      );
+    }
+
+    // Fetch the worca-cc CLI compatibility status once per pipelines
+    // entry. The server caches the probe so this is essentially free.
+    // The Pipelines view degrades to read-only when ok=false; without
+    // this probe, every CRUD click would hit a 500 instead.
+    if (state.worcaCliStatus === undefined && !_worcaCliStatusFetching) {
+      _worcaCliStatusFetching = true;
+      fetch('/api/worca-cli')
+        .then((r) => r.json())
+        .then((status) => {
+          store.setState({ worcaCliStatus: status || null });
+        })
+        .catch(() => {
+          // Network/parse failure — treat as unknown rather than green.
+          // ok:false guarantees the banner renders and writes stay disabled.
+          store.setState({
+            worcaCliStatus: {
+              ok: false,
+              installed: null,
+              minimum: 'unknown',
+              message: 'Failed to probe worca-cc CLI status',
+            },
+          });
+        })
+        .finally(() => {
+          _worcaCliStatusFetching = false;
+        });
+    }
+
+    // /templates/:tier/:id/edit → editor (load and edit template)
+    if (route.runId && route.action === 'edit' && route.tier) {
+      const tid = route.runId;
+      const tier = route.tier;
+      // Import editor module and get state functions (without await to keep function sync)
+      if (!_editorModule) {
+        import('./views/pipelines-editor.js').then((mod) => {
+          _editorModule = mod;
+          ({ getEditorState } = mod);
+          rerender();
+        });
+        return html`<div class="editor-loading"><sl-spinner id="editor-spinner"></sl-spinner> Loading editor…</div>`;
+      }
+      const editorStateCurr = getEditorState();
+      // Load template on first entry — reload when (tier, id) changes
+      if (editorStateCurr.templateId !== tid || editorStateCurr.tier !== tier) {
+        _editorModule
+          .loadTemplate(tier, tid, route.projectId)
+          .then(() => rerender());
+        return html`<div class="editor-loading"><sl-spinner id="editor-spinner"></sl-spinner> Loading template…</div>`;
+      }
+      // Ensure the templates list is loaded too — the editor uses it
+      // for the inline ID-collision check (same UX as the duplicate
+      // dialog). On direct navigation to /templates/<tier>/<id>/edit
+      // the templates list view never ran, so state.templates is
+      // empty; fetch it once in the background.
+      if (
+        !state.templates &&
+        !state.templatesLoaded &&
+        !_editorTemplatesFetching
+      ) {
+        _editorTemplatesFetching = true;
+        fetchTemplates(route.projectId || null)
+          .then((templates) => {
+            store.setState({
+              templates,
+              defaultTemplate: templates.defaultTemplate,
+              templatesLoaded: true,
+            });
+          })
+          .finally(() => {
+            _editorTemplatesFetching = false;
+          });
+      }
+      return pipelinesEditorView(state, {
+        tid,
+        tier,
+        projectId: route.projectId,
+        onSaved: ({ newId, newTier } = {}) => {
+          // Stay on the editor page after Save — consistent with the
+          // Project Settings tabs (toast + same page), and lets the
+          // user keep editing without losing the tab they're on.
+          // Just refresh the templates list in the background so the
+          // ★ Default badge and other list-derived state stay fresh.
+          fetchTemplates(route.projectId || null).then((templates) => {
+            store.setState({
+              templates,
+              defaultTemplate: templates.defaultTemplate,
+            });
+          });
+          // If the save renamed the template (id changed), update the
+          // URL in place so the next reload / link works — without
+          // this the editor would 404 on refresh.
+          if (newId && (newId !== tid || newTier !== tier)) {
+            navigate(
+              'templates',
+              newId,
+              route.projectId,
+              'edit',
+              newTier || tier,
+            );
+          }
+        },
+        onCancel: () => navigate('templates', null, route.projectId),
+        rerender,
+      });
+    }
+
+    // The default_template pointer now ships in the same /templates
+    // response as the list, so we read it from state.defaultTemplate
+    // (set by fetchTemplates) instead of waiting for the separate
+    // /settings round-trip. That way the ★ Default badge renders on
+    // the first paint, with no flicker.
+    const defaultTemplate =
+      state.defaultTemplate !== undefined
+        ? state.defaultTemplate
+        : settings.worca?.default_template || null;
+    return pipelinesView(viewState, {
+      rerender,
+      defaultTemplate,
+      onCreate: () => handleCreateTemplate(route.projectId),
+      onImport: () => handleImportTemplate(route.projectId),
+      onEdit: handleEditTemplate,
+      onDuplicate: handleDuplicateTemplate,
+      onDelete: handleDeleteTemplate,
+      onExport: handleExportTemplate,
+      onGist: handleCopyGistUrl,
+    });
   }
 
   if (route.section === 'fleet-runs') {
@@ -3605,6 +5422,7 @@ function rerender() {
           store.setState({ addProjectDialogOpen: true });
           rerender();
         },
+        onToggleSidebar: toggleSidebarCollapsed,
       })}
       <main class="main-content">
         ${notificationManager.renderBanner()}
@@ -3627,6 +5445,25 @@ function rerender() {
     `
         : ''
     }
+    ${
+      _templateGuard
+        ? html`
+      <sl-dialog class="template-guard-dialog" label="Template In Use" @sl-after-hide=${_dismissTemplateGuard}>
+        <p>${_templateGuard.count} ${_templateGuard.count === 1 ? 'run' : 'runs'} in flight ${_templateGuard.count === 1 ? 'is' : 'are'} currently using this template.</p>
+        <p>${
+          _templateGuard.action === 'delete'
+            ? 'Deleting it will not affect running pipelines, but new runs will no longer find this template.'
+            : 'Editing it will not affect running pipelines, but changes will apply to future runs.'
+        }</p>
+        <sl-button slot="footer" variant="default" @click=${() => {
+          document.querySelector('.template-guard-dialog')?.hide();
+        }}>Cancel</sl-button>
+        <sl-button slot="footer" variant=${_templateGuard.action === 'delete' ? 'danger' : 'warning'} @click=${_confirmTemplateGuard}>${_templateGuard.action === 'delete' ? 'Delete Anyway' : 'Edit Anyway'}</sl-button>
+      </sl-dialog>
+    `
+        : ''
+    }
+    ${_templateActionDialogTemplate(state)}
     ${confirmDialogTemplate()}
     ${batchWorcaSetupDialogTemplate(rerender)}
     ${addProjectDialogView(state, {
@@ -3645,6 +5482,10 @@ function rerender() {
         rerender();
       },
       rerender,
+    })}
+    ${gistExportDialogView(state, {
+      onClose: handleGistDialogClose,
+      onCopy: handleGistDialogCopy,
     })}
   `,
     appEl,
@@ -3706,6 +5547,30 @@ function attachStickyHeaderListener() {
 notificationManager.setRerender(rerender);
 store.subscribe(() => scheduleRerender());
 applyTheme(store.getState().preferences.theme);
+
+// Cmd/Ctrl+B toggles the sidebar (VS Code convention).
+// Ignore the shortcut when the user is typing in an editable element so
+// it doesn't fight with text-editing flows.
+window.addEventListener('keydown', (e) => {
+  if (e.key !== 'b' && e.key !== 'B') return;
+  if (!(e.metaKey || e.ctrlKey)) return;
+  if (e.altKey || e.shiftKey) return;
+  const target = e.target;
+  if (target) {
+    const tag = (target.tagName || '').toLowerCase();
+    if (
+      tag === 'input' ||
+      tag === 'textarea' ||
+      tag === 'sl-input' ||
+      tag === 'sl-textarea'
+    )
+      return;
+    if (target.isContentEditable) return;
+  }
+  e.preventDefault();
+  toggleSidebarCollapsed();
+});
+
 if (route.projectId) {
   store.setState({ currentProjectId: route.projectId });
 }
@@ -3766,3 +5631,19 @@ setInterval(() => {
 
 rerender();
 attachStickyHeaderListener();
+
+// --- Help mode (W-061 prototype) -------------------------------------------
+// Mount the right-edge "Help" tab into its own fixed-position root outside
+// the lit-html app root so route changes don't unmount it. Bind the global
+// `?` / Escape keybindings once at bootstrap.
+(function initHelpMode() {
+  let root = document.getElementById('help-edge-tab-root');
+  if (!root) {
+    root = document.createElement('div');
+    root.id = 'help-edge-tab-root';
+    root.className = 'help-edge-tab-root';
+    document.body.appendChild(root);
+  }
+  mountHelpEdgeTab(root);
+  bindHelpKeyboard();
+})();

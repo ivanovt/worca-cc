@@ -247,7 +247,11 @@ export function createStatusWatcher({
         /* ignore */
       }
       try {
-        const runs = await discoverRunsAsync(worcaDir);
+        // enrich:true — run-snapshot broadcasts below feed the detailed run
+        // view's live update, which renders dispatch_events / graph-query counts
+        // for the still-running iteration (issue #296 keeps the list path lean,
+        // not this one).
+        const runs = await discoverRunsAsync(worcaDir, { enrich: true });
         reconcileWorktreeWatchers();
         const subscribedIds = new Set();
         for (const ws of wss.clients) {

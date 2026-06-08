@@ -91,63 +91,46 @@ describe('plan_review mode + enforce UI controls', () => {
     expect(stages.plan_review.mode).toBe('review');
   });
 
-  it('readGovernanceFromDom reads plan_review_enforce', async () => {
+  it('readGovernanceFromDom no longer reads plan_review_enforce (template-owned)', async () => {
+    // plan_review_enforce moved to TEMPLATE_OWNED_KEYS in the W-062
+    // Phase 6 cleanup; readGovernanceFromDom in Project Settings
+    // intentionally drops it now. The field lives on the template
+    // editor's Governance tab.
     const mod = await import('./settings.js');
-
-    globalThis.fetch = vi.fn().mockResolvedValue({
-      ok: true,
-      json: () => Promise.resolve({ worca: {} }),
-    });
-    await mod.loadSettings('test');
-
-    const elements = {
-      'governance-plan-review-enforce': { value: 'review_and_edit' },
-    };
-    globalThis.document.getElementById = (id) => elements[id] || null;
     const gov = mod.readGovernanceFromDom();
-    expect(gov.plan_review_enforce).toBe('review_and_edit');
+    expect(gov.plan_review_enforce).toBeUndefined();
+    expect(gov.test_gate_strikes).toBeUndefined();
+    expect(gov.dispatch).toBeUndefined();
+    expect(gov.guards).toBeDefined();
   });
 
-  it('readGovernanceFromDom defaults plan_review_enforce to auto', async () => {
-    const mod = await import('./settings.js');
-
-    globalThis.fetch = vi.fn().mockResolvedValue({
-      ok: true,
-      json: () => Promise.resolve({ worca: {} }),
-    });
-    await mod.loadSettings('test');
-
-    globalThis.document.getElementById = () => null;
-    const gov = mod.readGovernanceFromDom();
-    expect(gov.plan_review_enforce).toBe('auto');
-  });
-
-  it('pipeline tab renders mode selector for plan_review stage', async () => {
+  it('pipeline tab no longer renders the plan_review mode selector (moved to template editor)', async () => {
+    // Stage configuration (including plan_review.mode) was stripped
+    // from the Project Settings Pipeline tab in the W-062 Phase 6
+    // option-B cleanup — those keys are template-driven and edited
+    // on the Templates page. The governance.plan_review_enforce
+    // selector below covers the cross-template part that stayed.
     const mod = await import('./settings.js');
     const worca = {
       stages: {
-        plan: { agent: 'planner', enabled: true },
-        plan_review: { agent: 'plan_reviewer', enabled: true },
-        coordinate: { agent: 'coordinator', enabled: true },
-        implement: { agent: 'implementer', enabled: true },
-        test: { agent: 'tester', enabled: true },
-        review: { agent: 'reviewer', enabled: true },
-        pr: { agent: 'guardian', enabled: true },
-        learn: { agent: 'learner', enabled: false },
+        plan_review: {
+          agent: 'plan_reviewer',
+          enabled: true,
+          mode: 'review_and_edit',
+        },
       },
-      loops: {},
       milestones: {},
-      circuit_breaker: {},
       parallel: {},
       guide: {},
       fleet: {},
     };
     const output = renderToString(mod.pipelineTab(worca, () => {}));
-    expect(output).toContain('id="stage-plan_review-mode"');
-    expect(output).toContain('review_and_edit');
+    expect(output).not.toContain('id="stage-plan_review-mode"');
   });
 
-  it('governance tab renders plan_review_enforce selector', async () => {
+  it('Project-Settings governance tab no longer renders the plan_review_enforce selector', async () => {
+    // The selector moved to the template editor's Governance tab —
+    // each template owns its own enforcement posture now.
     const mod = await import('./settings.js');
 
     globalThis.fetch = vi.fn().mockResolvedValue({
@@ -159,14 +142,12 @@ describe('plan_review mode + enforce UI controls', () => {
     const worca = {
       governance: {
         guards: {},
-        test_gate_strikes: 2,
-        dispatch: { tools: {}, skills: {}, subagents: {} },
       },
     };
     const output = renderToString(
       mod.governanceTab(worca, { allow: [] }, () => {}),
     );
-    expect(output).toContain('id="governance-plan-review-enforce"');
-    expect(output).toContain('independent verification');
+    expect(output).not.toContain('id="governance-plan-review-enforce"');
+    expect(output).not.toContain('id="test-gate-strikes"');
   });
 });
