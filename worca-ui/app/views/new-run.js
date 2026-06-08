@@ -1,4 +1,5 @@
 import { html, nothing } from 'lit-html';
+import { ref } from 'lit-html/directives/ref.js';
 import { unsafeHTML } from 'lit-html/directives/unsafe-html.js';
 import { helpFor } from '../utils/help-links.js';
 import { FileText, iconSvg } from '../utils/icons.js';
@@ -125,6 +126,43 @@ export function resolveEffectiveMaxBeads() {
   return projectLevelMaxBeads;
 }
 
+/**
+ * lit-html ref callback for the Max Beads <sl-select>.
+ *
+ * Shoelace's sl-select derives `displayLabel` from `selectedOption.getTextLabel()`
+ * inside selectionChanged(), which only fires on value/multiple changes — NOT
+ * when the selected option's textContent changes underneath. Our first option
+ * ("Template Default: <X>") embeds a dynamic value that shifts on template
+ * switch, so attach a MutationObserver to force a re-derive whenever any
+ * descendant sl-option's text content changes.
+ *
+ * lit-html refs fire only on mount/unmount, not per render, so setting up the
+ * observer here is a once-per-instance cost. The trailing microtask refresh
+ * covers the initial mount, after which the observer drives subsequent updates.
+ */
+function _refreshSlSelectDisplay(el) {
+  if (!el) return;
+  if (el.__maxBeadsObserverAttached) return;
+  el.__maxBeadsObserverAttached = true;
+  const refresh = () => {
+    if (typeof el.selectionChanged === 'function') {
+      el.selectionChanged();
+    }
+  };
+  const observer = new MutationObserver(refresh);
+  observer.observe(el, { characterData: true, childList: true, subtree: true });
+  Promise.resolve().then(refresh);
+}
+
+/**
+ * Force `maxBeads` to match a template's coordinator.max_beads config.
+ *
+ * No longer auto-called from the new-run template picker — the picker now
+ * leaves `maxBeads = null` so the "Template Default: <X>" label re-resolves
+ * from whichever template is active. This helper remains exported for any
+ * external caller that needs to explicitly mirror a template's cap into the
+ * UI state.
+ */
 export function seedMaxBeadsFromTemplate(templateId) {
   const tmpl = (templates || []).find((t) => t.id === templateId);
   const tmplMaxBeads = tmpl?.config?.agents?.coordinator?.max_beads;
@@ -497,7 +535,11 @@ export function newRunView(_state, { rerender }) {
 
   function handleTemplateChange(e) {
     selectedTemplate = e.target.value;
-    seedMaxBeadsFromTemplate(selectedTemplate);
+    // Intentionally do NOT seed maxBeads from the template. Leaving it as
+    // `null` keeps the dropdown on "Template Default: <X>", which re-resolves
+    // its label from the new template — so the value the user sees in the
+    // closed dropdown follows the template change automatically. Any explicit
+    // override the user already picked is preserved across template switches.
     rerender();
   }
 
@@ -829,21 +871,20 @@ export function newRunView(_state, { rerender }) {
 
               <div class="settings-field">
                 <label class="settings-label">Max Beads</label>
-                <sl-select id="new-run-max-beads" value=${maxBeads === null ? '' : String(maxBeads)} @sl-change=${handleMaxBeadsChange}>
+                <sl-select id="new-run-max-beads" ${ref(_refreshSlSelectDisplay)} value=${maxBeads === null ? '' : String(maxBeads)} @sl-change=${handleMaxBeadsChange}>
                   ${(() => {
-                    // `0` is the Auto sentinel — render it as "Auto", not "0",
-                    // so the dropdown matches the semantics of the runtime.
+                    // `0` is the Auto sentinel — render it as "Auto", not "0".
                     const effective = resolveEffectiveMaxBeads();
                     const renderEffective =
                       effective === null || effective === 0
                         ? 'Auto'
-                        : `${effective} bead${effective === 1 ? '' : 's'}`;
-                    return html`<sl-option value="">Default (${renderEffective})</sl-option>`;
+                        : String(effective);
+                    return html`<sl-option value="">Template Default: ${renderEffective}</sl-option>`;
                   })()}
-                  <sl-option value="0">Auto (no cap)</sl-option>
+                  <sl-option value="0">Explicit: Auto</sl-option>
                   ${[1, 2, 3, 5, 10].map(
                     (n) =>
-                      html`<sl-option value=${String(n)}>${n} beads</sl-option>`,
+                      html`<sl-option value=${String(n)}>Explicit: ${n}</sl-option>`,
                   )}
                 </sl-select>
                 ${(() => {
@@ -851,15 +892,15 @@ export function newRunView(_state, { rerender }) {
                   const renderEffective =
                     effective === null || effective === 0
                       ? 'Auto'
-                      : `${effective} bead${effective === 1 ? '' : 's'}`;
+                      : String(effective);
                   let hintText = 'Cap on coordinator beads.';
                   if (maxBeads === null) {
-                    hintText = `Using default (${renderEffective}). Explicit selection overrides this.`;
+                    hintText = `Using Template Default (${renderEffective}). Picking an Explicit option overrides this.`;
                   } else if (maxBeads === 0) {
                     hintText =
-                      'Explicitly set to Auto (no cap), overrides default.';
+                      'Explicit: Auto — overrides the template default.';
                   } else {
-                    hintText = `Explicitly set to ${maxBeads} bead${maxBeads === 1 ? '' : 's'}, overrides default.`;
+                    hintText = `Explicit cap of ${maxBeads} — overrides the template default.`;
                   }
                   return html`<span class="settings-field-hint">${hintText}</span>`;
                 })()}
