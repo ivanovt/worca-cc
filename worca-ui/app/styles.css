@@ -10291,7 +10291,7 @@ body.help-mode-active sl-tab {
   color: var(--accent);
   text-decoration: none;
   font-weight: 600;
-  font-family: var(--font-mono, monospace);
+  font-family: var(--sl-font-mono);
   font-size: 0.875rem;
 }
 .model-editor-applied-link:hover {
