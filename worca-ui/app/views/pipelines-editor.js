@@ -1684,14 +1684,25 @@ function _agentsTab(formBuffer, settings, projectId, rerender) {
   const referencedModels = Object.values(agents)
     .map((a) => a?.model)
     .filter((m) => typeof m === 'string' && m.length > 0);
+  const tierMap = editorState.modelTierMap || {};
+  // `getModelOptions(settings?.worca)` reads only the project's
+  // `worca.models` (so for a project that defined just `glm-ds`, that's
+  // the lone PROJECT option). The full per-tier inventory was already
+  // fetched into `modelTierMap` from /api/projects/:id/models — union
+  // its keys too so built-in and user-tier aliases populate the dropdown
+  // (PROJECT shadowing semantics still hold via `groupModelOptionsByTier`
+  // since `tierMap` records the highest-priority tier per alias).
   const modelOptions = Array.from(
-    new Set([...getModelOptions(settings?.worca), ...referencedModels]),
+    new Set([
+      ...getModelOptions(settings?.worca),
+      ...Object.keys(tierMap),
+      ...referencedModels,
+    ]),
   );
   const effort = formBuffer?.effort || {};
   const autoMode = effort.auto_mode || 'adaptive';
   const autoCap = effort.auto_cap || 'xhigh';
   const state = editorState;
-  const tierMap = editorState.modelTierMap || {};
   // Group the per-agent Model dropdown options by tier, mirroring the
   // "Base template" picker on the New Pipeline / template-create dialog
   // (small group label + sl-divider + indented options). Keeps the
