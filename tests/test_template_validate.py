@@ -245,3 +245,84 @@ class TestTemplateResolverValidate:
         # No underscores or other separators
         for field in fields:
             assert "." in field or field in ["root"], f"Expected dot notation, got {field}"
+
+    # -- Phase 1: tier:alias grammar validation --
+
+    def test_validate_tier_alias_valid_bare(self, tmp_path):
+        """Bare alias (no tier prefix) in agents.<role>.model is accepted."""
+        resolver = _make_resolver(
+            tmp_path,
+            config={"agents": {"planner": {"model": "opus"}}},
+        )
+        base = {"models": {"opus": "claude-opus-4-7"}}
+        issues = resolver.validate("test-tmpl", base)
+        assert issues == []
+
+    def test_validate_tier_alias_valid_prefixed(self, tmp_path):
+        """tier:alias form with valid tier prefix and valid alias is accepted."""
+        resolver = _make_resolver(
+            tmp_path,
+            config={"agents": {"planner": {"model": "builtin:opus"}}},
+        )
+        issues = resolver.validate("test-tmpl", {})
+        # No error for tier:alias grammar itself
+        grammar_errors = [i for i in issues if "malformed" in i["message"].lower()]
+        assert grammar_errors == []
+
+    def test_validate_tier_alias_invalid_prefix(self, tmp_path):
+        """Unknown tier prefix is a grammar error (severity=error)."""
+        resolver = _make_resolver(
+            tmp_path,
+            config={"agents": {"planner": {"model": "BUILTIN:opus"}}},
+        )
+        issues = resolver.validate("test-tmpl", {})
+        errors = [i for i in issues if i["severity"] == "error" and "agents.planner.model" == i["field"]]
+        assert errors, f"Expected error for bad tier prefix, got: {issues}"
+        assert "malformed" in errors[0]["message"].lower()
+
+    def test_validate_tier_alias_empty_alias_part(self, tmp_path):
+        """':alias' with empty tier is a grammar error."""
+        resolver = _make_resolver(
+            tmp_path,
+            config={"agents": {"planner": {"model": ":opus"}}},
+        )
+        issues = resolver.validate("test-tmpl", {})
+        errors = [i for i in issues if i["severity"] == "error" and "agents.planner.model" == i["field"]]
+        assert errors, f"Expected error for ':opus', got: {issues}"
+        assert "malformed" in errors[0]["message"].lower()
+
+    def test_validate_tier_alias_double_colon(self, tmp_path):
+        """'user::opus' double-colon is a grammar error."""
+        resolver = _make_resolver(
+            tmp_path,
+            config={"agents": {"planner": {"model": "user::opus"}}},
+        )
+        issues = resolver.validate("test-tmpl", {})
+        errors = [i for i in issues if i["severity"] == "error" and "agents.planner.model" == i["field"]]
+        assert errors, f"Expected error for 'user::opus', got: {issues}"
+        assert "malformed" in errors[0]["message"].lower()
+
+    def test_validate_tier_alias_space_in_tier(self, tmp_path):
+        """'user :glm-ds' with space is a grammar error."""
+        resolver = _make_resolver(
+            tmp_path,
+            config={"agents": {"planner": {"model": "user :glm-ds"}}},
+        )
+        issues = resolver.validate("test-tmpl", {})
+        errors = [i for i in issues if i["severity"] == "error" and "agents.planner.model" == i["field"]]
+        assert errors, f"Expected error for 'user :glm-ds', got: {issues}"
+        assert "malformed" in errors[0]["message"].lower()
+
+    def test_validate_tier_alias_valid_tiers(self, tmp_path):
+        """All valid tiers (builtin, user, project) pass grammar check."""
+        for tier in ("builtin", "user", "project"):
+            resolver = _make_resolver(
+                tmp_path,
+                config={"agents": {"planner": {"model": f"{tier}:my-alias"}}},
+            )
+            issues = resolver.validate("test-tmpl", {})
+            grammar_errors = [
+                i for i in issues
+                if i["severity"] == "error" and "agents.planner.model" == i["field"] and "malformed" in i["message"].lower()
+            ]
+            assert grammar_errors == [], f"Unexpected grammar error for tier '{tier}': {grammar_errors}"

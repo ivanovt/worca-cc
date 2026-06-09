@@ -47,7 +47,7 @@ class TestLoadSettingsWithGlobalFallback:
             global_path=str(tmp_path / "nonexistent" / "settings.json"),
         )
 
-        assert result == {"worca": {"stages": {"plan": {"enabled": True}}}}
+        assert result["worca"] == {"stages": {"plan": {"enabled": True}}}
 
     def test_malformed_global_json(self, tmp_path, capsys):
         """Malformed global JSON logs a warning and returns project settings."""
@@ -61,7 +61,7 @@ class TestLoadSettingsWithGlobalFallback:
             str(project_file), global_path=str(global_file)
         )
 
-        assert result == {"worca": {"key": "val"}}
+        assert result["worca"] == {"key": "val"}
         captured = capsys.readouterr()
         assert "invalid JSON" in captured.err
 
@@ -71,7 +71,7 @@ class TestLoadSettingsWithGlobalFallback:
             str(tmp_path / "no_project.json"),
             global_path=str(tmp_path / "no_global.json"),
         )
-        assert result == {}
+        assert result.get("worca") is None
 
     def test_global_only_no_project(self, tmp_path):
         """Only global file exists — its values appear in result."""
@@ -85,9 +85,7 @@ class TestLoadSettingsWithGlobalFallback:
             global_path=str(global_file),
         )
 
-        assert result == {
-            "worca": {"parallel": {"max_concurrent_pipelines": 7}}
-        }
+        assert result["worca"] == {"parallel": {"max_concurrent_pipelines": 7}}
 
     def test_deep_nested_merge(self, tmp_path):
         """Deep merge works across multiple nesting levels."""
@@ -116,6 +114,83 @@ class TestLoadSettingsWithGlobalFallback:
         assert result["worca"]["parallel"]["default_base_branch"] == "develop"
         assert result["worca"]["ui"]["worktree_disk_warning_bytes"] == 1000000
         assert result["worca"]["stages"]["plan"]["enabled"] is True
+
+    def test_tier_views_populated(self, tmp_path):
+        """_worca_tier_views stash has user, project, and builtin tiers."""
+        from worca.utils.settings import _DEFAULT_MODEL_MAP
+        global_file = tmp_path / "global.json"
+        global_file.write_text(json.dumps({
+            "worca": {"models": {"fast": "claude-user-fast"}}
+        }))
+        project_file = tmp_path / "project.json"
+        project_file.write_text(json.dumps({
+            "worca": {"models": {"fast": "claude-project-fast"}}
+        }))
+
+        result = load_settings_with_global_fallback(
+            str(project_file), global_path=str(global_file)
+        )
+
+        views = result["_worca_tier_views"]
+        assert views["user"] == {"fast": "claude-user-fast"}
+        assert views["project"] == {"fast": "claude-project-fast"}
+        assert "opus" in views["builtin"]
+        assert views["builtin"]["opus"] == _DEFAULT_MODEL_MAP["opus"]
+
+    def test_tier_views_builtin_always_present(self, tmp_path):
+        """builtin tier is always populated even when no models config exists."""
+        global_file = tmp_path / "global.json"
+        global_file.write_text(json.dumps({"worca": {}}))
+        project_file = tmp_path / "project.json"
+        project_file.write_text(json.dumps({"worca": {}}))
+
+        result = load_settings_with_global_fallback(
+            str(project_file), global_path=str(global_file)
+        )
+
+        views = result["_worca_tier_views"]
+        assert views["builtin"] != {}
+        assert "sonnet" in views["builtin"]
+
+    def test_tier_views_stash_regression_dropped(self, tmp_path):
+        """Pre-existing _worca_tier_views in input is dropped and rebuilt."""
+        global_file = tmp_path / "global.json"
+        global_file.write_text(json.dumps({
+            "_worca_tier_views": {"user": {"stale": "old"}, "project": {}, "builtin": {}},
+            "worca": {"models": {"mymodel": "fresh-id"}}
+        }))
+        project_file = tmp_path / "project.json"
+        project_file.write_text(json.dumps({"worca": {}}))
+
+        result = load_settings_with_global_fallback(
+            str(project_file), global_path=str(global_file)
+        )
+
+        # Rebuilt stash — should reflect fresh global models, not the stale stash
+        views = result["_worca_tier_views"]
+        assert views["user"] == {"mymodel": "fresh-id"}
+
+    def test_tier_views_worktree_case(self, tmp_path):
+        """Worktree-local project settings + separate user-global resolves correctly."""
+        global_file = tmp_path / "global.json"
+        global_file.write_text(json.dumps({
+            "worca": {"models": {"fast": "claude-user-fast", "slow": "claude-user-slow"}}
+        }))
+        project_file = tmp_path / "worktree" / "settings.json"
+        project_file.parent.mkdir()
+        project_file.write_text(json.dumps({
+            "worca": {"models": {"fast": "claude-worktree-fast"}}
+        }))
+
+        result = load_settings_with_global_fallback(
+            str(project_file), global_path=str(global_file)
+        )
+
+        views = result["_worca_tier_views"]
+        assert views["user"]["fast"] == "claude-user-fast"
+        assert views["user"]["slow"] == "claude-user-slow"
+        assert views["project"]["fast"] == "claude-worktree-fast"
+        assert "fast" not in views["project"] or views["project"]["fast"] == "claude-worktree-fast"
 
     def test_default_global_path(self, tmp_path, monkeypatch):
         """Without explicit global_path, uses $WORCA_HOME/settings.json."""

@@ -289,6 +289,62 @@ def materialize_config(template_config: dict) -> dict:
 
 VALID_EFFORT_LEVELS = frozenset({"low", "medium", "high", "xhigh", "max"})
 
+_VALID_TIERS = frozenset({"builtin", "user", "project"})
+# Canonical grammar: ^(builtin:|user:|project:)?[a-zA-Z0-9_-]{1,64}$
+_TIER_ALIAS_RE = re.compile(r"^(builtin:|user:|project:)?[a-zA-Z0-9_-]{1,64}$")
+
+
+def _check_model_grammar(model: str, field: str, issues: list, models_config: dict, default_map: dict) -> None:
+    """Validate a model reference string and append issues as appropriate.
+
+    Accepts:
+      - bare alias (no colon) — warns if not in models_config or default_map
+      - tier:alias — errors if tier not in {builtin, user, project} or alias invalid
+    Rejects (severity=error):
+      - any string not matching the canonical grammar
+    """
+    if ":" in model:
+        # Must match tier:alias grammar exactly
+        if not _TIER_ALIAS_RE.match(model):
+            issues.append({
+                "field": field,
+                "severity": "error",
+                "message": (
+                    f"Malformed model reference '{model}'. "
+                    "Expected 'tier:alias' where tier ∈ {{builtin, user, project}} "
+                    "and alias matches [a-zA-Z0-9_-]{1,64}, "
+                    "or a bare alias without any colon."
+                ),
+            })
+            return
+        tier, alias = model.split(":", 1)
+        if tier not in _VALID_TIERS:
+            issues.append({
+                "field": field,
+                "severity": "error",
+                "message": (
+                    f"Malformed model reference '{model}': "
+                    f"tier '{tier}' is not valid. Must be one of: {sorted(_VALID_TIERS)}."
+                ),
+            })
+        # tier-pinned refs get a separate alias-not-in-named-tier check (future phase)
+        return
+
+    # Bare alias: warn if unknown
+    if (
+        model not in models_config
+        and model not in ("opa", "oha")
+        and model not in default_map
+    ):
+        issues.append({
+            "field": field,
+            "severity": "warning",
+            "message": (
+                f"Model alias '{model}' is not defined in worca.models "
+                "and not in default map (may be treated as a raw model ID)"
+            ),
+        })
+
 
 def validate_merged_config(merged: dict) -> list[dict]:
     """Run validation rules against an already-merged worca config.
@@ -337,21 +393,8 @@ def validate_merged_config(merged: dict) -> list[dict]:
             continue
 
         model = agent_data.get("model")
-        if (
-            model
-            and isinstance(model, str)
-            and model not in models_config
-            and model not in ("opa", "oha")
-            and model not in _DEFAULT_MODEL_MAP
-        ):
-            issues.append({
-                "field": f"agents.{agent_name}.model",
-                "severity": "warning",
-                "message": (
-                    f"Model alias '{model}' is not defined in worca.models "
-                    "and not in default map (may be treated as a raw model ID)"
-                ),
-            })
+        if model and isinstance(model, str):
+            _check_model_grammar(model, f"agents.{agent_name}.model", issues, models_config, _DEFAULT_MODEL_MAP)
 
         agent_effort = agent_data.get("effort")
         if agent_effort and agent_effort not in VALID_EFFORT_LEVELS:

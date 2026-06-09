@@ -115,13 +115,19 @@ _DEFAULT_MODEL_MAP = {
 }
 
 
-def normalize_model_entry(value):
+def normalize_model_entry(value, *, alias=None):
     """Canonicalize a worca.models entry to {id, env} form.
 
     - String value -> {"id": value, "env": {}}
     - Dict value -> must contain "id" (str); "env" defaults to {}; extra keys ignored.
     - Anything else -> raise ValueError.
+    - alias (optional): the alias key being normalized; rejected if it contains ':'.
     """
+    if alias is not None and ":" in alias:
+        raise ValueError(
+            f"alias name cannot contain colon: '{alias}'. "
+            "Use 'tier:alias' only in agent model references, not as a models key."
+        )
     if isinstance(value, str):
         return {"id": value, "env": {}}
     if isinstance(value, dict) and isinstance(value.get("id"), str):
@@ -172,6 +178,10 @@ def load_settings_with_global_fallback(
 
     Global values form the base; project values win on overlap.
     Missing or malformed global file is silently tolerated (warning on bad JSON).
+
+    After merging, attaches ``merged['_worca_tier_views']`` — a stash of per-tier
+    raw model maps (user, project, builtin) used by resolve_tier_pinned().
+    The stash is internal; the public API is resolve_tier_pinned().
     """
     if global_path is None:
         global_path = _default_global_path()
@@ -190,6 +200,12 @@ def load_settings_with_global_fallback(
 
     project = load_settings(settings_path)
     if not global_blob:
+        project.pop("_worca_tier_views", None)
+        project["_worca_tier_views"] = {
+            "user": {},
+            "project": project.get("worca", {}).get("models") or {},
+            "builtin": dict(_DEFAULT_MODEL_MAP),
+        }
         return project
 
     merged = deep_merge(global_blob, project)
@@ -199,4 +215,84 @@ def load_settings_with_global_fallback(
     # exactly one tier; mirrors how Pipeline Templates shadow across tiers.
     for path in _ATOMIC_LEAF_PATHS:
         _replace_atomic_subkeys(merged, project, path)
+
+    # Drop any pre-existing stash (regression guard for JSON round-tripping) and rebuild.
+    merged.pop("_worca_tier_views", None)
+    merged["_worca_tier_views"] = {
+        "user": global_blob.get("worca", {}).get("models") or {},
+        "project": project.get("worca", {}).get("models") or {},
+        "builtin": dict(_DEFAULT_MODEL_MAP),
+    }
     return merged
+
+
+_VALID_TIERS = frozenset({"user", "project", "builtin"})
+
+
+def _parse_model_ref(ref: str) -> tuple:
+    """Parse a model reference into (tier_or_None, alias).
+
+    Bare alias (no colon) -> (None, alias).
+    Qualified 'tier:alias' -> (tier, alias).
+    Malformed (unknown tier, empty alias, multiple colons) -> raises ValueError.
+    """
+    if ":" not in ref:
+        return (None, ref)
+    parts = ref.split(":")
+    if len(parts) != 2:
+        raise ValueError(f"malformed model ref '{ref}': expected 'tier:alias' or bare alias")
+    tier, alias = parts
+    if tier not in _VALID_TIERS:
+        raise ValueError(
+            f"malformed model ref '{ref}': unknown tier '{tier}', must be one of {sorted(_VALID_TIERS)}"
+        )
+    if not alias:
+        raise ValueError(f"malformed model ref '{ref}': alias must not be empty")
+    return (tier, alias)
+
+
+def resolve_tier_pinned(ref, settings: dict) -> tuple:
+    """Resolve a (possibly tier-qualified) model ref from settings.
+
+    Returns (model_id, env_dict, error_msg).
+    - ref is None => (None, {}, None).
+    - Malformed ref => (None, {}, 'malformed model ref ...').
+    - Bare ref => delegates to resolve_model on settings['worca']['models'].
+    - Tier-qualified ref without _worca_tier_views stash => falls back to bare merged map.
+    - Tier-qualified with stash, alias absent => (None, {}, error message).
+    - Tier-qualified and present => (id, env) from that tier's entry verbatim.
+
+    The _worca_tier_views stash is internal; this function is the public API.
+    """
+    if ref is None:
+        return (None, {}, None)
+
+    try:
+        tier, alias = _parse_model_ref(ref)
+    except ValueError as exc:
+        return (None, {}, str(exc))
+
+    if tier is None:
+        models_cfg = settings.get("worca", {}).get("models") or {}
+        model_id, env = resolve_model(alias, models_cfg)
+        return (model_id, env, None)
+
+    # Tier-qualified path.
+    stash = settings.get("_worca_tier_views")
+    if stash is None:
+        if tier == "builtin":
+            # No stash but builtin tier pinned — resolve from _DEFAULT_MODEL_MAP,
+            # bypassing any user/project override in the merged models.
+            model_id, env = resolve_model(alias, _DEFAULT_MODEL_MAP)
+            return (model_id, env, None)
+        # Other tiers without stash — fall back to merged map for graceful degradation.
+        models_cfg = settings.get("worca", {}).get("models") or {}
+        model_id, env = resolve_model(alias, models_cfg)
+        return (model_id, env, None)
+
+    tier_map = stash.get(tier, {})
+    if alias not in tier_map:
+        return (None, {}, f"tier-pinned ref '{ref}': alias '{alias}' not defined in {tier} tier")
+
+    entry = normalize_model_entry(tier_map[alias])
+    return (entry["id"], entry["env"], None)

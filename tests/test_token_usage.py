@@ -493,3 +493,55 @@ def test_aggregate_token_usage_excludes_context_final_pct():
     ]
     result = aggregate_token_usage(usages)
     assert "context_final_pct" not in result or result.get("context_final_pct") is None
+
+
+# ---------------------------------------------------------------------------
+# pricing lookup — tier-prefix regression (W-058 review fix)
+# ---------------------------------------------------------------------------
+
+
+def test_pricing_lookup_bare_alias_hits_table(tmp_path):
+    """Bare alias 'glm-ds' as _model_alias resolves pricing correctly."""
+    settings_file = tmp_path / "settings.json"
+    settings_file.write_text(json.dumps({
+        "worca": {
+            "pricing": {
+                "models": {
+                    "glm-ds": {"input_per_mtok": 3.0, "output_per_mtok": 15.0}
+                }
+            }
+        }
+    }))
+    envelope = {
+        "_model_alias": "glm-ds",
+        "usage": {"input_tokens": 1_000_000, "output_tokens": 0},
+    }
+    result = extract_token_usage(envelope, settings_path=str(settings_file))
+    assert result["total_cost_usd"] == 3.0
+    assert result.get("cost_source") == "alias"
+
+
+def test_pricing_lookup_tier_prefixed_alias_misses_table(tmp_path):
+    """tier-prefixed alias 'user:glm-ds' does NOT hit the pricing table keyed by 'glm-ds'.
+
+    This test documents the pre-fix behavior: if cost_alias were passed as 'user:glm-ds',
+    the lookup would miss and cost would be $0.  After the stages.py fix the prefix is
+    stripped before the alias reaches extract_token_usage, so this path no longer occurs
+    in production.  The test is kept as a regression guard for the lookup contract.
+    """
+    settings_file = tmp_path / "settings.json"
+    settings_file.write_text(json.dumps({
+        "worca": {
+            "pricing": {
+                "models": {
+                    "glm-ds": {"input_per_mtok": 3.0, "output_per_mtok": 15.0}
+                }
+            }
+        }
+    }))
+    envelope = {
+        "_model_alias": "user:glm-ds",
+        "usage": {"input_tokens": 1_000_000, "output_tokens": 0},
+    }
+    result = extract_token_usage(envelope, settings_path=str(settings_file))
+    assert result["total_cost_usd"] == 0

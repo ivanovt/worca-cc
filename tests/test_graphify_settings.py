@@ -379,6 +379,59 @@ class TestBuildSubprocessEnv:
         assert "GRAPHIFY_OUT" not in env
 
 
+class TestBuildSubprocessEnvTierPinned:
+    """build_subprocess_env routes model_profile through resolve_tier_pinned."""
+
+    def test_user_tier_pin_resolves_env(self):
+        """model_profile='user:glm-ds' with user-tier entry resolves its id/env."""
+        cfg = effective_graphify_config(
+            {"worca": {"graphify": {"enabled": True, "model_profile": "user:glm-ds"}}},
+            {"worca": {"graphify": {"enabled": True}}},
+        )
+        settings = {
+            "worca": {"models": {}},
+            "_worca_tier_views": {
+                "user": {"glm-ds": {"id": "glm-4", "env": {"OPENAI_API_KEY": "sk-user"}}},
+                "project": {},
+                "builtin": {},
+            },
+        }
+        env = build_subprocess_env(cfg, settings, base_env={"BASE": "1"})
+        assert env["OPENAI_API_KEY"] == "sk-user"
+        assert env["BASE"] == "1"
+
+    def test_builtin_tier_pin_ignores_shadows(self):
+        """model_profile='builtin:opus' resolves from the builtin map regardless of shadows."""
+        cfg = effective_graphify_config(
+            {"worca": {"graphify": {"enabled": True, "model_profile": "builtin:opus"}}},
+            {"worca": {"graphify": {"enabled": True}}},
+        )
+        # user and project tiers shadow opus to something different
+        settings = {
+            "worca": {"models": {"opus": "shadowed-by-merged-models"}},
+            "_worca_tier_views": {
+                "user": {"opus": {"id": "user-opus-override", "env": {}}},
+                "project": {},
+                "builtin": {"opus": "claude-opus-4-7"},
+            },
+        }
+        env = build_subprocess_env(cfg, settings, base_env={})
+        # No env keys from the shadowed entries — builtin opus has no env dict
+        assert "OPENAI_API_KEY" not in env
+
+    def test_bare_profile_unchanged(self):
+        """Bare model_profile behaves identically to the pre-tier-pin path."""
+        cfg = effective_graphify_config(
+            {"worca": {"graphify": {"enabled": True, "model_profile": "gp"}}},
+            {"worca": {"graphify": {"enabled": True}}},
+        )
+        settings = {
+            "worca": {"models": {"gp": {"id": "x", "env": {"BARE_KEY": "bare-val"}}}}
+        }
+        env = build_subprocess_env(cfg, settings, base_env={})
+        assert env["BARE_KEY"] == "bare-val"
+
+
 class TestFreshnessResolution:
     """worca.graphify.freshness: default clean_only, project-overridable."""
 

@@ -927,6 +927,22 @@ UI-only release tracking the worca-cc 0.55.0 surface changes plus a docs-coverag
 - **Models editor polish.** New cost-source badge taxonomy (`explicit` / `Claude CLI` / no badge); `—` placeholder for unset pricing fields (so `0` stays meaningful for truly-free rates); a **Clear pricing** button that wipes all four fields; widened env-var key/value columns; a **Not configured** danger badge + red-outlined value cell when any env value is still `<YOUR-SECRET-HERE>`.
 - **Bundle import id/env split.** Imported `worca.models.<alias>` entries now land split across `settings.json` (id) and `settings.local.json` (env) so secret-bearing env always stays out of the committed file. Models cache refreshes automatically after import.
 
+### Unreleased — tier-pinned model refs
+
+Tier-pinned model refs (`user:alias`, `project:alias`, `builtin:alias`) are a new syntax for `worca.agents.<name>.model` and template model fields.
+
+- **New syntax.** A model ref may now be prefixed with a tier: `user:sonnet`, `project:opus`, `builtin:haiku`. This hard-pins resolution to that settings tier and bypasses the normal merged-dict lookup. Bare refs (no prefix) continue to work unchanged and remain the default save form.
+
+- **Bare-default save rule (D1).** No existing `settings.json` files are affected. The UI and `worca models add` write bare aliases by default unless `--tier` is passed. Tier-pinned refs are opt-in.
+
+- **Auto-pin on bundle import (D3).** `worca templates import --scope <tier>` now rewrites bare model refs in the imported bundle to `{scope}:alias`. This prevents the imported template from accidentally resolving against a same-named alias in the destination project. If you re-import a previously exported bundle, the resulting entries will carry tier pins that were not there before — this is intentional. To revert, replace the pinned ref with the bare alias in `settings.json`.
+
+- **`work_request.py` haiku pin — behaviour change (D5).** The internal title-generation call now uses `builtin:haiku` unconditionally. Previously it resolved `haiku` through the merged models dict, so a project that shadowed the `haiku` alias (e.g. for cost routing or an alt-endpoint) would see title generation use that custom model. That shadow is now bypassed. If you relied on this, configure the `extract_work_request` call explicitly or leave the `haiku` alias as-is for title generation.
+
+- **New `worca models add --tier` flag (D6).** `worca models add <alias> <model-id> [--tier user|project] [--env KEY=VAL]` places the alias directly in the chosen tier's settings file. `--tier builtin` is rejected. If `--tier` is omitted, the command infers `project` (git root found) or `user` (fallback). The `id` field goes to `settings.json`; `--env` pairs go to `settings.local.json`.
+
+No `worca init --upgrade` migration required — settings file shape is unchanged.
+
 ## Getting help
 
 - Issues: https://github.com/SinishaDjukic/worca-cc/issues

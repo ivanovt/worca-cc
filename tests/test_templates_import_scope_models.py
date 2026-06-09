@@ -18,6 +18,7 @@ import pytest
 
 from worca.cli.templates import (
     _derive_bundle_label,
+    _rewrite_template_model_refs,
     cmd_templates_import,
 )
 
@@ -237,3 +238,210 @@ class TestImportProvenanceStamping:
         assert "custom-alias" in pricing
         assert pricing["custom-alias"]["input_per_mtok"] == 1.5
         assert pricing["custom-alias"]["output_per_mtok"] == 7.5
+
+
+def _write_bundle_with_model_ref(
+    path: Path, *, model_ref: str, alias: str = "glm-ds", model_id: str = "claude-sonnet-4-6"
+) -> None:
+    """Write a minimal bundle whose planner.model is the given ref string."""
+    manifest = {
+        "worca_bundle_version": 1,
+        "templates": [
+            {
+                "id": "ref-tpl",
+                "name": "Ref Template",
+                "description": "",
+                "tags": [],
+                "params": {},
+                "config": {"agents": {"planner": {"model": model_ref}}},
+            }
+        ],
+        "models": {alias: {"id": model_id}},
+    }
+    path.write_text(json.dumps(manifest), encoding="utf-8")
+
+
+class TestAutoPinModelRefs:
+    """Bare model refs are auto-pinned to --scope on import (D3)."""
+
+    def test_bare_ref_pinned_to_user_scope(self, project_dir, capsys):
+        project, worca_home = project_dir
+        bundle = project / "b.json"
+        _write_bundle_with_model_ref(bundle, model_ref="glm-ds")
+
+        cmd_templates_import(_make_import_args(source=str(bundle), scope="user"))
+
+        tpl_path = worca_home / "templates" / "ref-tpl" / "template.json"
+        assert tpl_path.exists()
+        tpl = json.loads(tpl_path.read_text())
+        assert tpl["config"]["agents"]["planner"]["model"] == "user:glm-ds"
+
+    def test_bare_ref_pinned_to_project_scope(self, project_dir, capsys):
+        project, worca_home = project_dir
+        bundle = project / "b.json"
+        _write_bundle_with_model_ref(bundle, model_ref="glm-ds")
+
+        cmd_templates_import(_make_import_args(source=str(bundle), scope="project"))
+
+        tpl_path = project / ".claude" / "templates" / "ref-tpl" / "template.json"
+        assert tpl_path.exists()
+        tpl = json.loads(tpl_path.read_text())
+        assert tpl["config"]["agents"]["planner"]["model"] == "project:glm-ds"
+
+    def test_builtin_ref_preserved_unchanged(self, project_dir, capsys):
+        """builtin:opus passes through without modification."""
+        project, worca_home = project_dir
+        bundle = project / "b.json"
+        # builtin refs have no alias in the models map — write without models.
+        manifest = {
+            "worca_bundle_version": 1,
+            "templates": [
+                {
+                    "id": "ref-tpl",
+                    "name": "Ref Template",
+                    "description": "",
+                    "tags": [],
+                    "params": {},
+                    "config": {"agents": {"planner": {"model": "builtin:opus"}}},
+                }
+            ],
+        }
+        bundle.write_text(json.dumps(manifest), encoding="utf-8")
+
+        cmd_templates_import(_make_import_args(source=str(bundle), scope="project"))
+
+        tpl_path = project / ".claude" / "templates" / "ref-tpl" / "template.json"
+        tpl = json.loads(tpl_path.read_text())
+        assert tpl["config"]["agents"]["planner"]["model"] == "builtin:opus"
+
+    def test_renamed_alias_ref_pinned(self, project_dir, capsys):
+        """When glm-ds collides and is renamed to glm-ds-01, the ref becomes project:glm-ds-01."""
+        project, worca_home = project_dir
+
+        # Pre-populate project settings with an existing glm-ds that differs.
+        existing_settings = {
+            "worca": {
+                "models": {
+                    "glm-ds": {"id": "claude-opus-4-7"},
+                }
+            }
+        }
+        settings_path = project / ".claude" / "settings.json"
+        settings_path.write_text(json.dumps(existing_settings), encoding="utf-8")
+
+        bundle = project / "b.json"
+        _write_bundle_with_model_ref(bundle, model_ref="glm-ds")
+
+        # Use resolutions to rename instead of aborting on collision.
+        resolutions = {"models": {"glm-ds": {"action": "rename"}}}
+        res_path = project / "res.json"
+        res_path.write_text(json.dumps(resolutions), encoding="utf-8")
+
+        args = _make_import_args(source=str(bundle), scope="project")
+        args.resolutions = str(res_path)
+        cmd_templates_import(args)
+
+        tpl_path = project / ".claude" / "templates" / "ref-tpl" / "template.json"
+        tpl = json.loads(tpl_path.read_text())
+        assert tpl["config"]["agents"]["planner"]["model"] == "project:glm-ds-01"
+
+    def test_wire_format_violation_warns_and_is_rewritten(self, project_dir, capsys):
+        """A ref like 'project:glm-ds' in the bundle is a violation — warn, treat as bare."""
+        project, worca_home = project_dir
+        bundle = project / "b.json"
+        _write_bundle_with_model_ref(bundle, model_ref="project:glm-ds")
+
+        cmd_templates_import(_make_import_args(source=str(bundle), scope="project"))
+
+        captured = capsys.readouterr()
+        assert "wire-format violation" in captured.err or "wire_format_violation" in captured.err
+
+        tpl_path = project / ".claude" / "templates" / "ref-tpl" / "template.json"
+        tpl = json.loads(tpl_path.read_text())
+        # After stripping the violation prefix, the bare alias is pinned to --scope.
+        assert tpl["config"]["agents"]["planner"]["model"] == "project:glm-ds"
+
+    def test_info_block_emitted_for_auto_pin(self, project_dir, capsys):
+        """An info block listing the rewrites is printed to stderr."""
+        project, worca_home = project_dir
+        bundle = project / "b.json"
+        _write_bundle_with_model_ref(bundle, model_ref="glm-ds")
+
+        cmd_templates_import(_make_import_args(source=str(bundle), scope="project"))
+
+        captured = capsys.readouterr()
+        assert "rewrote" in captured.err
+        assert "glm-ds" in captured.err
+        assert "project:glm-ds" in captured.err
+
+
+class TestBuildCollisionPreviewRefRewrites:
+    """_build_collision_preview surfaces ref_rewrites for the UI dialog."""
+
+    def test_ref_rewrites_included_in_preview(self, project_dir, capsys):
+        project, worca_home = project_dir
+        bundle = project / "b.json"
+        _write_bundle_with_model_ref(bundle, model_ref="glm-ds")
+
+        args = _make_import_args(source=str(bundle), scope="project")
+        args.preview = True
+        cmd_templates_import(args)
+
+        captured = capsys.readouterr()
+        preview = json.loads(captured.out)
+        assert "ref_rewrites" in preview
+        rewrites = preview["ref_rewrites"]
+        assert len(rewrites) == 1
+        rw = rewrites[0]
+        assert rw["template_id"] == "ref-tpl"
+        assert rw["role"] == "planner"
+        assert rw["old"] == "glm-ds"
+        assert rw["new"] == "project:glm-ds"
+        assert rw["reason"] == "auto_pin"
+
+
+class TestRewriteTemplateModelRefsUnit:
+    """Unit tests for _rewrite_template_model_refs extended behaviour."""
+
+    def _make_templates(self, *role_model_pairs, tid="t1"):
+        agents = {role: {"model": model} for role, model in role_model_pairs}
+        return {tid: {"config": {"agents": agents}}}
+
+    def test_bare_rewritten_to_landing_tier(self):
+        templates = self._make_templates(("planner", "my-model"))
+        rewrites = _rewrite_template_model_refs(templates, {}, landing_tier="user")
+        assert templates["t1"]["config"]["agents"]["planner"]["model"] == "user:my-model"
+        assert len(rewrites) == 1
+        assert rewrites[0][2] == "my-model"
+        assert rewrites[0][3] == "user:my-model"
+        assert rewrites[0][4] == "auto_pin"
+
+    def test_builtin_preserved(self):
+        templates = self._make_templates(("planner", "builtin:opus"))
+        rewrites = _rewrite_template_model_refs(templates, {}, landing_tier="project")
+        assert templates["t1"]["config"]["agents"]["planner"]["model"] == "builtin:opus"
+        assert rewrites == []
+
+    def test_rename_map_applied_before_pin(self):
+        templates = self._make_templates(("planner", "old-alias"))
+        rewrites = _rewrite_template_model_refs(
+            templates, {"old-alias": "new-alias"}, landing_tier="project"
+        )
+        assert templates["t1"]["config"]["agents"]["planner"]["model"] == "project:new-alias"
+        assert rewrites[0][4] == "auto_pin_after_rename"
+
+    def test_wire_format_violation_emits_warning(self, capsys):
+        templates = self._make_templates(("planner", "project:some-alias"))
+        rewrites = _rewrite_template_model_refs(templates, {}, landing_tier="user")
+        captured = capsys.readouterr()
+        assert "wire_format_violation" in captured.err or "wire-format violation" in captured.err
+        # After treating as bare, it's pinned to landing_tier.
+        assert templates["t1"]["config"]["agents"]["planner"]["model"] == "user:some-alias"
+        assert rewrites[0][4] == "wire_format_violation"
+
+    def test_user_tier_violation_treated_as_bare(self, capsys):
+        templates = self._make_templates(("planner", "user:my-alias"))
+        _rewrite_template_model_refs(templates, {}, landing_tier="project")
+        captured = capsys.readouterr()
+        assert "wire_format_violation" in captured.err or "wire-format violation" in captured.err
+        assert templates["t1"]["config"]["agents"]["planner"]["model"] == "project:my-alias"

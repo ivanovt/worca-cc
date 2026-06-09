@@ -1,6 +1,8 @@
 """Tests for worca.orchestrator.stages module."""
 import json
 
+import pytest
+
 from worca.orchestrator.stages import (
     Stage,
     TRANSITIONS,
@@ -15,6 +17,8 @@ from worca.orchestrator.stages import (
     is_learn_enabled,
     resolve_plan_review_mode,
     validate_plan_review_settings,
+    PreflightError,
+    validate_tier_pinned_agent_models,
 )
 
 
@@ -1011,3 +1015,171 @@ class TestValidatePlanReviewSettings:
     def test_enforce_absent_no_error(self):
         settings = {"worca": {"governance": {}}}
         assert validate_plan_review_settings(settings) == []
+
+
+class TestGetStageConfigTierPinned:
+    """Tests for tier-pinned model ref resolution in get_stage_config (Phase 5b)."""
+
+    def _project_file(self, tmp_path, model_ref, extra_models=None):
+        data = {"worca": {"agents": {"planner": {"model": model_ref}}}}
+        if extra_models:
+            data["worca"]["models"] = extra_models
+        f = tmp_path / "settings.json"
+        f.write_text(json.dumps(data))
+        return str(f)
+
+    def _global_file(self, tmp_path, models=None, name="global.json"):
+        data = {"worca": {"models": models}} if models else {}
+        f = tmp_path / name
+        f.write_text(json.dumps(data))
+        return str(f)
+
+    # --- user: tier ---
+
+    def test_user_tier_resolves_when_alias_present(self, tmp_path):
+        project = self._project_file(tmp_path, "user:glm-ds")
+        global_ = self._global_file(tmp_path, {"glm-ds": "my-glm-ds-id"})
+        config = get_stage_config(Stage.PLAN, settings_path=project, global_path=global_)
+        assert config["model"] == "my-glm-ds-id"
+        assert config["agent"] == "planner"
+
+    def test_user_tier_raises_when_alias_absent(self, tmp_path):
+        project = self._project_file(tmp_path, "user:glm-ds")
+        global_ = self._global_file(tmp_path, {})  # no glm-ds in user tier
+        with pytest.raises(PreflightError) as exc_info:
+            get_stage_config(Stage.PLAN, settings_path=project, global_path=global_)
+        msg = str(exc_info.value)
+        assert "glm-ds" in msg
+        assert "user" in msg
+
+    def test_user_tier_without_matching_alias_raises_preflight_error(self, tmp_path):
+        """user: pin with no alias in user tier raises PreflightError (alias not found)."""
+        project = self._project_file(tmp_path, "user:glm-ds")
+        with pytest.raises(PreflightError) as exc_info:
+            get_stage_config(Stage.PLAN, settings_path=project)
+        assert "glm-ds" in str(exc_info.value)
+        assert "user" in str(exc_info.value)
+
+    # --- builtin: tier ---
+
+    def test_builtin_tier_resolves_to_default_map(self, tmp_path):
+        from worca.utils.settings import _DEFAULT_MODEL_MAP
+        project = self._project_file(tmp_path, "builtin:opus")
+        global_ = self._global_file(tmp_path, {"opus": "user-override-should-be-ignored"})
+        config = get_stage_config(Stage.PLAN, settings_path=project, global_path=global_)
+        assert config["model"] == _DEFAULT_MODEL_MAP["opus"]
+
+    def test_builtin_tier_works_without_global_path(self, tmp_path):
+        """builtin: tier doesn't need the stash — no global_path needed."""
+        from worca.utils.settings import _DEFAULT_MODEL_MAP
+        project = self._project_file(tmp_path, "builtin:opus")
+        config = get_stage_config(Stage.PLAN, settings_path=project)
+        assert config["model"] == _DEFAULT_MODEL_MAP["opus"]
+
+    # --- env-var override ---
+
+    def test_env_var_override_wins_over_tier_pinned(self, tmp_path, monkeypatch, capsys):
+        project = self._project_file(tmp_path, "user:glm-ds")
+        global_ = self._global_file(tmp_path, {"glm-ds": "my-glm-ds-id"})
+        monkeypatch.setenv("WORCA_MODEL_PLANNER", "claude-opus-4-7")
+        config = get_stage_config(Stage.PLAN, settings_path=project, global_path=global_)
+        assert config["model"] == "claude-opus-4-7"
+        captured = capsys.readouterr()
+        assert "WORCA_MODEL_PLANNER" in captured.err
+
+    # --- cost-source signal ---
+
+    def test_cost_alias_set_when_pinned_tier_has_alt_endpoint(self, tmp_path):
+        """user:glm-ds with ANTHROPIC_BASE_URL in user-tier entry sets cost_alias."""
+        project = self._project_file(tmp_path, "user:glm-ds")
+        global_ = self._global_file(tmp_path, {
+            "glm-ds": {"id": "my-model", "env": {"ANTHROPIC_BASE_URL": "https://x"}}
+        })
+        config = get_stage_config(Stage.PLAN, settings_path=project, global_path=global_)
+        assert config["cost_alias"] == "glm-ds"
+
+    def test_cost_alias_none_for_bare_ref_with_project_tier_no_endpoint(self, tmp_path):
+        """bare glm-ds resolves from project tier (no alt endpoint) → cost_alias None."""
+        project_path = tmp_path / "settings.json"
+        project_path.write_text(json.dumps({
+            "worca": {
+                "models": {"glm-ds": "my-model"},
+                "agents": {"planner": {"model": "glm-ds"}},
+            }
+        }))
+        global_path = tmp_path / "global.json"
+        global_path.write_text(json.dumps({
+            "worca": {"models": {"glm-ds": {"id": "my-model", "env": {"ANTHROPIC_BASE_URL": "https://x"}}}}
+        }))
+        config = get_stage_config(Stage.PLAN, settings_path=str(project_path), global_path=str(global_path))
+        assert config["cost_alias"] is None
+
+
+class TestValidateTierPinnedAgentModels:
+    """Tests for validate_tier_pinned_agent_models() (Phase 5b)."""
+
+    def _settings_with_stash(self, user_models=None, project_models=None, agents=None):
+        from worca.utils.settings import _DEFAULT_MODEL_MAP
+        return {
+            "worca": {
+                "models": {**(user_models or {}), **(project_models or {})},
+                "agents": agents or {},
+            },
+            "_worca_tier_views": {
+                "user": user_models or {},
+                "project": project_models or {},
+                "builtin": dict(_DEFAULT_MODEL_MAP),
+            },
+        }
+
+    def test_empty_agents_returns_empty(self):
+        settings = self._settings_with_stash()
+        assert validate_tier_pinned_agent_models(settings) == []
+
+    def test_all_pins_resolve_returns_empty(self):
+        settings = self._settings_with_stash(
+            user_models={"glm-ds": "my-model"},
+            agents={"planner": {"model": "user:glm-ds"}},
+        )
+        assert validate_tier_pinned_agent_models(settings) == []
+
+    def test_missing_user_pin_returns_error(self):
+        settings = self._settings_with_stash(
+            user_models={},
+            agents={"planner": {"model": "user:glm-ds"}},
+        )
+        errors = validate_tier_pinned_agent_models(settings)
+        assert len(errors) == 1
+        assert "glm-ds" in errors[0]
+        assert "user" in errors[0]
+
+    def test_multiple_bad_pins_all_surface(self):
+        settings = self._settings_with_stash(
+            user_models={},
+            project_models={},
+            agents={
+                "implementer": {"model": "user:no-such"},
+                "reviewer": {"model": "project:no-such"},
+            },
+        )
+        errors = validate_tier_pinned_agent_models(settings)
+        assert len(errors) == 2
+
+    def test_bare_refs_ignored(self):
+        """Bare refs are opaque pass-through — not validated."""
+        settings = self._settings_with_stash(
+            agents={"planner": {"model": "nonexistent-bare"}},
+        )
+        assert validate_tier_pinned_agent_models(settings) == []
+
+    def test_mixed_bare_and_pinned(self):
+        settings = self._settings_with_stash(
+            user_models={},
+            agents={
+                "planner": {"model": "sonnet"},  # bare — ignored
+                "implementer": {"model": "user:missing"},  # pinned — error
+            },
+        )
+        errors = validate_tier_pinned_agent_models(settings)
+        assert len(errors) == 1
+        assert "missing" in errors[0]

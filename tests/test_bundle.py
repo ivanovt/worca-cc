@@ -17,6 +17,7 @@ from worca.orchestrator.bundle import (
     collect_referenced_model_aliases,
     fetch_bundle,
     redact_bundle,
+    strip_tier_prefixes,
     validate_bundle,
 )
 
@@ -722,6 +723,155 @@ class TestCollectReferencedModelAliases:
             {"id": "ok4", "config": {"agents": {"planner": {"model": 123}}}},  # non-string model
         ]
         assert collect_referenced_model_aliases(templates, {"opus": "x"}) == set()
+
+    # --- Tier-qualified ref handling (Phase 4) ---
+
+    def test_user_qualified_ref_strips_to_alias(self):
+        """user:glm-ds => looks up 'glm-ds' in all_models, returns {"glm-ds"}."""
+        templates = [{"id": "t", "config": {"agents": {"planner": {"model": "user:glm-ds"}}}}]
+        models = {"glm-ds": {"id": "some-model-id", "env": {}}}
+        assert collect_referenced_model_aliases(templates, models) == {"glm-ds"}
+
+    def test_project_qualified_ref_strips_to_alias(self):
+        """project:glm-ds => looks up 'glm-ds' in all_models."""
+        templates = [{"id": "t", "config": {"agents": {"planner": {"model": "project:glm-ds"}}}}]
+        models = {"glm-ds": "some-model-id"}
+        assert collect_referenced_model_aliases(templates, models) == {"glm-ds"}
+
+    def test_builtin_qualified_ref_excluded(self):
+        """builtin:opus => excluded from returned set even if 'opus' is in all_models.
+
+        builtin aliases exist on every target and are not shipped in bundle_models.
+        """
+        templates = [{"id": "t", "config": {"agents": {"coordinator": {"model": "builtin:opus"}}}}]
+        models = {"opus": "claude-opus-4-7"}
+        assert collect_referenced_model_aliases(templates, models) == set()
+
+    def test_bare_and_project_same_alias_deduped(self):
+        """Both bare 'glm-ds' and 'project:glm-ds' strip to the same alias."""
+        templates = [{
+            "id": "t",
+            "config": {
+                "agents": {
+                    "planner": {"model": "glm-ds"},
+                    "implementer": {"model": "project:glm-ds"},
+                },
+            },
+        }]
+        models = {"glm-ds": "some-model-id"}
+        assert collect_referenced_model_aliases(templates, models) == {"glm-ds"}
+
+    def test_mixed_tiers_only_non_builtin_returned(self):
+        """user:, project:, builtin:, bare all handled correctly in one call."""
+        templates = [{
+            "id": "t",
+            "config": {
+                "agents": {
+                    "planner": {"model": "user:glm-ds"},
+                    "coordinator": {"model": "builtin:opus"},
+                    "implementer": {"model": "project:sonnet"},
+                    "tester": {"model": "haiku"},
+                },
+            },
+        }]
+        models = {"glm-ds": "gm-id", "sonnet": "s-id", "haiku": "h-id", "opus": "o-id"}
+        result = collect_referenced_model_aliases(templates, models)
+        assert result == {"glm-ds", "sonnet", "haiku"}
+        assert "opus" not in result
+
+    def test_tier_ref_unknown_alias_silently_dropped(self):
+        """user:no-such is not in all_models — silently dropped."""
+        templates = [{"id": "t", "config": {"agents": {"planner": {"model": "user:no-such"}}}}]
+        assert collect_referenced_model_aliases(templates, {"glm-ds": "x"}) == set()
+
+
+# ---------------------------------------------------------------------------
+# strip_tier_prefixes — pre-redaction pass for cmd_templates_export (Phase 4)
+# ---------------------------------------------------------------------------
+
+class TestStripTierPrefixes:
+    """strip_tier_prefixes() returns a new list with user:/project: stripped."""
+
+    def test_strips_user_prefix(self):
+        entries = [{"id": "t", "config": {"agents": {"planner": {"model": "user:glm-ds"}}}}]
+        result = strip_tier_prefixes(entries)
+        assert result[0]["config"]["agents"]["planner"]["model"] == "glm-ds"
+
+    def test_strips_project_prefix(self):
+        entries = [{"id": "t", "config": {"agents": {"planner": {"model": "project:glm-ds"}}}}]
+        result = strip_tier_prefixes(entries)
+        assert result[0]["config"]["agents"]["planner"]["model"] == "glm-ds"
+
+    def test_preserves_builtin_prefix(self):
+        entries = [{"id": "t", "config": {"agents": {"coordinator": {"model": "builtin:opus"}}}}]
+        result = strip_tier_prefixes(entries)
+        assert result[0]["config"]["agents"]["coordinator"]["model"] == "builtin:opus"
+
+    def test_preserves_bare_alias(self):
+        entries = [{"id": "t", "config": {"agents": {"planner": {"model": "glm-ds"}}}}]
+        result = strip_tier_prefixes(entries)
+        assert result[0]["config"]["agents"]["planner"]["model"] == "glm-ds"
+
+    def test_preserves_malformed_verbatim(self):
+        """Malformed refs are left as-is; export is not the rewrite site."""
+        entries = [{"id": "t", "config": {"agents": {"planner": {"model": "bad::ref"}}}}]
+        result = strip_tier_prefixes(entries)
+        assert result[0]["config"]["agents"]["planner"]["model"] == "bad::ref"
+
+    def test_does_not_mutate_original(self):
+        """strip_tier_prefixes returns a deep copy — original unchanged."""
+        import copy
+        entries = [{"id": "t", "config": {"agents": {"planner": {"model": "user:glm-ds"}}}}]
+        original = copy.deepcopy(entries)
+        strip_tier_prefixes(entries)
+        assert entries == original
+
+    def test_mixed_agents_all_tiers(self):
+        """All four cases in one template entry."""
+        entries = [{
+            "id": "t",
+            "config": {
+                "agents": {
+                    "planner": {"model": "user:glm-ds"},
+                    "coordinator": {"model": "builtin:opus"},
+                    "implementer": {"model": "project:sonnet"},
+                    "tester": {"model": "haiku"},
+                },
+            },
+        }]
+        result = strip_tier_prefixes(entries)
+        agents = result[0]["config"]["agents"]
+        assert agents["planner"]["model"] == "glm-ds"
+        assert agents["coordinator"]["model"] == "builtin:opus"
+        assert agents["implementer"]["model"] == "sonnet"
+        assert agents["tester"]["model"] == "haiku"
+
+    def test_user_prefix_ships_alias_in_bundle_models(self):
+        """End-to-end: after strip, collect_referenced_model_aliases picks up the bare alias."""
+        entries = [{"id": "t", "config": {"agents": {"planner": {"model": "user:glm-ds"}}}}]
+        stripped = strip_tier_prefixes(entries)
+        models = {"glm-ds": {"id": "some-model-id"}}
+        result = collect_referenced_model_aliases(stripped, models)
+        assert result == {"glm-ds"}
+
+    def test_builtin_not_shipped_in_bundle_models(self):
+        """builtin:opus remains in template after strip; collect excludes it from bundle."""
+        entries = [{"id": "t", "config": {"agents": {"coordinator": {"model": "builtin:opus"}}}}]
+        stripped = strip_tier_prefixes(entries)
+        assert stripped[0]["config"]["agents"]["coordinator"]["model"] == "builtin:opus"
+        models = {"opus": "claude-opus-4-7"}
+        result = collect_referenced_model_aliases(stripped, models)
+        assert result == set()
+
+    def test_tolerates_entries_without_config(self):
+        """Non-dict config or missing agents are skipped gracefully."""
+        entries = [
+            {"id": "a", "config": None},
+            {"id": "b"},
+            {"id": "c", "config": {"agents": "not-a-dict"}},
+        ]
+        result = strip_tier_prefixes(entries)
+        assert len(result) == 3
 
 
 # ---------------------------------------------------------------------------

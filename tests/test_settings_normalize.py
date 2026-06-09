@@ -38,3 +38,18 @@ class TestNormalizeModelEntry:
     def test_normalize_unknown_type_raises(self):
         with pytest.raises(ValueError, match="string ID"):
             normalize_model_entry(42)
+
+    def test_normalize_rejects_colon_in_alias_key(self):
+        """normalize_model_entry with alias= containing ':' must raise ValueError."""
+        with pytest.raises(ValueError, match="colon"):
+            normalize_model_entry("claude-opus-4-7", alias="user:opus")
+
+    def test_normalize_rejects_colon_dict_form_alias(self):
+        """Dict form also rejects ':' in alias key."""
+        with pytest.raises(ValueError, match="colon"):
+            normalize_model_entry({"id": "claude-opus-4-7"}, alias="project:opus")
+
+    def test_normalize_valid_alias_passes(self):
+        """Valid alias (no colon) with alias= kwarg is accepted."""
+        result = normalize_model_entry("claude-opus-4-7", alias="my-opus")
+        assert result == {"id": "claude-opus-4-7", "env": {}}

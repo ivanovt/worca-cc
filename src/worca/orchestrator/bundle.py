@@ -110,6 +110,16 @@ def collect_referenced_model_aliases(
     aliases that appear in `all_models`. Aliases not present in `all_models`
     are dropped silently (caller may surface them separately as typos).
 
+    Handles tier-qualified refs (post-D2 wire format):
+    - Bare alias `"glm-ds"` → looked up directly in all_models.
+    - `"user:glm-ds"` or `"project:glm-ds"` → alias portion `"glm-ds"` is
+      looked up (strip_tier_prefixes() has already rewritten these to bare
+      in the export path, but this function also handles them defensively).
+    - `"builtin:opus"` → EXCLUDED from the returned set. Builtin aliases
+      exist on every target machine via `_DEFAULT_MODEL_MAP`; shipping them
+      in `bundle_models` would create spurious entries the importer must
+      then reconcile or discard.
+
     Why no recursion through the `id` field: `resolve_model()` in
     `worca.utils.settings` is a single non-recursive lookup that returns
     `entry["id"]` verbatim as the string passed to `claude --model …`.
@@ -124,6 +134,8 @@ def collect_referenced_model_aliases(
     `worca.pricing.models`, and by import to apply the symmetric filter
     against the bundle's contents.
     """
+    from worca.utils.settings import _parse_model_ref
+
     referenced: set[str] = set()
 
     for tmpl in templates:
@@ -136,12 +148,55 @@ def collect_referenced_model_aliases(
         if not isinstance(agents, dict):
             continue
         for agent_cfg in agents.values():
-            if isinstance(agent_cfg, dict):
-                model = agent_cfg.get("model")
-                if isinstance(model, str) and model in all_models:
-                    referenced.add(model)
+            if not isinstance(agent_cfg, dict):
+                continue
+            model = agent_cfg.get("model")
+            if not isinstance(model, str):
+                continue
+            try:
+                tier, alias = _parse_model_ref(model)
+            except ValueError:
+                continue
+            # Builtin aliases exist on every target via _DEFAULT_MODEL_MAP;
+            # don't ship them in bundle_models.
+            if tier == "builtin":
+                continue
+            if alias in all_models:
+                referenced.add(alias)
 
     return referenced
+
+
+def strip_tier_prefixes(template_entries: list[dict]) -> list[dict]:
+    """Return a deep copy of template_entries with user:/project: stripped from model refs.
+
+    Post-D2 bundle wire format: bundles ship bare refs only so the importer
+    can auto-pin to the landing tier via --scope. builtin: refs are the
+    exception — they resolve deterministically on any target.
+
+    Stripping rules per agents.<role>.model value:
+    - 'user:X' or 'project:X' => 'X'   (strip prefix; bare alias in bundle)
+    - 'builtin:X'              => preserved verbatim
+    - bare 'X'                 => preserved verbatim
+    - malformed (e.g. 'bad::ref') => preserved as-is; export is not the rewrite site
+    """
+    entries = copy.deepcopy(template_entries)
+    for entry in entries:
+        config = entry.get("config")
+        if not isinstance(config, dict):
+            continue
+        agents = config.get("agents")
+        if not isinstance(agents, dict):
+            continue
+        for agent_cfg in agents.values():
+            if not isinstance(agent_cfg, dict):
+                continue
+            model = agent_cfg.get("model")
+            if not isinstance(model, str):
+                continue
+            if model.startswith("user:") or model.startswith("project:"):
+                agent_cfg["model"] = model.split(":", 1)[1]
+    return entries
 
 
 # Export modes. "standalone" = config materialised over built-in defaults and

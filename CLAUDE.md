@@ -144,8 +144,27 @@ Key gotchas:
 - **Secrets** belong in `settings.local.json` (gitignored, deep-merged over `settings.json`). The UI Secrets panel writes exclusively to this file. Never inline secrets in `settings.json`.
 - **Reserved keys** matching `WORCA_*`, `PATH`, or `CLAUDECODE` are silently stripped with a stderr warning. Denylist shared between Python (`src/worca/utils/env.py`) and JS (`worca-ui/server/reserved-env-keys.json`).
 - **Worktree materialization:** parent's `settings.local.json` secrets are materialized into the worktree's `settings.json` (gitignored). Same on-disk plaintext exposure model as `~/.aws/credentials`.
-- **`work_request.py` haiku coupling:** `extract_work_request` resolves its hardcoded `--model haiku` through `resolve_model()`, so customizing the `haiku` entry also retargets work-request title generation. Intentional.
+- **`work_request.py` haiku pin:** `extract_work_request` resolves `--model builtin:haiku` so title generation is deterministic regardless of user/project shadowing. This is a hard pin — user/project shadows of the `haiku` alias do **not** affect title generation.
 - **Cost source per alias:** if an alias's `env` block sets `ANTHROPIC_BASE_URL` (alt-endpoint routing), worca overrides Claude CLI's `total_cost_usd` using `worca.pricing.models.<alias>`. Otherwise Claude CLI's number is authoritative and the Pricing tab is informational/fallback. The trigger set lives in `_ALT_ENDPOINT_ENV_KEYS` in `src/worca/orchestrator/stages.py`.
+
+#### Tier-pinned refs
+
+Model refs in agent configs (`worca.agents.<name>.model`) and template configs support a `tier:alias` syntax that pins the alias to a specific settings tier:
+
+```
+tier:alias   →   user:sonnet   |   project:opus   |   builtin:haiku
+```
+
+- **Regex:** `^(user|project|builtin):([A-Za-z0-9_-]+)$`
+- **Bare alias** (no `tier:` prefix): resolved against the merged `worca.models` dict (project shadows user). The bare form is the default save behaviour — the UI writes bare aliases to `settings.json` by default (D1).
+- **`user:alias`**: hard-pinned to `~/.worca/settings.json`; ignores any project-level definition of that alias.
+- **`project:alias`**: hard-pinned to `.claude/settings.json`; ignores any user-level definition.
+- **`builtin:alias`**: resolves from the package's `_DEFAULT_MODEL_MAP` (`src/worca/utils/settings.py`), bypassing both user and project settings entirely. `work_request.py` uses `builtin:haiku` so title generation is always deterministic.
+- **Auto-pin on bundle import (D3):** `worca templates import` rewrites bare refs to `{scope}:alias` where `scope` matches the `--scope` argument (`user` or `project`). This prevents a template exported from one project from silently picking up a different project's same-named alias.
+- **`worca models add --tier`:** adds or updates an alias scoped to a specific tier (`user` or `project`); `builtin` is rejected (read-only). See Phase 7 in the models CLI.
+- **Preflight errors:** a pinned ref that names an alias not present in the target tier's stash raises a `PreflightError` before the run starts (Phase 5b).
+
+Full precedence reference: [`docs/configuration-precedence.md`](./docs/configuration-precedence.md).
 
 ### Effort Levels (`worca.effort`)
 

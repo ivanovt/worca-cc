@@ -195,6 +195,9 @@ function writeModelEntry(
   alias,
   { id, env, pricing },
 ) {
+  if (alias.includes(':')) {
+    throw new Error('alias name cannot contain colon');
+  }
   const settingsPath = tierSettingsPath(tier, projectSettingsPath);
   if (!settingsPath) {
     throw new Error(`tier "${tier}" has no writable settings path`);
@@ -401,6 +404,11 @@ export function createModelsRouter({ settingsPath: staticPath } = {}) {
     const body = req.body || {};
     const newAlias =
       typeof body.alias === 'string' && body.alias ? body.alias : urlAlias;
+    if (newAlias.includes(':')) {
+      return res
+        .status(400)
+        .json({ ok: false, error: 'alias name cannot contain colon' });
+    }
     if (!ALIAS_RE.test(newAlias)) {
       return res.status(400).json({
         ok: false,

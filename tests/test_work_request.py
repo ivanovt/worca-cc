@@ -160,6 +160,8 @@ class TestGenerateSmartTitle:
     @patch("worca.orchestrator.work_request.subprocess.run")
     @patch("worca.orchestrator.work_request.load_settings")
     def test_resolves_haiku_through_model_resolver(self, mock_load, mock_run):
+        # Even with a custom haiku entry in models, generate_smart_title MUST use
+        # the builtin haiku (pinned via resolve_tier_pinned('builtin:haiku', ...)).
         mock_load.return_value = {
             "worca": {
                 "models": {
@@ -175,9 +177,7 @@ class TestGenerateSmartTitle:
         cmd = mock_run.call_args[0][0]
         assert "--model" in cmd
         idx = cmd.index("--model")
-        assert cmd[idx + 1] == "custom-haiku-id"
-        env = mock_run.call_args[1]["env"]
-        assert env["ANTHROPIC_BASE_URL"] == "http://custom"
+        assert cmd[idx + 1] == "claude-haiku-4-5-20251001"
 
     @patch("worca.orchestrator.work_request.subprocess.run")
     @patch("worca.orchestrator.work_request.load_settings")
@@ -189,6 +189,48 @@ class TestGenerateSmartTitle:
         assert "--model" in cmd
         idx = cmd.index("--model")
         assert cmd[idx + 1] == "claude-haiku-4-5-20251001"
+
+    @patch("worca.orchestrator.work_request.subprocess.run")
+    @patch("worca.orchestrator.work_request.load_settings")
+    def test_builtin_haiku_used_regardless_of_project_override(self, mock_load, mock_run):
+        """D5: title gen is deterministic — builtin haiku wins even when project/user tier
+        shadows the haiku alias in worca.models."""
+        mock_load.return_value = {
+            "worca": {
+                "models": {
+                    "haiku": {
+                        "id": "project-shadowed-haiku",
+                        "env": {"ANTHROPIC_BASE_URL": "http://custom-proxy"},
+                    }
+                }
+            }
+        }
+        mock_run.return_value = MagicMock(returncode=0, stdout="Title\n")
+        generate_smart_title("some content")
+        cmd = mock_run.call_args[0][0]
+        assert "--model" in cmd
+        idx = cmd.index("--model")
+        assert cmd[idx + 1] == "claude-haiku-4-5-20251001"
+        # Explicitly verify the shadowed model was NOT used
+        assert cmd[idx + 1] != "project-shadowed-haiku"
+        env = mock_run.call_args[1]["env"]
+        assert "ANTHROPIC_BASE_URL" not in env
+
+    @patch("worca.orchestrator.work_request.subprocess.run")
+    @patch("worca.orchestrator.work_request.resolve_tier_pinned")
+    @patch("worca.orchestrator.work_request.load_settings")
+    def test_fallback_when_builtin_pin_fails(self, mock_load, mock_pin, mock_run):
+        """When resolve_tier_pinned returns an error, falls back to bare resolve_model."""
+        mock_load.return_value = {
+            "worca": {"models": {"haiku": "fallback-haiku-id"}}
+        }
+        mock_pin.return_value = (None, {}, "builtin:haiku pin failed")
+        mock_run.return_value = MagicMock(returncode=0, stdout="Title\n")
+        generate_smart_title("some content")
+        cmd = mock_run.call_args[0][0]
+        assert "--model" in cmd
+        idx = cmd.index("--model")
+        assert cmd[idx + 1] == "fallback-haiku-id"
 
 
 # --- normalize_plan_file ---

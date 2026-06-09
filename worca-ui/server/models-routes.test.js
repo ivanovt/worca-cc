@@ -1,5 +1,4 @@
 import {
-  existsSync,
   mkdirSync,
   mkdtempSync,
   readFileSync,
@@ -33,7 +32,6 @@ describe('/api/models — tier-aware CRUD', () => {
   let projectLocalPath;
   let worcaHome;
   let userSettingsPath;
-  let userLocalPath;
   let server;
   let base;
   let prevWorcaHome;
@@ -47,7 +45,6 @@ describe('/api/models — tier-aware CRUD', () => {
 
     worcaHome = mkdtempSync(join(tmpdir(), 'models-routes-home-'));
     userSettingsPath = join(worcaHome, 'settings.json');
-    userLocalPath = join(worcaHome, 'settings.local.json');
     prevWorcaHome = process.env.WORCA_HOME;
     process.env.WORCA_HOME = worcaHome;
 
@@ -226,6 +223,17 @@ describe('/api/models — tier-aware CRUD', () => {
         body: JSON.stringify({ alias: 'bad name!', id: 'claude-opus-4-7' }),
       });
       expect(res.status).toBe(400);
+    });
+
+    it('rejects alias containing colon', async () => {
+      const res = await fetch(`${base}/api/models/project/bad`, {
+        method: 'PUT',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ alias: 'user:opus', id: 'claude-opus-4-7' }),
+      });
+      expect(res.status).toBe(400);
+      const data = await res.json();
+      expect(data.error).toMatch(/colon/i);
     });
 
     it('detects rename collisions in the same tier', async () => {
