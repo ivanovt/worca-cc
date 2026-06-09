@@ -152,23 +152,28 @@ export function resolveEffectiveClaudeMdMode() {
 }
 
 /**
- * lit-html ref callback for the Max Beads <sl-select>.
+ * lit-html ref callback for an <sl-select> whose "Template Default: <X>"
+ * option carries a dynamic value.
  *
  * Shoelace's sl-select derives `displayLabel` from `selectedOption.getTextLabel()`
  * inside selectionChanged(), which only fires on value/multiple changes — NOT
  * when the selected option's textContent changes underneath. Our first option
- * ("Template Default: <X>") embeds a dynamic value that shifts on template
- * switch, so attach a MutationObserver to force a re-derive whenever any
- * descendant sl-option's text content changes.
+ * embeds a dynamic value that shifts on template switch, so attach a
+ * MutationObserver to force a re-derive whenever any descendant sl-option's
+ * text content changes.
  *
  * lit-html refs fire only on mount/unmount, not per render, so setting up the
  * observer here is a once-per-instance cost. The trailing microtask refresh
  * covers the initial mount, after which the observer drives subsequent updates.
+ *
+ * Reused for any sl-select with a dynamic first-option label (Max Beads,
+ * CLAUDE.md mode). The per-element guard is keyed on the DOM node so each
+ * instance gets its own observer.
  */
 function _refreshSlSelectDisplay(el) {
   if (!el) return;
-  if (el.__maxBeadsObserverAttached) return;
-  el.__maxBeadsObserverAttached = true;
+  if (el.__dynamicLabelObserverAttached) return;
+  el.__dynamicLabelObserverAttached = true;
   const refresh = () => {
     if (typeof el.selectionChanged === 'function') {
       el.selectionChanged();
@@ -956,7 +961,7 @@ export function newRunView(_state, { rerender }) {
 
             <div class="settings-field">
               <label class="settings-label">CLAUDE.md Mode</label>
-              <sl-select id="new-run-claude-md-mode" value=${claudeMdMode === null ? '' : claudeMdMode} @sl-change=${handleClaudeMdModeChange}>
+              <sl-select id="new-run-claude-md-mode" ${ref(_refreshSlSelectDisplay)} value=${claudeMdMode === null ? '' : claudeMdMode} @sl-change=${handleClaudeMdModeChange}>
                 ${(() => {
                   const effective = resolveEffectiveClaudeMdMode();
                   return html`<sl-option value="">Template Default: ${effective}</sl-option>`;
@@ -968,10 +973,15 @@ export function newRunView(_state, { rerender }) {
               </sl-select>
               ${(() => {
                 const mode = claudeMdMode;
-                if (mode === 'project' || mode === 'project+local') {
-                  return html`<span class="settings-field-hint">CLAUDE.md loading mode. <sl-tag size="small" variant="neutral">best-effort</sl-tag> — project-scoped CLAUDE.md discovery may not find all files in complex repo layouts.</span>`;
+                const effective = resolveEffectiveClaudeMdMode();
+                const bestEffortTag = html`<sl-tag size="small" variant="neutral">best-effort</sl-tag>`;
+                if (mode === null) {
+                  return html`<span class="settings-field-hint">Using Template Default (${effective}). Picking an Explicit option overrides this.</span>`;
                 }
-                return html`<span class="settings-field-hint">Controls which CLAUDE.md files agents load. "all" = default Claude Code behavior.</span>`;
+                if (mode === 'project' || mode === 'project+local') {
+                  return html`<span class="settings-field-hint">Explicit: ${mode} — overrides the template default. ${bestEffortTag} — project-scoped CLAUDE.md discovery may not find all files in complex repo layouts.</span>`;
+                }
+                return html`<span class="settings-field-hint">Explicit: ${mode} — overrides the template default.</span>`;
               })()}
             </div>
 
