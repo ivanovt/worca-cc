@@ -14,6 +14,7 @@ vi.mock('lit-html/directives/ref.js', () => ({
 vi.mock('../utils/icons.js', () => ({
   iconSvg: () => '',
   FileText: 'FileText',
+  Sparkles: 'Sparkles',
   Circle: 'Circle',
   CircleAlert: 'CircleAlert',
   CircleCheck: 'CircleCheck',
@@ -56,6 +57,7 @@ describe('submitNewRun — new format validation and payload', () => {
     vi.doMock('../utils/icons.js', () => ({
       iconSvg: () => '',
       FileText: 'FileText',
+      Sparkles: 'Sparkles',
       Circle: 'Circle',
       CircleAlert: 'CircleAlert',
       CircleCheck: 'CircleCheck',
@@ -257,6 +259,7 @@ describe('submitNewRun — 409 max_concurrent_exceeded handling', () => {
     vi.doMock('../utils/icons.js', () => ({
       iconSvg: () => '',
       FileText: 'FileText',
+      Sparkles: 'Sparkles',
       Circle: 'Circle',
       CircleAlert: 'CircleAlert',
       CircleCheck: 'CircleCheck',
@@ -371,6 +374,7 @@ describe('submitNewRun — project validation and routing', () => {
     vi.doMock('../utils/icons.js', () => ({
       iconSvg: () => '',
       FileText: 'FileText',
+      Sparkles: 'Sparkles',
       Circle: 'Circle',
       CircleAlert: 'CircleAlert',
       CircleCheck: 'CircleCheck',
@@ -561,6 +565,7 @@ describe('getNewRunSubmitState — noProject flag', () => {
     vi.doMock('../utils/icons.js', () => ({
       iconSvg: () => '',
       FileText: 'FileText',
+      Sparkles: 'Sparkles',
       Circle: 'Circle',
       CircleAlert: 'CircleAlert',
       CircleCheck: 'CircleCheck',

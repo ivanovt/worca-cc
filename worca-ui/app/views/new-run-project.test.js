@@ -20,6 +20,7 @@ vi.mock('lit-html/directives/unsafe-html.js', () => ({
 vi.mock('../utils/icons.js', () => ({
   iconSvg: () => '<svg></svg>',
   FileText: 'FileText',
+  Sparkles: 'Sparkles',
   Circle: 'Circle',
   CircleAlert: 'CircleAlert',
   CircleCheck: 'CircleCheck',
@@ -61,6 +62,7 @@ describe('new-run project picker', () => {
     vi.doMock('../utils/icons.js', () => ({
       iconSvg: () => '<svg></svg>',
       FileText: 'FileText',
+      Sparkles: 'Sparkles',
       Circle: 'Circle',
       CircleAlert: 'CircleAlert',
       CircleCheck: 'CircleCheck',
@@ -195,6 +197,7 @@ describe('new-run project picker — state and interactions', () => {
     vi.doMock('../utils/icons.js', () => ({
       iconSvg: () => '<svg></svg>',
       FileText: 'FileText',
+      Sparkles: 'Sparkles',
       Circle: 'Circle',
       CircleAlert: 'CircleAlert',
       CircleCheck: 'CircleCheck',
@@ -376,6 +379,7 @@ describe('new-run source type dropdown', () => {
     vi.doMock('../utils/icons.js', () => ({
       iconSvg: () => '<svg></svg>',
       FileText: 'FileText',
+      Sparkles: 'Sparkles',
       Circle: 'Circle',
       CircleAlert: 'CircleAlert',
       CircleCheck: 'CircleCheck',

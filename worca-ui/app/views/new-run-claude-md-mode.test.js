@@ -21,6 +21,7 @@ function createDocStub() {
 const ICON_MOCKS = {
   iconSvg: () => '',
   FileText: 'FileText',
+  Sparkles: 'Sparkles',
   Circle: 'Circle',
   CircleAlert: 'CircleAlert',
   CircleCheck: 'CircleCheck',

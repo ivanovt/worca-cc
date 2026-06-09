@@ -3647,6 +3647,86 @@ sl-option.template-grouped:focus::part(suffix) {
   line-height: 1.5;
 }
 
+/* Pipeline-template header row: label on the left, Suggest button on the right. */
+.template-select-header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+  margin-bottom: 4px;
+}
+
+.template-select-header .settings-label {
+  margin-bottom: 0;
+}
+
+.btn-suggest-template::part(base) {
+  font-size: 12px;
+}
+
+/* Center the Sparkles SVG with the label. Without this, the SVG inherits
+ * baseline alignment from inline-flow and sits ~2px below the cap line. */
+.btn-suggest-template::part(prefix) {
+  display: inline-flex;
+  align-items: center;
+}
+
+.btn-suggest-template svg {
+  display: block;
+}
+
+/* Advisor dialog */
+.advisor-dialog::part(panel) {
+  max-width: 560px;
+}
+
+.advisor-dialog-body {
+  font-size: 14px;
+  color: inherit;
+  line-height: 1.55;
+}
+
+.advisor-loading {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  color: var(--muted);
+}
+
+.advisor-error {
+  color: var(--sl-color-danger-600, #c41e3a);
+}
+
+.advisor-headline {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  margin-bottom: 8px;
+}
+
+.advisor-template-name {
+  font-size: 16px;
+}
+
+.advisor-rationale {
+  margin: 6px 0 12px;
+}
+
+.advisor-alternatives ul {
+  list-style: disc;
+  padding-left: 20px;
+  margin: 4px 0 0;
+}
+
+.advisor-alternatives li {
+  margin-bottom: 6px;
+}
+
+.advisor-alternatives .btn-advisor-pick-alt {
+  margin-left: 8px;
+  vertical-align: middle;
+}
+
 /* Plan file autocomplete */
 .plan-autocomplete {
   position: relative;

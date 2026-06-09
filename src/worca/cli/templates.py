@@ -420,6 +420,43 @@ def register_subcommand(sub):
         help="Destination scope",
     )
 
+    # advise
+    advise_parser = templates_sub.add_parser(
+        "advise",
+        help="Recommend the best-fit template for a given work source",
+    )
+    advise_parser.add_argument(
+        "--source-type",
+        required=True,
+        dest="advise_source_type",
+        help=(
+            "Source type — one of: prompt, spec, source (GitHub issue), "
+            "pr (GitHub PR), plan (plan file)."
+        ),
+    )
+    advise_parser.add_argument(
+        "--source-value",
+        default="",
+        dest="advise_source_value",
+        help=(
+            "Source value: raw prompt text, file path, gh:issue:N, "
+            "gh:pr:N, or full URL. Read from stdin when set to '-'."
+        ),
+    )
+    advise_parser.add_argument(
+        "--model",
+        default="sonnet",
+        dest="advise_model",
+        help="Model alias (resolved via worca.models). Defaults to sonnet.",
+    )
+    advise_parser.add_argument(
+        "--timeout",
+        type=int,
+        default=60,
+        dest="advise_timeout",
+        help="Claude CLI timeout in seconds (default: 60).",
+    )
+
     return templates_parser
 
 
@@ -2027,10 +2064,34 @@ def cmd_templates_rename(args):
     )
 
 
+def cmd_templates_advise(args):
+    """worca templates advise — recommend the best-fit template for a work source."""
+    from worca.template_advisor import TemplateAdvisorError, advise_to_json
+
+    source_type = args.advise_source_type
+    source_value = args.advise_source_value
+    if source_value == "-":
+        source_value = sys.stdin.read()
+
+    project_root = getattr(args, "project_root", None) or os.getcwd()
+    try:
+        json_text = advise_to_json(
+            source_type=source_type,
+            source_value=source_value,
+            project_root=project_root,
+            model_alias=args.advise_model,
+            timeout=args.advise_timeout,
+        )
+    except TemplateAdvisorError as exc:
+        print(f"error: {exc}", file=sys.stderr)
+        raise SystemExit(1)
+    print(json_text)
+
+
 def cmd_templates(args):
     """Dispatch worca templates subcommand."""
     if not args.templates_command:
-        print("error: specify a templates subcommand: list, show, save, create, delete, export, import, validate, duplicate, rename", file=sys.stderr)
+        print("error: specify a templates subcommand: list, show, save, create, delete, export, import, validate, duplicate, rename, advise", file=sys.stderr)
         raise SystemExit(1)
     if args.templates_command == "list":
         cmd_templates_list(args)
@@ -2052,6 +2113,8 @@ def cmd_templates(args):
         cmd_templates_duplicate(args)
     elif args.templates_command == "rename":
         cmd_templates_rename(args)
+    elif args.templates_command == "advise":
+        cmd_templates_advise(args)
     else:
         print(f"error: unknown templates subcommand {args.templates_command!r}", file=sys.stderr)
         raise SystemExit(1)
