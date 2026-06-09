@@ -364,13 +364,37 @@ class DagExecutor:
             already_done = [p for p in projects if p in self._completed_projects]
             need_dispatch = [p for p in projects if p not in self._completed_projects]
 
-            # In master/existing plan modes, skip projects the planner
-            # marked as skip (they have no generated plan file).
-            if self._manifest.get("plan_mode") in ("master", "existing") and self._project_plans:
+            # In master/existing plan modes, skip projects absent from
+            # `project_plans` — the planner intentionally omitted them.
+            # An empty `project_plans` means "skip everything" in these
+            # modes; do not fall through to a full dispatch.
+            skipped: list[str] = []
+            if self._manifest.get("plan_mode") in ("master", "existing"):
                 skipped = [p for p in need_dispatch if p not in self._project_plans]
                 for p in skipped:
-                    self._completed_projects[p] = {"status": "completed", "skipped": True}
+                    project_path = self._projects_by_name.get(p, p)
+                    entry = {
+                        "project": p,
+                        "run_id": None,
+                        "worktree_path": None,
+                        "project_path": self._project_abs_path(project_path),
+                        "status": "completed",
+                        "skipped": True,
+                        "tier": tier_idx,
+                        "crg_status": self._crg_statuses.get(p, GRAPH_STATUS_DISABLED),
+                    }
+                    self._manifest["children"].append(entry)
+                    self._completed_projects[p] = entry
                     self._terminal_count += 1
+                    self._emit_event(
+                        event_types.WORKSPACE_PROJECT_SKIPPED,
+                        event_types.workspace_project_skipped_payload(
+                            workspace_name=self._workspace_name,
+                            project=p,
+                            tier=tier_idx,
+                            reason="no_plan",
+                        ),
+                    )
                 need_dispatch = [p for p in need_dispatch if p not in skipped]
 
             blocked, runnable = self._partition_projects(need_dispatch)
@@ -446,7 +470,7 @@ class DagExecutor:
                         self._failed_count += 1
                     elif result["status"] == "completed":
                         self._completed_projects[project] = result
-            elif not already_done:
+            elif not already_done and not skipped:
                 tier_info["status"] = "failed"
             else:
                 tier_info["status"] = "completed"

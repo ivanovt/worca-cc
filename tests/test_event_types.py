@@ -1275,3 +1275,33 @@ def test_agent_completed_payload_omits_context_final_pct_when_none():
         cost_usd=0.10, duration_ms=30000, exit_code=0,
     )
     assert "context_final_pct" not in p
+
+
+def test_workspace_project_skipped_payload():
+    from worca.events.types import (
+        WORKSPACE_PROJECT_SKIPPED,
+        workspace_project_skipped_payload,
+    )
+    assert WORKSPACE_PROJECT_SKIPPED == "workspace.project.skipped"
+    p = workspace_project_skipped_payload(
+        workspace_name="ws",
+        project="hippo",
+        tier=0,
+    )
+    assert p == {
+        "workspace_name": "ws",
+        "project": "hippo",
+        "tier": 0,
+        "reason": "no_plan",
+    }
+
+
+def test_workspace_project_skipped_payload_custom_reason():
+    from worca.events.types import workspace_project_skipped_payload
+    p = workspace_project_skipped_payload(
+        workspace_name="ws",
+        project="kafka",
+        tier=1,
+        reason="manual_skip",
+    )
+    assert p["reason"] == "manual_skip"
