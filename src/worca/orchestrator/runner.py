@@ -2463,16 +2463,10 @@ def run_pipeline(
                     _log(f"Killed {orphans} orphaned process group(s) from previous run", "warn")
 
             # Resolve and materialize CLAUDE.md overlay for the resumed run.
-            from worca.utils.claude_md import resolve_claude_md_mode as _resolve_cmd, build_overlay as _build_overlay
-            _resolved_claude_md_mode = _resolve_cmd(claude_md_mode_override, settings_path)
-            if run_dir and _resolved_claude_md_mode != "all":
-                _overlay_dict = _build_overlay(_resolved_claude_md_mode, os.getcwd())
-                if _overlay_dict is not None:
-                    _claude_md_overlay_dict = _overlay_dict
-                    import json as _json
-                    _claude_md_overlay_path = os.path.join(run_dir, "claude_md_overlay.json")
-                    with open(_claude_md_overlay_path, "w", encoding="utf-8") as _f:
-                        _json.dump(_overlay_dict, _f, indent=2)
+            from worca.utils.claude_md import resolve_and_materialize as _resolve_and_materialize
+            _resolved_claude_md_mode, _claude_md_overlay_path, _claude_md_overlay_dict = (
+                _resolve_and_materialize(claude_md_mode_override, settings_path, run_dir)
+            )
             # Persist mode to status if non-default (resume can re-override).
             if _resolved_claude_md_mode != "all":
                 status["claude_md_mode"] = _resolved_claude_md_mode
@@ -2499,7 +2493,7 @@ def run_pipeline(
         if worktree:
             status["worktree"] = True
 
-        from worca.utils.claude_md import resolve_claude_md_mode, build_overlay as _build_overlay
+        from worca.utils.claude_md import resolve_claude_md_mode, write_overlay as _write_overlay
         _resolved_claude_md_mode = resolve_claude_md_mode(claude_md_mode_override, settings_path)
         status.update(launch_param_status(max_beads_override, msize, mloops, _resolved_claude_md_mode))
 
@@ -2534,14 +2528,9 @@ def run_pipeline(
         save_status(status, actual_status_path)
 
         # Materialize CLAUDE.md overlay for non-default modes.
-        if _resolved_claude_md_mode != "all":
-            _overlay_dict = _build_overlay(_resolved_claude_md_mode, os.getcwd())
-            if _overlay_dict is not None:
-                _claude_md_overlay_dict = _overlay_dict
-                import json as _json
-                _claude_md_overlay_path = os.path.join(run_dir, "claude_md_overlay.json")
-                with open(_claude_md_overlay_path, "w", encoding="utf-8") as _f:
-                    _json.dump(_overlay_dict, _f, indent=2)
+        _claude_md_overlay_path, _claude_md_overlay_dict = _write_overlay(
+            _resolved_claude_md_mode, run_dir,
+        )
 
         # The pipelines.d/ entry is a pointer (run_id, worktree_path, pid),
         # not a state mirror. Stage transitions are recorded in status.json

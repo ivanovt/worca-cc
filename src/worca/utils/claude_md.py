@@ -13,7 +13,7 @@ resolve_claude_md_mode(cli_override, settings_path) -> str
 
 import json
 import os
-from pathlib import Path
+from pathlib import Path, PurePosixPath
 from typing import Optional
 
 
@@ -51,28 +51,35 @@ def build_overlay(mode: str, project_root: str) -> Optional[dict]:
 
 
 def _build_excludes(mode: str, project_root: str) -> list:
-    """Build the claudeMdExcludes list for 'project' or 'project+local'."""
+    """Build the claudeMdExcludes list for 'project' or 'project+local'.
+
+    Paths are emitted in POSIX form (forward slashes) on every platform so the
+    overlay JSON is portable across machines and predictable in tests. The
+    Claude Code resolver accepts forward-slash paths on Windows.
+    """
     excludes = []
 
+    # Normalize project_root to a POSIX-style path for consistent output across
+    # platforms. as_posix() preserves drive letters on Windows (C:/x/y).
+    project_posix = PurePosixPath(Path(project_root).as_posix())
+
     # 1. User-home paths
-    home = str(Path.home())
-    excludes.append(os.path.join(home, ".claude", "CLAUDE.md"))
-    excludes.append(os.path.join(home, "CLAUDE.md"))
+    home_posix = PurePosixPath(Path.home().as_posix())
+    excludes.append(str(home_posix / ".claude" / "CLAUDE.md"))
+    excludes.append(str(home_posix / "CLAUDE.md"))
 
     # 2. Org-policy forward-compat paths
     excludes.extend(_ORG_POLICY_PATHS)
 
     # 3. All ancestor directories walked up from project_root to filesystem root
-    from pathlib import PurePath
-    root_pure = PurePath(project_root)
-    for ancestor in root_pure.parents:
+    for ancestor in project_posix.parents:
         excludes.append(str(ancestor / "CLAUDE.md"))
 
     # 4. Project-root exclusions depend on mode
     #    'project'      keeps CLAUDE.md, excludes CLAUDE.local.md
     #    'project+local' keeps both CLAUDE.md and CLAUDE.local.md
     if mode == "project":
-        excludes.append(os.path.join(project_root, "CLAUDE.local.md"))
+        excludes.append(str(project_posix / "CLAUDE.local.md"))
     # For 'project+local': neither CLAUDE.md nor CLAUDE.local.md is excluded
 
     return excludes
@@ -102,3 +109,45 @@ def resolve_claude_md_mode(
             pass
 
     return "all"
+
+
+def write_overlay(
+    mode: str,
+    run_dir: Optional[str],
+    project_root: Optional[str] = None,
+) -> tuple[Optional[str], Optional[dict]]:
+    """Build the overlay for ``mode`` and write it into ``run_dir``.
+
+    Returns ``(overlay_path, overlay_dict)``. Both are ``None`` when mode is
+    ``"all"``, when ``run_dir`` is missing, or when ``build_overlay`` returns
+    ``None``. ``project_root`` defaults to the current working directory —
+    matching the runner's resolution rules at pipeline launch.
+    """
+    if mode == "all" or not run_dir:
+        return None, None
+
+    overlay_dict = build_overlay(mode, project_root or os.getcwd())
+    if overlay_dict is None:
+        return None, None
+
+    overlay_path = os.path.join(run_dir, "claude_md_overlay.json")
+    with open(overlay_path, "w", encoding="utf-8") as f:
+        json.dump(overlay_dict, f, indent=2)
+    return overlay_path, overlay_dict
+
+
+def resolve_and_materialize(
+    cli_override: Optional[str],
+    settings_path: Optional[str],
+    run_dir: Optional[str],
+    project_root: Optional[str] = None,
+) -> tuple[str, Optional[str], Optional[dict]]:
+    """Resolve the effective mode and write its overlay JSON into ``run_dir``.
+
+    Convenience wrapper that combines :func:`resolve_claude_md_mode` and
+    :func:`write_overlay`. Use this when ``run_dir`` already exists at
+    resolution time; otherwise call the two functions separately.
+    """
+    mode = resolve_claude_md_mode(cli_override, settings_path)
+    overlay_path, overlay_dict = write_overlay(mode, run_dir, project_root)
+    return mode, overlay_path, overlay_dict

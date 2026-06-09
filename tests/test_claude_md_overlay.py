@@ -39,9 +39,11 @@ def test_build_overlay_project_local_contains_claudemd_excludes():
 def test_build_overlay_project_excludes_user_home():
     result = build_overlay("project", "/some/project")
     excludes = result["claudeMdExcludes"]
-    home = str(Path.home())
+    # Overlay paths are emitted in POSIX form on every platform, so compare
+    # against the POSIX rendering of the user home dir.
+    home_posix = Path.home().as_posix()
     # Should include both ~/.claude/CLAUDE.md and ~/CLAUDE.md
-    assert any(p.startswith(home) for p in excludes), (
+    assert any(p.startswith(home_posix) for p in excludes), (
         f"Expected user-home paths in excludes but got: {excludes}"
     )
 
@@ -51,7 +53,7 @@ def test_build_overlay_project_local_keeps_local_file():
     root = "/some/project"
     result = build_overlay("project+local", root)
     excludes = result["claudeMdExcludes"]
-    local_md = os.path.join(root, "CLAUDE.local.md")
+    local_md = f"{root}/CLAUDE.local.md"
     assert local_md not in excludes, (
         f"project+local should NOT exclude CLAUDE.local.md but found it in: {excludes}"
     )
@@ -62,15 +64,16 @@ def test_build_overlay_project_keeps_project_claudemd():
     root = "/some/project"
     result = build_overlay("project", root)
     excludes = result["claudeMdExcludes"]
-    project_md = os.path.join(root, "CLAUDE.md")
+    project_md = f"{root}/CLAUDE.md"
     assert project_md not in excludes, (
         f"project mode should NOT exclude project CLAUDE.md but found it in: {excludes}"
     )
 
 
 def test_build_overlay_ancestor_walk():
-    """build_overlay emits one entry per ancestor directory."""
-    # Use a known deep path so we can count expected ancestors
+    """build_overlay emits one entry per ancestor directory in POSIX form."""
+    # Use a known deep path so we can count expected ancestors. Paths are
+    # always emitted in POSIX form, so the same expectations hold on Windows.
     root = "/a/b/c/project"
     result = build_overlay("project", root)
     excludes = result["claudeMdExcludes"]
@@ -87,7 +90,7 @@ def test_build_overlay_project_mode_excludes_local_claudemd():
     root = "/some/project"
     result = build_overlay("project", root)
     excludes = result["claudeMdExcludes"]
-    local_md = os.path.join(root, "CLAUDE.local.md")
+    local_md = f"{root}/CLAUDE.local.md"
     assert local_md in excludes, (
         f"project (not project+local) SHOULD exclude CLAUDE.local.md but not found in: {excludes}"
     )
