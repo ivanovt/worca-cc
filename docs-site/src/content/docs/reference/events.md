@@ -35,6 +35,8 @@ A single run's lifecycle, telemetry, and control plane.
   `blocked`, `test_gate`, `dispatch_blocked`, `dispatch_allowed`
 - **`pipeline.preflight.*`**, **`pipeline.learn.*`**.  
   `preflight.completed`, `preflight.skipped`, `learn.completed`, `learn.failed`
+- **`pipeline.claude_md.*`** — [CLAUDE.md load mode](/configuration/claude-md-mode/) resolution.  
+  `mode_resolved` *(records the effective mode + its precedence source: CLI flag, template, project setting, or default)*
 
 ## Control events
 
