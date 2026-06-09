@@ -26,6 +26,8 @@ export let selectedProject = null; // project picked in All Projects mode
 export let projectEditable = false; // Change link toggles read-only → editable
 export let maxBeads = null; // null = passthrough (use template/project default), 0 = Auto, N = explicit cap
 export let projectLevelMaxBeads = null; // cached from /settings endpoint
+export let claudeMdMode = null; // null = passthrough, string = explicit mode
+export let projectLevelClaudeMdMode = null; // cached from /settings endpoint
 
 // Dismissable worktree info banner — persisted via localStorage
 export let bannerDismissed = (() => {
@@ -44,6 +46,8 @@ export function invalidateTemplateCache() {
   defaultTemplateId = '';
   projectLevelMaxBeads = null;
   maxBeads = null;
+  projectLevelClaudeMdMode = null;
+  claudeMdMode = null;
 }
 
 /**
@@ -69,6 +73,9 @@ export function fetchDefaultTemplate(projectId) {
       // Cache project-level max_beads for the default option label
       projectLevelMaxBeads =
         data?.worca?.agents?.coordinator?.max_beads ?? null;
+
+      // Cache project-level claude_md_mode
+      projectLevelClaudeMdMode = data?.worca?.claude_md_mode ?? null;
 
       // Auto-select the default template if it's present in the templates list
       if (defaultTemplateId && templates) {
@@ -108,6 +115,11 @@ export function resetNewRunState(overrides = {}) {
   maxBeads = 'maxBeads' in overrides ? overrides.maxBeads : null;
   projectLevelMaxBeads =
     'projectLevelMaxBeads' in overrides ? overrides.projectLevelMaxBeads : null;
+  claudeMdMode = 'claudeMdMode' in overrides ? overrides.claudeMdMode : null;
+  projectLevelClaudeMdMode =
+    'projectLevelClaudeMdMode' in overrides
+      ? overrides.projectLevelClaudeMdMode
+      : null;
 }
 
 /**
@@ -124,6 +136,19 @@ export function resolveEffectiveMaxBeads() {
   }
   // Fall back to project-level setting
   return projectLevelMaxBeads;
+}
+
+/**
+ * Resolve effective claude_md_mode for the dropdown default label.
+ * Precedence: selected template config.claude_md_mode → project settings → 'all'.
+ */
+export function resolveEffectiveClaudeMdMode() {
+  if (selectedTemplate && selectedTemplate !== 'default') {
+    const tmpl = (templates || []).find((t) => t.id === selectedTemplate);
+    const tmplMode = tmpl?.config?.claude_md_mode;
+    if (typeof tmplMode === 'string') return tmplMode;
+  }
+  return projectLevelClaudeMdMode ?? 'all';
 }
 
 /**
@@ -366,6 +391,7 @@ export async function submitNewRun({
   }
 
   const maxBeadsEl = document.getElementById('new-run-max-beads');
+  const claudeMdModeEl = document.getElementById('new-run-claude-md-mode');
   const msize = msizeEl ? parseInt(msizeEl.value, 10) || 1 : 1;
   const mloops = mloopsEl ? parseInt(mloopsEl.value, 10) || 1 : 1;
 
@@ -380,6 +406,13 @@ export async function submitNewRun({
       // Parse as number
       maxBeadsValue = parseInt(val, 10) || 0;
     }
+  }
+
+  // Parse claudeMdMode: empty string → null (passthrough), string → explicit mode
+  let claudeMdModeValue = claudeMdMode;
+  if (claudeMdModeEl) {
+    const val = claudeMdModeEl.value;
+    claudeMdModeValue = val === '' ? null : val;
   }
 
   const PR_BRANCH_RE = /^[a-zA-Z0-9._/-]+$/;
@@ -409,6 +442,10 @@ export async function submitNewRun({
     // Conditionally include maxBeads only when explicitly set (not null/passthrough)
     if (maxBeadsValue !== null) {
       body.maxBeads = maxBeadsValue;
+    }
+    // Conditionally include claudeMdMode only when explicitly set (not null/passthrough)
+    if (claudeMdModeValue !== null) {
+      body.claudeMdMode = claudeMdModeValue;
     }
     if (hasSource) body.sourceValue = sourceValue;
     if (hasPrompt) body.prompt = promptValue;
@@ -499,6 +536,8 @@ export function newRunView(_state, { rerender }) {
     planFiles = null;
     projectLevelMaxBeads = null;
     maxBeads = null;
+    projectLevelClaudeMdMode = null;
+    claudeMdMode = null;
     const newId = selectedProject;
     if (newId) {
       fetchBranches(newId).then(() => rerender());
@@ -520,6 +559,8 @@ export function newRunView(_state, { rerender }) {
     templates = null;
     projectLevelMaxBeads = null;
     maxBeads = null;
+    projectLevelClaudeMdMode = null;
+    claudeMdMode = null;
   }
 
   // Fetch branches once (null = not yet fetched, or project changed)
@@ -560,6 +601,12 @@ export function newRunView(_state, { rerender }) {
       // Parse as number
       maxBeads = parseInt(val, 10) || 0;
     }
+    rerender();
+  }
+
+  function handleClaudeMdModeChange(e) {
+    const val = e.target.value;
+    claudeMdMode = val === '' ? null : val;
     rerender();
   }
 
@@ -905,6 +952,27 @@ export function newRunView(_state, { rerender }) {
                   return html`<span class="settings-field-hint">${hintText}</span>`;
                 })()}
               </div>
+            </div>
+
+            <div class="settings-field">
+              <label class="settings-label">CLAUDE.md Mode</label>
+              <sl-select id="new-run-claude-md-mode" value=${claudeMdMode === null ? '' : claudeMdMode} @sl-change=${handleClaudeMdModeChange}>
+                ${(() => {
+                  const effective = resolveEffectiveClaudeMdMode();
+                  return html`<sl-option value="">Template Default: ${effective}</sl-option>`;
+                })()}
+                <sl-option value="all">Explicit: all</sl-option>
+                <sl-option value="project">Explicit: project</sl-option>
+                <sl-option value="project+local">Explicit: project+local</sl-option>
+                <sl-option value="none">Explicit: none</sl-option>
+              </sl-select>
+              ${(() => {
+                const mode = claudeMdMode;
+                if (mode === 'project' || mode === 'project+local') {
+                  return html`<span class="settings-field-hint">CLAUDE.md loading mode. <sl-tag size="small" variant="neutral">best-effort</sl-tag> — project-scoped CLAUDE.md discovery may not find all files in complex repo layouts.</span>`;
+                }
+                return html`<span class="settings-field-hint">Controls which CLAUDE.md files agents load. "all" = default Claude Code behavior.</span>`;
+              })()}
             </div>
 
             <div class="settings-field">

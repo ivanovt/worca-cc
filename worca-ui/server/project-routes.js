@@ -959,6 +959,7 @@ export function createProjectScopedRoutes({
       maxBeads,
       branch,
       template,
+      claudeMdMode,
     } = body;
     if (body.inputType && sourceType === undefined) {
       if (body.inputType === 'prompt') {
@@ -1029,6 +1030,25 @@ export function createProjectScopedRoutes({
       }
     }
 
+    const CLAUDE_MD_MODES = new Set([
+      'all',
+      'project',
+      'project+local',
+      'none',
+    ]);
+    if (claudeMdMode !== undefined && claudeMdMode !== null) {
+      if (
+        typeof claudeMdMode !== 'string' ||
+        !CLAUDE_MD_MODES.has(claudeMdMode)
+      ) {
+        return res.status(400).json({
+          ok: false,
+          error:
+            'claudeMdMode must be one of: all, project, project+local, none',
+        });
+      }
+    }
+
     const hasSource = sourceType !== 'none' && sourceValue;
     const hasPlan = typeof planFile === 'string' && planFile.trim().length > 0;
     const hasPrompt = typeof prompt === 'string' && prompt.length > 0;
@@ -1081,6 +1101,7 @@ export function createProjectScopedRoutes({
           planFile: hasPlan ? planFile.trim() : undefined,
           branch: branch || undefined,
           template: template || undefined,
+          claudeMdMode: claudeMdMode || undefined,
         });
         const { broadcast } = req.app.locals;
         if (broadcast) broadcast('run-started', { pid: result.pid });

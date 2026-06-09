@@ -201,6 +201,33 @@ describe('startPipeline arg building', () => {
 
   // --- Other options ---
 
+  it('passes --claude-md-mode when claudeMdMode is set', async () => {
+    startPipeline(worcaDir, {
+      sourceType: 'none',
+      prompt: 'test',
+      claudeMdMode: 'project',
+      projectRoot: tmpDir,
+    });
+    await vi.waitFor(() => expect(spawnCalls.length).toBe(1), { timeout: 100 });
+
+    const args = getArgs();
+    expect(args).toContain('--claude-md-mode');
+    expect(args[args.indexOf('--claude-md-mode') + 1]).toBe('project');
+  });
+
+  it('omits --claude-md-mode when claudeMdMode is null', async () => {
+    startPipeline(worcaDir, {
+      sourceType: 'none',
+      prompt: 'test',
+      claudeMdMode: null,
+      projectRoot: tmpDir,
+    });
+    await vi.waitFor(() => expect(spawnCalls.length).toBe(1), { timeout: 100 });
+
+    const args = getArgs();
+    expect(args).not.toContain('--claude-md-mode');
+  });
+
   it('passes --max-beads 0 when maxBeads=0 (Auto override)', async () => {
     startPipeline(worcaDir, {
       sourceType: 'none',

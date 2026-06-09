@@ -1331,6 +1331,19 @@ function _preflightParamsRow(run) {
   }
   items.push(html`<span class="meta-label">Max Beads:</span> ${beadPills}`);
 
+  // CLAUDE.md mode — only shown when non-default (mode != 'all').
+  // Stored in status.json only when not 'all' (see runner.py launch_param_status).
+  const claudeMdMode = run.claude_md_mode;
+  if (typeof claudeMdMode === 'string') {
+    const claudePills = [
+      pill(
+        claudeMdMode,
+        'CLAUDE.md loading mode set at launch via --claude-md-mode.',
+      ),
+    ];
+    items.push(html`<span class="meta-label">CLAUDE.md:</span> ${claudePills}`);
+  }
+
   return html`<div class="iteration-tags-row preflight-params-row">${items}</div>`;
 }
 

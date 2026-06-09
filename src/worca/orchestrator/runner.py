@@ -104,6 +104,7 @@ from worca.events.types import (
     GUIDE_CONFLICT, guide_conflict_payload,
     TEMPLATE_APPLIED, TEMPLATE_DROPPED,
     template_applied_payload, template_dropped_payload,
+    CLAUDE_MD_MODE_RESOLVED, claude_md_mode_resolved_payload,
 )
 
 # Maps pipeline stages to their user-message block files. The stage's
@@ -1542,6 +1543,7 @@ def run_stage(
         on_event=on_event,
         graphify_out=graphify_out,
         mcp_config=_mcp_config,
+        claude_md_overlay_path=context.get("_claude_md_overlay_path"),
         run_dir=run_dir,
         stage=stage.value,
         iteration=iteration,
@@ -2204,14 +2206,16 @@ def _pin_effective_settings_path(settings_path: Optional[str]) -> None:
 
 
 def launch_param_status(
-    max_beads_override: Optional[int], msize: int, mloops: int
+    max_beads_override: Optional[int], msize: int, mloops: int,
+    claude_md_mode: Optional[str] = None,
 ) -> dict:
     """Status keys recording launch-time params, present only when explicitly set.
 
     The UI surfaces these on the preflight row. ``max_beads_override`` is stored
     whenever provided (``None`` means "not passed"); the size/loop multipliers are
     stored only when raised above their default of 1 so an unset multiplier leaves
-    the key absent and the UI shows nothing.
+    the key absent and the UI shows nothing. ``claude_md_mode`` is stored only when
+    non-default (i.e. not 'all').
     """
     out: dict = {}
     if max_beads_override is not None:
@@ -2220,6 +2224,8 @@ def launch_param_status(
         out["size_multiplier"] = msize
     if isinstance(mloops, int) and mloops > 1:
         out["loop_multiplier"] = mloops
+    if isinstance(claude_md_mode, str) and claude_md_mode != "all":
+        out["claude_md_mode"] = claude_md_mode
     return out
 
 
@@ -2299,6 +2305,7 @@ def run_pipeline(
     registry_base: Optional[str] = None,
     run_id: Optional[str] = None,
     max_beads_override: Optional[int] = None,
+    claude_md_mode_override: Optional[str] = None,
 ) -> dict:
     """Run the full pipeline for a single work request.
 
@@ -2392,6 +2399,9 @@ def run_pipeline(
         existing = load_status(status_path)
 
     resume_stage = None
+    _claude_md_overlay_path: Optional[str] = None
+    _resolved_claude_md_mode: str = "all"
+    _claude_md_overlay_dict: Optional[dict] = None
 
     _branch_just_created = False
     if resume and existing and _is_same_work_request(existing.get("work_request", {}), work_request):
@@ -2451,6 +2461,17 @@ def run_pipeline(
                 orphans = kill_all_tracked(os.path.join(run_dir, "procs"))
                 if orphans:
                     _log(f"Killed {orphans} orphaned process group(s) from previous run", "warn")
+
+            # Resolve and materialize CLAUDE.md overlay for the resumed run.
+            from worca.utils.claude_md import resolve_and_materialize as _resolve_and_materialize
+            _resolved_claude_md_mode, _claude_md_overlay_path, _claude_md_overlay_dict = (
+                _resolve_and_materialize(claude_md_mode_override, settings_path, run_dir)
+            )
+            # Persist mode to status if non-default (resume can re-override).
+            if _resolved_claude_md_mode != "all":
+                status["claude_md_mode"] = _resolved_claude_md_mode
+            else:
+                status.pop("claude_md_mode", None)
         else:
             _log("Pipeline already completed", "ok")
             return existing  # all done
@@ -2472,7 +2493,9 @@ def run_pipeline(
         if worktree:
             status["worktree"] = True
 
-        status.update(launch_param_status(max_beads_override, msize, mloops))
+        from worca.utils.claude_md import resolve_claude_md_mode, write_overlay as _write_overlay
+        _resolved_claude_md_mode = resolve_claude_md_mode(claude_md_mode_override, settings_path)
+        status.update(launch_param_status(max_beads_override, msize, mloops, _resolved_claude_md_mode))
 
         # target_branch is the PR base branch (what the PR merges into).
         # Sourced from WORCA_TARGET_BRANCH env var (highest priority) or the
@@ -2503,6 +2526,11 @@ def run_pipeline(
             update_pipeline(run_id, base=registry_dir, pid=os.getpid())
 
         save_status(status, actual_status_path)
+
+        # Materialize CLAUDE.md overlay for non-default modes.
+        _claude_md_overlay_path, _claude_md_overlay_dict = _write_overlay(
+            _resolved_claude_md_mode, run_dir,
+        )
 
         # The pipelines.d/ entry is a pointer (run_id, worktree_path, pid),
         # not a state mirror. Stage transitions are recorded in status.json
@@ -2606,11 +2634,37 @@ def run_pipeline(
                     tier=_tier,
                 ))
 
+            # Emit claude_md mode resolved event (Tier 2 — pipeline-internal).
+            _mode_source: str
+            if claude_md_mode_override is not None:
+                _mode_source = "cli"
+            elif pipeline_template is not None and _resolved_claude_md_mode != "all":
+                _mode_source = "template"
+            else:
+                try:
+                    _s = load_settings(settings_path)
+                    _ps_mode = _s.get("worca", {}).get("claude_md_mode")
+                    if isinstance(_ps_mode, str) and _ps_mode == _resolved_claude_md_mode and _resolved_claude_md_mode != "all":
+                        _mode_source = "project_settings"
+                    else:
+                        _mode_source = "default"
+                except Exception:
+                    _mode_source = "default"
+            _excl_count = len((_claude_md_overlay_dict or {}).get("claudeMdExcludes", []))
+            emit_event(ctx, CLAUDE_MD_MODE_RESOLVED, claude_md_mode_resolved_payload(
+                mode=_resolved_claude_md_mode,
+                source=_mode_source,
+                overlay_path=_claude_md_overlay_path,
+                exclude_count=_excl_count,
+            ))
+
         context = {
             "prompt": work_request.description or work_request.title,
             "_run_dir": run_dir,
             "_logs_dir": logs_dir,
         }
+        if _claude_md_overlay_path:
+            context["_claude_md_overlay_path"] = _claude_md_overlay_path
         if resume_stage:
             loop_counters = restore_loop_counters(status)
         else:
