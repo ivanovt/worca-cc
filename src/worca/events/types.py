@@ -203,6 +203,7 @@ WORKSPACE_PLAN_PARTIAL           = "workspace.plan.partial"
 WORKSPACE_TIER_STARTED           = "workspace.tier.started"
 WORKSPACE_TIER_COMPLETED         = "workspace.tier.completed"
 WORKSPACE_TIER_FAILED            = "workspace.tier.failed"
+WORKSPACE_PROJECT_SKIPPED        = "workspace.project.skipped"
 WORKSPACE_INTEGRATION_STARTED    = "workspace.integration_test.started"
 WORKSPACE_INTEGRATION_PASSED     = "workspace.integration_test.passed"
 WORKSPACE_INTEGRATION_FAILED     = "workspace.integration_test.failed"
@@ -1418,6 +1419,21 @@ def workspace_tier_failed_payload(
     if duration_ms is not None:
         p["duration_ms"] = duration_ms
     return p
+
+
+def workspace_project_skipped_payload(
+    workspace_name: str,
+    project: str,
+    tier: int,
+    *,
+    reason: str = "no_plan",
+) -> dict:
+    return {
+        "workspace_name": workspace_name,
+        "project": project,
+        "tier": tier,
+        "reason": reason,
+    }
 
 
 def workspace_integration_started_payload(

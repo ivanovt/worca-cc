@@ -3,6 +3,8 @@ import os
 import subprocess
 from unittest.mock import MagicMock, patch
 
+from worca.state.status import WorkspaceStatus
+
 
 
 def _make_manifest(
@@ -1434,3 +1436,242 @@ class TestDagCircuitBreaker:
 
         assert result["status"] == "halted"
         assert manifest.get("halt_reason") == "circuit_breaker"
+
+
+class TestDagExecutorPlanSkip:
+    """Projects marked skip in the workspace plan are not dispatched (master/existing modes)."""
+
+    def test_master_plan_skips_projects_without_plan(self):
+        """In master plan mode, projects absent from project_plans are skipped."""
+        from worca.workspace.dag_executor import DagExecutor
+
+        manifest = _make_manifest(
+            tiers=[{"tier": 0, "projects": ["es", "hippo", "kafka"], "status": "pending"}],
+            dependency_graph={"es": [], "hippo": [], "kafka": []},
+            project_plans={"es": "/plans/es.md"},
+        )
+        manifest["plan_mode"] = "master"
+        run_dir = "/tmp/run-dir"
+        executor = DagExecutor(manifest, run_dir)
+
+        with (
+            patch("subprocess.run", return_value=_completed_proc()) as mock_run,
+            patch("worca.scripts.run_workspace.write_workspace_manifest"),
+        ):
+            result = executor.execute()
+
+        assert result["status"] == "completed"
+        # Only one subprocess call — for "es"
+        assert mock_run.call_count == 1
+        call_args = mock_run.call_args[0][0]
+        assert any("es" in str(a) for a in call_args)
+
+    def test_existing_plan_skips_projects_without_plan(self):
+        """'existing' plan mode behaves the same as 'master' for skip logic."""
+        from worca.workspace.dag_executor import DagExecutor
+
+        manifest = _make_manifest(
+            tiers=[{"tier": 0, "projects": ["es", "hippo"], "status": "pending"}],
+            dependency_graph={"es": [], "hippo": []},
+            project_plans={"es": "/plans/es.md"},
+        )
+        manifest["plan_mode"] = "existing"
+        run_dir = "/tmp/run-dir"
+        executor = DagExecutor(manifest, run_dir)
+
+        with (
+            patch("subprocess.run", return_value=_completed_proc()) as mock_run,
+            patch("worca.scripts.run_workspace.write_workspace_manifest"),
+        ):
+            result = executor.execute()
+
+        assert result["status"] == "completed"
+        assert mock_run.call_count == 1
+
+    def test_per_repo_mode_dispatches_all_projects(self):
+        """per-repo mode dispatches every project regardless of project_plans."""
+        from worca.workspace.dag_executor import DagExecutor
+
+        manifest = _make_manifest(
+            tiers=[{"tier": 0, "projects": ["es", "hippo"], "status": "pending"}],
+            dependency_graph={"es": [], "hippo": []},
+            project_plans={"es": "/plans/es.md"},
+        )
+        manifest["plan_mode"] = "per-repo"
+        run_dir = "/tmp/run-dir"
+        executor = DagExecutor(manifest, run_dir)
+
+        with (
+            patch("subprocess.run", return_value=_completed_proc()) as mock_run,
+            patch("worca.scripts.run_workspace.write_workspace_manifest"),
+        ):
+            result = executor.execute()
+
+        assert result["status"] == "completed"
+        assert mock_run.call_count == 2
+
+    def test_independent_mode_dispatches_all_projects(self):
+        """independent mode dispatches every project regardless of project_plans."""
+        from worca.workspace.dag_executor import DagExecutor
+
+        manifest = _make_manifest(
+            tiers=[{"tier": 0, "projects": ["es", "hippo"], "status": "pending"}],
+            dependency_graph={"es": [], "hippo": []},
+            project_plans={"es": "/plans/es.md"},
+        )
+        manifest["plan_mode"] = "independent"
+        run_dir = "/tmp/run-dir"
+        executor = DagExecutor(manifest, run_dir)
+
+        with (
+            patch("subprocess.run", return_value=_completed_proc()) as mock_run,
+            patch("worca.scripts.run_workspace.write_workspace_manifest"),
+        ):
+            result = executor.execute()
+
+        assert result["status"] == "completed"
+        assert mock_run.call_count == 2
+
+    def test_skipped_project_does_not_block_downstream_tier(self):
+        """A skipped tier-0 project counts as completed so tier-1 dependents proceed."""
+        from worca.workspace.dag_executor import DagExecutor
+
+        manifest = _make_manifest(
+            tiers=[
+                {"tier": 0, "projects": ["lib", "utils"], "status": "pending"},
+                {"tier": 1, "projects": ["app"], "status": "pending"},
+            ],
+            dependency_graph={"lib": [], "utils": [], "app": ["lib", "utils"]},
+            project_plans={"lib": "/plans/lib.md", "app": "/plans/app.md"},
+        )
+        manifest["plan_mode"] = "master"
+        run_dir = "/tmp/run-dir"
+        executor = DagExecutor(manifest, run_dir)
+
+        with (
+            patch("subprocess.run", return_value=_completed_proc()) as mock_run,
+            patch("worca.scripts.run_workspace.write_workspace_manifest"),
+            patch(
+                "worca.workspace.dag_executor._extract_project_context",
+                return_value="diff stuff",
+            ),
+            patch(
+                "worca.workspace.dag_executor._write_context_file",
+                return_value="/ctx/lib-diff.md",
+            ),
+        ):
+            result = executor.execute()
+
+        assert result["status"] == "completed"
+        # 2 calls: lib (tier 0) + app (tier 1). utils skipped.
+        assert mock_run.call_count == 2
+
+    def test_tier_with_only_skipped_projects_marked_completed(self):
+        """A tier where every project is skipped is `completed`, not `failed`."""
+        from worca.workspace.dag_executor import DagExecutor
+
+        manifest = _make_manifest(
+            tiers=[{"tier": 0, "projects": ["es", "hippo"], "status": "pending"}],
+            dependency_graph={"es": [], "hippo": []},
+            project_plans={},
+        )
+        manifest["plan_mode"] = "master"
+        run_dir = "/tmp/run-dir"
+        executor = DagExecutor(manifest, run_dir)
+
+        with (
+            patch("subprocess.run", return_value=_completed_proc()) as mock_run,
+            patch("worca.scripts.run_workspace.write_workspace_manifest"),
+        ):
+            result = executor.execute()
+
+        assert result["status"] == "completed"
+        assert mock_run.call_count == 0
+        assert manifest["dag"]["tiers"][0]["status"] == "completed"
+        assert manifest["status"] == WorkspaceStatus.COMPLETED
+
+    def test_empty_project_plans_skips_all_in_master_mode(self):
+        """Empty project_plans in master mode means skip everything, not dispatch all."""
+        from worca.workspace.dag_executor import DagExecutor
+
+        manifest = _make_manifest(
+            tiers=[{"tier": 0, "projects": ["es", "hippo"], "status": "pending"}],
+            dependency_graph={"es": [], "hippo": []},
+            project_plans={},
+        )
+        manifest["plan_mode"] = "existing"
+        run_dir = "/tmp/run-dir"
+        executor = DagExecutor(manifest, run_dir)
+
+        with (
+            patch("subprocess.run", return_value=_completed_proc()) as mock_run,
+            patch("worca.scripts.run_workspace.write_workspace_manifest"),
+        ):
+            result = executor.execute()
+
+        assert result["status"] == "completed"
+        assert mock_run.call_count == 0
+
+    def test_skipped_project_recorded_in_manifest_children(self):
+        """Skipped projects get a children entry with status=completed, skipped=True."""
+        from worca.workspace.dag_executor import DagExecutor
+
+        manifest = _make_manifest(
+            tiers=[{"tier": 0, "projects": ["es", "hippo"], "status": "pending"}],
+            dependency_graph={"es": [], "hippo": []},
+            project_plans={"es": "/plans/es.md"},
+        )
+        manifest["plan_mode"] = "master"
+        manifest["projects_by_name"] = {"es": "services/es", "hippo": "services/hippo"}
+        run_dir = "/tmp/run-dir"
+        executor = DagExecutor(manifest, run_dir)
+
+        with (
+            patch("subprocess.run", return_value=_completed_proc()),
+            patch("worca.scripts.run_workspace.write_workspace_manifest"),
+        ):
+            executor.execute()
+
+        skipped_children = [c for c in manifest["children"] if c.get("skipped")]
+        assert len(skipped_children) == 1
+        entry = skipped_children[0]
+        assert entry["project"] == "hippo"
+        assert entry["status"] == "completed"
+        assert entry["skipped"] is True
+        assert entry["tier"] == 0
+        # Recorded path should join workspace_root with the project path
+        assert "hippo" in entry["project_path"]
+
+    def test_skipped_project_emits_workspace_project_skipped_event(self):
+        """Skipping a project emits a workspace.project.skipped event."""
+        from worca.workspace.dag_executor import DagExecutor
+        from worca.events.types import WORKSPACE_PROJECT_SKIPPED
+
+        manifest = _make_manifest(
+            tiers=[{"tier": 0, "projects": ["es", "hippo"], "status": "pending"}],
+            dependency_graph={"es": [], "hippo": []},
+            project_plans={"es": "/plans/es.md"},
+        )
+        manifest["plan_mode"] = "master"
+        run_dir = "/tmp/run-dir"
+        executor = DagExecutor(manifest, run_dir)
+
+        emitted = []
+
+        def capture_emit(event_type, payload, *, workspace_id, settings_path):
+            emitted.append((event_type, payload))
+
+        with (
+            patch("subprocess.run", return_value=_completed_proc()),
+            patch("worca.scripts.run_workspace.write_workspace_manifest"),
+            patch("worca.workspace.dag_executor._emit", side_effect=capture_emit),
+        ):
+            executor.execute()
+
+        skipped_events = [(t, p) for (t, p) in emitted if t == WORKSPACE_PROJECT_SKIPPED]
+        assert len(skipped_events) == 1
+        _, payload = skipped_events[0]
+        assert payload["project"] == "hippo"
+        assert payload["tier"] == 0
+        assert payload["reason"] == "no_plan"
+        assert payload["workspace_name"] == "test-workspace"

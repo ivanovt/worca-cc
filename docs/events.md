@@ -256,6 +256,7 @@ These are inbound to worca (typically posted to the inbox or returned in a contr
 | `workspace.tier.started` | `WORKSPACE_TIER_STARTED` |
 | `workspace.tier.completed` | `WORKSPACE_TIER_COMPLETED` |
 | `workspace.tier.failed` | `WORKSPACE_TIER_FAILED` |
+| `workspace.project.skipped` | `WORKSPACE_PROJECT_SKIPPED` |
 | `workspace.integration_test.started` | `WORKSPACE_INTEGRATION_STARTED` |
 | `workspace.integration_test.passed` | `WORKSPACE_INTEGRATION_PASSED` |
 | `workspace.integration_test.failed` | `WORKSPACE_INTEGRATION_FAILED` |
