@@ -457,3 +457,44 @@ describe('buildFormBuffer / formBufferToConfig — coordinator max_beads', () =>
     expect(out.agents.coordinator).not.toHaveProperty('max_beads');
   });
 });
+
+// --- claude_md_mode: cross-template but template may pin it ---
+
+describe('buildFormBuffer / formBufferToConfig — claude_md_mode', () => {
+  it('seeds form.claude_md_mode from config when template pins it', () => {
+    const config = { claude_md_mode: 'project' };
+    const form = buildFormBuffer(config, { worca: {} });
+    expect(form.claude_md_mode).toBe('project');
+  });
+
+  it('seeds empty string when config does not set claude_md_mode', () => {
+    const form = buildFormBuffer({}, { worca: {} });
+    expect(form.claude_md_mode).toBe('');
+  });
+
+  it('round-trips an explicit mode without loss', () => {
+    for (const mode of ['all', 'project', 'project+local', 'none']) {
+      const form = buildFormBuffer({ claude_md_mode: mode }, { worca: {} });
+      const out = formBufferToConfig(form);
+      expect(out.claude_md_mode).toBe(mode);
+    }
+  });
+
+  it('omits claude_md_mode from output when form buffer is empty string', () => {
+    const form = buildFormBuffer({}, { worca: {} });
+    const out = formBufferToConfig(form);
+    expect(out).not.toHaveProperty('claude_md_mode');
+  });
+
+  it('clearing a previously-set mode (form="") removes the key on save', () => {
+    const form = buildFormBuffer({ claude_md_mode: 'none' }, { worca: {} });
+    form.claude_md_mode = ''; // user picked "Not set"
+    const out = formBufferToConfig(form);
+    expect(out).not.toHaveProperty('claude_md_mode');
+  });
+
+  it('ignores non-string config.claude_md_mode (defensive)', () => {
+    const form = buildFormBuffer({ claude_md_mode: 42 }, { worca: {} });
+    expect(form.claude_md_mode).toBe('');
+  });
+});
