@@ -454,9 +454,9 @@ def process_stream(
                     ctx_win = first.get("contextWindow")
             if ctx_win:
                 _final_used = (
-                    _last_assistant_usage.get("input_tokens", 0)
-                    + _last_assistant_usage.get("cache_read_input_tokens", 0)
-                    + _last_assistant_usage.get("cache_creation_input_tokens", 0)
+                    (_last_assistant_usage.get("input_tokens") or 0)
+                    + (_last_assistant_usage.get("cache_read_input_tokens") or 0)
+                    + (_last_assistant_usage.get("cache_creation_input_tokens") or 0)
                 )
                 event["_final_context_pct"] = round(_final_used / ctx_win * 100, 1)
 
@@ -476,9 +476,9 @@ def process_stream(
             if so:
                 sticky_structured_output = so
             _result_count += 1
-            _accum_duration_ms += event.get("duration_ms", 0)
-            _accum_duration_api_ms += event.get("duration_api_ms", 0)
-            _accum_num_turns += event.get("num_turns", 0)
+            _accum_duration_ms += event.get("duration_ms") or 0
+            _accum_duration_api_ms += event.get("duration_api_ms") or 0
+            _accum_num_turns += event.get("num_turns") or 0
             usage = event.get("usage")
             if isinstance(usage, dict):
                 _accumulate_usage(_accum_usage, usage)

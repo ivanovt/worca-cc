@@ -1250,6 +1250,64 @@ def test_process_stream_preserves_non_numeric_usage_keys_across_resumes():
     assert u["service_tier"] == "priority"
 
 
+def test_process_stream_null_duration_fields_do_not_crash():
+    """Regression: alt-model (e.g. Gemini via OpenRouter) may emit null for
+    duration_ms / duration_api_ms / num_turns.  dict.get(key, 0) returns None
+    when the key is present with value null, causing TypeError on +=. The fix
+    uses ``or 0`` so null is treated as 0."""
+    r1 = {"type": "result", "duration_ms": None, "duration_api_ms": None,
+          "num_turns": None, "total_cost_usd": 0.01,
+          "usage": {"input_tokens": 10, "output_tokens": 5}}
+    result = process_stream(_stream(r1))
+    # Null fields must not propagate (single-result path skips accumulation)
+    assert result["total_cost_usd"] == 0.01
+    assert result["usage"]["input_tokens"] == 10
+
+
+def test_process_stream_null_duration_fields_accumulate_as_zero():
+    """Null numeric fields in multi-result streams must be treated as 0."""
+    r1 = {"type": "result", "duration_ms": 1000, "num_turns": 5,
+          "total_cost_usd": 0.10,
+          "usage": {"input_tokens": 50, "output_tokens": 20}}
+    r2 = {"type": "result", "duration_ms": None, "duration_api_ms": None,
+          "num_turns": None, "total_cost_usd": 0.20,
+          "usage": {"input_tokens": 30, "output_tokens": 10}}
+    result = process_stream(_stream(r1, r2))
+    assert result["duration_ms"] == 1000
+    assert result["num_turns"] == 5
+    assert result["usage"]["input_tokens"] == 80
+
+
+def test_process_stream_null_assistant_usage_tokens_no_crash():
+    """Gemini via OpenRouter may set assistant usage token fields to null.
+    The context-window percentage calculation must not crash when these are
+    present-but-null (dict.get default is only used for absent keys)."""
+    init = {"type": "system", "subtype": "init", "model": "google/gemini-3.5-flash"}
+    assistant = {
+        "type": "assistant",
+        "message": {
+            "usage": {
+                "input_tokens": None,
+                "cache_read_input_tokens": None,
+                "cache_creation_input_tokens": None,
+            }
+        },
+    }
+    result_evt = {
+        "type": "result",
+        "duration_ms": 1000,
+        "num_turns": 1,
+        "total_cost_usd": 0.01,
+        "usage": {"input_tokens": 10, "output_tokens": 5},
+        "modelUsage": {
+            "google/gemini-3.5-flash": {"contextWindow": 1000000}
+        },
+    }
+    result = process_stream(_stream(init, assistant, result_evt))
+    # Should not raise; context pct should be 0.0 (null tokens → 0)
+    assert result.get("_final_context_pct") == 0.0
+
+
 # ---------------------------------------------------------------------------
 # build_command: unique cases migrated from src/worca/utils/test_claude_cli.py
 # ---------------------------------------------------------------------------
