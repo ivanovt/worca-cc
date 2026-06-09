@@ -310,9 +310,9 @@ test('switching default template from one to another updates badges correctly', 
   }
 });
 
-// ─── Test 4: Built-in templates cannot be set as default ────────────────────────
+// ─── Test 4: Built-in templates can be set as default ───────────────────────────
 
-test('built-in templates do not show Set Default button', async ({ page }) => {
+test('built-in templates show Set Default button and can be pinned as default', async ({ page }) => {
   const ctx = await startServer();
   try {
     // Create a built-in template (in worca directory)
@@ -332,53 +332,64 @@ test('built-in templates do not show Set Default button', async ({ page }) => {
       }),
     );
 
-    // Create a project-scope template (project templates are editable and can
-    // be set as default, unlike built-in)
-    createTestTemplate(ctx.dir, 'project-editable', 'Project Editable Template');
-
     await page.goto(`${ctx.url}/#/templates`, GOTO_OPTS);
     await expandAllTierSections(page);
     await expect(page.locator('.template-card').first()).toBeAttached({ timeout: 15000 });
-    await expect(page.locator('.template-card')).toHaveCount(2, { timeout: 5000 });
+    await expect(page.locator('.template-card')).toHaveCount(1, { timeout: 5000 });
 
-    // Find the built-in template card
     const builtinCard = page.locator(
       `.template-card:has(.run-card-title:has-text("Built-in Test Template"))`,
     );
     await expect(builtinCard).toBeAttached();
 
-    // Built-in cards show Duplicate. Since Set Default moved to the
-    // editor header, no card carries it anymore — but built-ins
-    // specifically must never expose the action (default_template is
-    // project-scope; pointing at a built-in is meaningless because
-    // built-ins are the implicit fallback). Open the editor and
-    // confirm the header has NO Set Default toggle for the built-in.
+    // Builtin cards still have no per-card Set Default button (it
+    // lives in the editor header now, for all tiers).
     await expect(builtinCard.locator('button:has-text("Set Default")')).not.toBeAttached();
     await expect(builtinCard.locator('button:has-text("Duplicate")')).toBeVisible();
 
-    // Tier identity moved from a per-card badge to the section header.
-    // Check the wrapping sl-details now (while we're still on the
-    // list page — the next step navigates to the editor).
-    await expect(
-      builtinCard.locator(
-        'xpath=ancestor::sl-details[contains(@class, "pipelines-tier-section--builtin")]',
-      ),
-    ).toBeAttached();
+    // Open the editor via card click and verify the Set Default
+    // toggle IS present for built-ins (builtin templates are portable
+    // — they ship with the package — so pinning one as project
+    // default is meaningful).
+    const apiResponse = page.waitForResponse(
+      (res) =>
+        res.url().includes('/default-template') &&
+        res.request().method() === 'PUT',
+      { timeout: 10000 },
+    );
 
-    // Click the card title area (not a button) so we hit the card
-    // click handler rather than an embedded action button.
     await builtinCard.locator('.run-card-title').click();
-    await expect(page.locator('.pipelines-editor')).toBeAttached({
-      timeout: 10000,
+    await expect(page.locator('.pipelines-editor')).toBeAttached({ timeout: 10000 });
+
+    const toggle = page.locator(
+      '.content-header button:has-text("Set Default"), .content-header button:has-text("Unset Default")',
+    );
+    await expect(toggle).toBeVisible({ timeout: 5000 });
+
+    await toggle.click();
+    const toastText = await getToastText(page);
+    expect(toastText).toMatch(/default.*template/i);
+
+    const response = await apiResponse;
+    expect(response.ok()).toBe(true);
+
+    // Verify settings.json was written with tier: 'builtin'
+    const settingsPath = join(ctx.dir, 'settings.json');
+    expect(existsSync(settingsPath)).toBe(true);
+    const settings = JSON.parse(readFileSync(settingsPath, 'utf8'));
+    expect(settings.worca.default_template).toEqual({
+      tier: 'builtin',
+      id: 'builtin-test',
     });
-    // No Set Default toggle in the editor header for built-ins —
-    // default_template can only point at project-scope templates.
-    await expect(
-      page.locator('.content-header button:has-text("Set Default")'),
-    ).toHaveCount(0);
-    await expect(
-      page.locator('.content-header button:has-text("Unset Default")'),
-    ).toHaveCount(0);
+
+    // Navigate back to the list and verify the ★ Default badge appears
+    await page.goto(`${ctx.url}/#/templates`, GOTO_OPTS);
+    await expandAllTierSections(page);
+    const badge = page.locator(
+      `.template-card:has(.run-card-title:has-text("Built-in Test Template")) .template-default-badge`,
+    );
+    await expect(badge).toBeVisible();
+    await expect(badge).toHaveText(/★ Default/i);
   } finally {
     await ctx.close();
   }

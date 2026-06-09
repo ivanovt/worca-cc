@@ -17,6 +17,10 @@ import { html, nothing } from 'lit-html';
 import { ifDefined } from 'lit-html/directives/if-defined.js';
 import { unsafeHTML } from 'lit-html/directives/unsafe-html.js';
 import { DISPATCH_DEFAULTS } from '../../server/dispatch-defaults.js';
+import {
+  effortBelowFloor,
+  RECOMMENDED_MIN_EFFORT,
+} from '../utils/effort-recommendations.js';
 import { helpFor } from '../utils/help-links.js';
 import {
   CircleCheck,
@@ -309,6 +313,13 @@ export function buildFormBuffer(templateConfig, settings) {
     ...(config.milestones || {}),
   };
 
+  // CLAUDE.md load mode — cross-template (NOT in TEMPLATE_OWNED_KEYS)
+  // but templates may still override it via deep-merge. Empty string
+  // = "not set" sentinel; the editor will omit the key on save so
+  // the project-level setting (or runtime default) applies.
+  form.claude_md_mode =
+    typeof config.claude_md_mode === 'string' ? config.claude_md_mode : '';
+
   return form;
 }
 
@@ -526,6 +537,16 @@ export function formBufferToConfig(formBuffer) {
   // legacy project-Settings value that might still be on disk.
   if (formBuffer.milestones) {
     config.milestones = { ...formBuffer.milestones };
+  }
+
+  // CLAUDE.md load mode — omit when "not set" so the project-level
+  // worca.claude_md_mode (or runtime default 'all') applies. Only
+  // persist when the user explicitly chose a mode.
+  if (
+    typeof formBuffer.claude_md_mode === 'string' &&
+    formBuffer.claude_md_mode !== ''
+  ) {
+    config.claude_md_mode = formBuffer.claude_md_mode;
   }
 
   return config;
@@ -1494,6 +1515,7 @@ export function pipelinesEditorView(state, options) {
             <div class="editor-pipeline-tab">
               ${_stagesSection(formBuffer, projectId, rerender)}
               ${_milestonesSection(formBuffer, projectId, rerender)}
+              ${_claudeMdModeSection(formBuffer, projectId, rerender)}
               ${_loopsSection(formBuffer, projectId, rerender)}
               ${_circuitBreakerSection(formBuffer, projectId, rerender)}
             </div>
@@ -1617,6 +1639,33 @@ function _stagesSection(formBuffer, projectId, rerender) {
                     ${AGENT_NAMES.map((agent) => html`<sl-option value="${agent}">${agent}</sl-option>`)}
                     <sl-option value="none">None</sl-option>
                   </sl-select>
+                  ${(() => {
+                    // Read-only effort summary chip — surfaces the agent's
+                    // configured effort + advisory floor without leaving the
+                    // Stages tab. Read from the Agents form buffer (NOT from
+                    // stageConfig — effort lives per-agent).
+                    if (!isEnabled) return nothing;
+                    const agentName =
+                      stageConfig.agent || STAGE_AGENT_MAP[stageKey];
+                    if (!agentName || agentName === 'none') return nothing;
+                    const agentEntry = formBuffer?.agents?.[agentName] || {};
+                    const effort = agentEntry.effort;
+                    const floor = RECOMMENDED_MIN_EFFORT[agentName];
+                    const below =
+                      effort && floor && effortBelowFloor(effort, floor);
+                    if (!effort && !floor) return nothing;
+                    return html`<span
+                      class="settings-field-hint stage-effort-chip ${below ? 'settings-field-hint--warn' : ''}"
+                      data-stage="${stageKey}"
+                    >
+                      ${below ? '⚠ ' : ''}Effort
+                      ${effort ? html`<code>${effort}</code>` : 'unset'}${
+                        floor
+                          ? html` · recommended floor <code>${floor}</code>`
+                          : ''
+                      }
+                    </span>`;
+                  })()}
                 </div>
                 ${
                   stageKey === 'pr'
@@ -1684,14 +1733,25 @@ function _agentsTab(formBuffer, settings, projectId, rerender) {
   const referencedModels = Object.values(agents)
     .map((a) => a?.model)
     .filter((m) => typeof m === 'string' && m.length > 0);
+  const tierMap = editorState.modelTierMap || {};
+  // `getModelOptions(settings?.worca)` reads only the project's
+  // `worca.models` (so for a project that defined just `glm-ds`, that's
+  // the lone PROJECT option). The full per-tier inventory was already
+  // fetched into `modelTierMap` from /api/projects/:id/models — union
+  // its keys too so built-in and user-tier aliases populate the dropdown
+  // (PROJECT shadowing semantics still hold via `groupModelOptionsByTier`
+  // since `tierMap` records the highest-priority tier per alias).
   const modelOptions = Array.from(
-    new Set([...getModelOptions(settings?.worca), ...referencedModels]),
+    new Set([
+      ...getModelOptions(settings?.worca),
+      ...Object.keys(tierMap),
+      ...referencedModels,
+    ]),
   );
   const effort = formBuffer?.effort || {};
   const autoMode = effort.auto_mode || 'adaptive';
   const autoCap = effort.auto_cap || 'xhigh';
   const state = editorState;
-  const tierMap = editorState.modelTierMap || {};
   // Group the per-agent Model dropdown options by tier, mirroring the
   // "Base template" picker on the New Pipeline / template-create dialog
   // (small group label + sl-divider + indented options). Keeps the
@@ -1934,6 +1994,22 @@ function _agentsTab(formBuffer, settings, projectId, rerender) {
                         html`<sl-option value="${level}">${level}</sl-option>`,
                     )}
                   </sl-select>
+                  ${(() => {
+                    const floor = RECOMMENDED_MIN_EFFORT[name];
+                    if (
+                      agent.effort &&
+                      floor &&
+                      effortBelowFloor(agent.effort, floor)
+                    ) {
+                      return html`<span
+                        class="settings-field-hint settings-field-hint--warn agent-effort-warn"
+                        data-agent="${name}"
+                      >
+                        ⚠ Below recommended floor <code>${floor}</code>.
+                      </span>`;
+                    }
+                    return nothing;
+                  })()}
                 </div>
                 ${
                   name === 'coordinator'
@@ -2074,6 +2150,73 @@ function _milestonesSection(formBuffer, projectId, rerender) {
             default to avoid hanging unattended runs.</span
           >
         </div>
+      </div>
+    </div>
+  `;
+}
+
+/**
+ * CLAUDE.md load mode — top-level cross-template setting. Templates
+ * may still pin a mode via deep-merge override; "not set" means the
+ * project-level worca.claude_md_mode (or runtime default 'all') wins.
+ */
+function _claudeMdModeSection(formBuffer, projectId, rerender) {
+  const state = editorState;
+  const mode = formBuffer?.claude_md_mode ?? '';
+  const isProjectScoped = mode === 'project' || mode === 'project+local';
+  return html`
+    <div class="settings-tab-content help-host">
+      ${helpFor('claude-md-mode')}
+      <h3 class="settings-section-title">CLAUDE.md load mode</h3>
+      <p class="settings-section-desc">
+        Pins which CLAUDE.md files Claude Code loads for every agent
+        in this template. Leave unset to inherit the project-level
+        setting (or the runtime default <code>all</code>). Templates
+        explicitly set this when they need a hermetic run (e.g. CI)
+        or to disable auto-memory writes.
+      </p>
+      <div class="settings-field">
+        <label class="settings-label" for="claude-md-mode-select"
+          >Mode</label
+        >
+        <sl-select
+          id="claude-md-mode-select"
+          .value=${mode}
+          size="small"
+          hoist
+          @sl-change=${(e) => {
+            editorState.formBuffer.claude_md_mode = e.target.value || '';
+            rerender();
+          }}
+          @sl-blur=${() => {
+            validateConfigDebounced(
+              projectId,
+              editorState.formBuffer,
+              state.viewMode,
+              rerender,
+            );
+          }}
+        >
+          <sl-option value="">Not set (inherit project)</sl-option>
+          <sl-option value="all">all — default Claude Code behavior</sl-option>
+          <sl-option value="project">project — project root only</sl-option>
+          <sl-option value="project+local"
+            >project+local — project + CLAUDE.local.md</sl-option
+          >
+          <sl-option value="none">none — disable CLAUDE.md loading</sl-option>
+        </sl-select>
+        <span class="settings-field-hint">
+          ${
+            isProjectScoped
+              ? html`Project-scoped modes are
+                  <sl-tag size="small" variant="neutral">best-effort</sl-tag>
+                  — discovery may not exclude every ancestor CLAUDE.md in
+                  complex repo layouts.`
+              : mode === 'none'
+                ? html`Also disables Claude Code auto-memory writes.`
+                : 'Empty = use project setting; explicit = template overrides project.'
+          }
+        </span>
       </div>
     </div>
   `;

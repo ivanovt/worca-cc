@@ -23,6 +23,9 @@ python .claude/scripts/run_pipeline.py --prompt "Add user auth"
 python .claude/scripts/run_worktree.py --prompt "Add user auth" [--branch main] [--guide spec.md]
 # --branch: base branch for the new worktree (default: current HEAD)
 # --guide: path to a reference guide injected into the plan prompt (repeatable, requires W-040)
+# All four entry scripts (run_pipeline.py, run_worktree.py, run_fleet.py, run_workspace.py) accept
+# --claude-md-mode <none|project|project+local|all> to restrict which CLAUDE.md files are loaded.
+# Default is 'all' (standard behaviour). Use 'project' for hermetic/CI runs. See docs/claude-md-mode.md.
 ```
 
 ## Architecture

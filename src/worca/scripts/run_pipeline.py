@@ -64,6 +64,11 @@ def create_parser():
                         help="Cap on the number of beads the coordinator may create "
                              "(0 = auto, None = use config). Allowed on --resume without "
                              "--force-template-change.")
+    parser.add_argument("--claude-md-mode",
+                        choices=["none", "project", "project+local", "all"],
+                        default=None,
+                        help="CLAUDE.md load mode: none, project, project+local, or all (default). "
+                             "Allowed on --resume; CLI value wins over persisted value.")
     return parser
 
 
@@ -240,6 +245,11 @@ def main():
             _persisted_max_beads = existing.get("max_beads_override")
             if isinstance(_persisted_max_beads, int):
                 args.max_beads = _persisted_max_beads
+        # Restore claude_md_mode from status.json; CLI value wins if provided.
+        if args.claude_md_mode is None:
+            _persisted_claude_md_mode = existing.get("claude_md_mode")
+            if isinstance(_persisted_claude_md_mode, str):
+                args.claude_md_mode = _persisted_claude_md_mode
         plan_file = args.plan
         print(f"Resuming pipeline: {work_request.title}")
     else:
@@ -383,6 +393,7 @@ def main():
             registry_base=args.registry_base,
             run_id=args.run_id,
             max_beads_override=args.max_beads,
+            claude_md_mode_override=args.claude_md_mode,
         )
 
         # Snapshot template to run dir and write merged settings for traceability.

@@ -927,3 +927,35 @@ class TestMaxBeadsPassthrough:
         cmd = _build_pipeline_cmd(self._parse(["--prompt", "x", "--max-beads", "0"]))
         idx = cmd.index("--max-beads")
         assert cmd[idx + 1] == "0"
+
+
+# ---------------------------------------------------------------------------
+# Phase 5: --claude-md-mode passthrough
+# ---------------------------------------------------------------------------
+
+
+class TestClaudeMdModeWorktree:
+    """--claude-md-mode is accepted by create_parser and forwarded by _build_pipeline_cmd."""
+
+    def _parse(self, argv):
+        from worca.scripts.run_worktree import create_parser
+        return create_parser().parse_args(argv)
+
+    def test_claude_md_mode_default_none(self):
+        args = self._parse(["--prompt", "x"])
+        assert args.claude_md_mode is None
+
+    def test_claude_md_mode_parsed(self):
+        args = self._parse(["--prompt", "x", "--claude-md-mode", "project"])
+        assert args.claude_md_mode == "project"
+
+    def test_build_pipeline_cmd_includes_claude_md_mode_when_set(self):
+        from worca.scripts.run_worktree import _build_pipeline_cmd
+        cmd = _build_pipeline_cmd(self._parse(["--prompt", "x", "--claude-md-mode", "project+local"]))
+        idx = cmd.index("--claude-md-mode")
+        assert cmd[idx + 1] == "project+local"
+
+    def test_build_pipeline_cmd_omits_claude_md_mode_when_none(self):
+        from worca.scripts.run_worktree import _build_pipeline_cmd
+        cmd = _build_pipeline_cmd(self._parse(["--prompt", "x"]))
+        assert "--claude-md-mode" not in cmd

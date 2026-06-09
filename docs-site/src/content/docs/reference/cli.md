@@ -38,6 +38,8 @@ Run the pipeline. See [Running from the CLI](/advanced/running-from-the-cli/).
 | `--template ID` | Apply a template before running. |
 | `--param KEY=VALUE` | Override a template parameter (repeatable). |
 | `--msize N` / `--mloops N` | Turn / loop multipliers (1–10). |
+| `--max-beads N` | Cap Coordinator bead decomposition for this run. `0` = auto. |
+| `--claude-md-mode MODE` | Pin which `CLAUDE.md` files load (`all` / `project` / `project+local` / `none`). See [CLAUDE.md load mode](/configuration/claude-md-mode/). |
 | `--worktree` | Run in an isolated git worktree. |
 | `--branch BRANCH` | Worktree base branch (`--worktree` only). |
 | `--guide PATH` | Reference guide for planning (`--worktree` only, repeatable). |
@@ -69,6 +71,7 @@ Manage pipeline templates. See [Authoring templates](/advanced/authoring-templat
 | `delete <id> [--global]` | Delete a project or user template. |
 | `export --to <dest> [--templates <ids>] [--include-models] [--include-pricing]` | Export templates as a portable bundle. `<dest>` is a file path, `gist` (secret), or `gist:public`. Secrets are redacted before write. See [Share via export/import bundles](/advanced/authoring-templates/#share-via-exportimport-bundles). |
 | `import --from <src> [--scope project\|user] [--non-interactive]` | Import templates from a bundle. `<src>` is a file path, HTTPS URL, or gist URL/ID. Collisions prompt interactively; import is atomic with rollback. |
+| `advise [--prompt TEXT] [--spec PATH] [--source REF] [--json]` | LLM-backed recommendation for which template best matches a work source. Powers the launcher's **Suggest** button. See [Launching a run](/running-pipelines/launching-a-run/#let-worca-pick-for-you--the-suggest-button). |
 
 ## cleanup
 

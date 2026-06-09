@@ -191,6 +191,23 @@ Emitted when the plan reviewer edits the plan in `review_and_edit` mode (W-059).
 | `issue_counts` | object | Issue counts by severity: `{ "critical": N, "major": N, "minor": N, "suggestion": N }` |
 | `original_plan_path` | string? | Path to the preserved original plan file (for future diff UI) |
 
+### `pipeline.claude_md.*` — CLAUDE.md load mode
+
+| Type | Constant | Payload builder |
+|---|---|---|
+| `pipeline.claude_md.mode_resolved` | `CLAUDE_MD_MODE_RESOLVED` | `claude_md_mode_resolved_payload(mode, source, overlay_path, exclude_count)` |
+
+Emitted once per run right after the CLAUDE.md overlay is materialized (Phase 2 of run startup). **Tier 2** — pipeline-internal mechanics; not chat-rendered. Useful for webhook subscribers auditing hermetic-run behaviour.
+
+**Payload fields:**
+
+| Field | Type | Description |
+|---|---|---|
+| `mode` | string | Resolved mode: `"none"` \| `"project"` \| `"project+local"` \| `"all"` |
+| `source` | string | Where the mode came from: `"cli"` \| `"template"` \| `"project_settings"` \| `"default"` |
+| `overlay_path` | string \| null | Absolute path to the written overlay JSON, or `null` when mode is `"all"` or `"none"` (no `claudeMdExcludes` needed) |
+| `exclude_count` | integer | Number of `claudeMdExcludes` entries written (0 for `"all"` and `"none"`) |
+
 ### `pipeline.preflight.*`, `pipeline.learn.*`
 
 | Type | Constant |

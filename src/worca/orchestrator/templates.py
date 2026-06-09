@@ -47,6 +47,15 @@ TEMPLATE_OWNED_KEYS: list[tuple[str, ...]] = [
     # the same cleanup.
     ("governance", "plan_review_enforce"),
 ]
+# NOTE: claude_md_mode is intentionally NOT in TEMPLATE_OWNED_KEYS.
+# It is a cross-template project setting that flows through like worca.models.
+# When a template explicitly sets config.claude_md_mode the deep-merge still
+# lets the template override the project value — but when the template is
+# silent the project's worca.claude_md_mode applies. This means
+# `worca.claude_md_mode: "project"` in settings.json works correctly even on
+# templated runs, which is the canonical CI/hermetic configuration pattern.
+# Custom templates that need to pin a specific mode can still do so via their
+# config block.
 
 # Nested paths that sit under a template-owned block but are themselves
 # cross-template: stripped along with the parent, then restored from the

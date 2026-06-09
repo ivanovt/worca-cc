@@ -205,6 +205,7 @@ def build_command(
     model: Optional[str] = None,
     settings: Optional[dict] = None,
     mcp_config: Optional[str] = None,
+    claude_md_overlay_path: Optional[str] = None,
     **kwargs,
 ) -> tuple[list[str], Optional[str]]:
     """Build the claude CLI command list without executing.
@@ -275,6 +276,8 @@ def build_command(
         cmd.extend(["--json-schema", schema_str])
     if mcp_config:
         cmd.extend(["--mcp-config", mcp_config, "--strict-mcp-config"])
+    if claude_md_overlay_path:
+        cmd.extend(["--settings", claude_md_overlay_path])
     return cmd, prompt_file
 
 
@@ -451,9 +454,9 @@ def process_stream(
                     ctx_win = first.get("contextWindow")
             if ctx_win:
                 _final_used = (
-                    _last_assistant_usage.get("input_tokens", 0)
-                    + _last_assistant_usage.get("cache_read_input_tokens", 0)
-                    + _last_assistant_usage.get("cache_creation_input_tokens", 0)
+                    (_last_assistant_usage.get("input_tokens") or 0)
+                    + (_last_assistant_usage.get("cache_read_input_tokens") or 0)
+                    + (_last_assistant_usage.get("cache_creation_input_tokens") or 0)
                 )
                 event["_final_context_pct"] = round(_final_used / ctx_win * 100, 1)
 
@@ -473,9 +476,9 @@ def process_stream(
             if so:
                 sticky_structured_output = so
             _result_count += 1
-            _accum_duration_ms += event.get("duration_ms", 0)
-            _accum_duration_api_ms += event.get("duration_api_ms", 0)
-            _accum_num_turns += event.get("num_turns", 0)
+            _accum_duration_ms += event.get("duration_ms") or 0
+            _accum_duration_api_ms += event.get("duration_api_ms") or 0
+            _accum_num_turns += event.get("num_turns") or 0
             usage = event.get("usage")
             if isinstance(usage, dict):
                 _accumulate_usage(_accum_usage, usage)
@@ -527,6 +530,7 @@ def run_agent(
     graphify_out: Optional[str] = None,
     model_alias: Optional[str] = None,
     mcp_config: Optional[str] = None,
+    claude_md_overlay_path: Optional[str] = None,
     run_dir: Optional[str] = None,
     stage: Optional[str] = None,
     iteration: Optional[int] = None,
@@ -563,6 +567,7 @@ def run_agent(
         model=model,
         settings=settings,
         mcp_config=mcp_config,
+        claude_md_overlay_path=claude_md_overlay_path,
     )
 
     global _current_proc

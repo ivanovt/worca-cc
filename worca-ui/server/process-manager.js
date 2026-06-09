@@ -544,6 +544,9 @@ export class ProcessManager {
     if (opts.maxBeads != null) {
       args.push('--max-beads', String(opts.maxBeads));
     }
+    if (opts.claudeMdMode != null) {
+      args.push('--claude-md-mode', String(opts.claudeMdMode));
+    }
     if (opts.planFile) {
       args.push('--plan', opts.planFile);
     }

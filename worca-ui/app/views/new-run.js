@@ -2,7 +2,7 @@ import { html, nothing } from 'lit-html';
 import { ref } from 'lit-html/directives/ref.js';
 import { unsafeHTML } from 'lit-html/directives/unsafe-html.js';
 import { helpFor } from '../utils/help-links.js';
-import { FileText, iconSvg } from '../utils/icons.js';
+import { FileText, iconSvg, Sparkles } from '../utils/icons.js';
 import { statusDotClass } from '../utils/status-badge.js';
 import { getDefaults } from './settings.js';
 import { projectStatus } from './sidebar.js';
@@ -26,6 +26,14 @@ export let selectedProject = null; // project picked in All Projects mode
 export let projectEditable = false; // Change link toggles read-only → editable
 export let maxBeads = null; // null = passthrough (use template/project default), 0 = Auto, N = explicit cap
 export let projectLevelMaxBeads = null; // cached from /settings endpoint
+export let claudeMdMode = null; // null = passthrough, string = explicit mode
+export let projectLevelClaudeMdMode = null; // cached from /settings endpoint
+
+// Template advisor — "Suggest" button state
+export let advisorStatus = 'idle'; // 'idle' | 'loading' | 'ready' | 'error'
+export let advisorAdvice = null; // { template_id, rationale, confidence, alternatives }
+export let advisorError = '';
+export let advisorDialogOpen = false;
 
 // Dismissable worktree info banner — persisted via localStorage
 export let bannerDismissed = (() => {
@@ -44,6 +52,8 @@ export function invalidateTemplateCache() {
   defaultTemplateId = '';
   projectLevelMaxBeads = null;
   maxBeads = null;
+  projectLevelClaudeMdMode = null;
+  claudeMdMode = null;
 }
 
 /**
@@ -69,6 +79,9 @@ export function fetchDefaultTemplate(projectId) {
       // Cache project-level max_beads for the default option label
       projectLevelMaxBeads =
         data?.worca?.agents?.coordinator?.max_beads ?? null;
+
+      // Cache project-level claude_md_mode
+      projectLevelClaudeMdMode = data?.worca?.claude_md_mode ?? null;
 
       // Auto-select the default template if it's present in the templates list
       if (defaultTemplateId && templates) {
@@ -108,6 +121,162 @@ export function resetNewRunState(overrides = {}) {
   maxBeads = 'maxBeads' in overrides ? overrides.maxBeads : null;
   projectLevelMaxBeads =
     'projectLevelMaxBeads' in overrides ? overrides.projectLevelMaxBeads : null;
+  claudeMdMode = 'claudeMdMode' in overrides ? overrides.claudeMdMode : null;
+  projectLevelClaudeMdMode =
+    'projectLevelClaudeMdMode' in overrides
+      ? overrides.projectLevelClaudeMdMode
+      : null;
+  advisorStatus = overrides.advisorStatus ?? 'idle';
+  advisorAdvice = overrides.advisorAdvice ?? null;
+  advisorError = overrides.advisorError ?? '';
+  advisorDialogOpen = overrides.advisorDialogOpen ?? false;
+}
+
+/**
+ * Read the current launcher source value from the form inputs.
+ * Returns { sourceType, sourceValue } trimmed. For sourceType === 'none',
+ * sourceValue is the prompt textarea content.
+ */
+export function readAdvisorInputs() {
+  const promptEl = document.getElementById('new-run-prompt');
+  const sourceValueEl = document.getElementById('new-run-source-value');
+  if (sourceType === 'none') {
+    return {
+      sourceType: 'none',
+      sourceValue: (promptEl?.value || '').trim(),
+    };
+  }
+  return {
+    sourceType,
+    sourceValue: (sourceValueEl?.value || '').trim(),
+  };
+}
+
+// AbortController for the in-flight advisor request, plus a token so a
+// late-arriving response from a cancelled run can't clobber fresh state.
+let _advisorAbort = null;
+let _advisorRequestToken = 0;
+
+/**
+ * Request a template suggestion from the server. Opens the dialog
+ * immediately in 'loading' state (so the spinner appears synchronously),
+ * then resolves once the result has been stored. Pass `rerender` so the
+ * loading frame paints before the await — otherwise the dialog stays
+ * invisible until the network call returns.
+ */
+export async function requestTemplateAdvice({ projectId, rerender } = {}) {
+  const { sourceType: st, sourceValue } = readAdvisorInputs();
+  if (!sourceValue) {
+    advisorStatus = 'error';
+    advisorError =
+      st === 'none'
+        ? 'Type a prompt first.'
+        : `Enter a ${sourceLabel(st).toLowerCase()} first.`;
+    advisorDialogOpen = true;
+    advisorAdvice = null;
+    if (rerender) rerender();
+    return;
+  }
+
+  // Cancel any prior in-flight call so its late response doesn't overwrite
+  // this run's state. The new token is the source of truth — only stamp
+  // results that carry the active token.
+  if (_advisorAbort) {
+    try {
+      _advisorAbort.abort();
+    } catch {
+      /* ignore */
+    }
+  }
+  const controller =
+    typeof AbortController === 'function' ? new AbortController() : null;
+  _advisorAbort = controller;
+  _advisorRequestToken += 1;
+  const myToken = _advisorRequestToken;
+
+  advisorStatus = 'loading';
+  advisorError = '';
+  advisorAdvice = null;
+  advisorDialogOpen = true;
+  // Paint the loading frame BEFORE awaiting the network call so the user
+  // immediately sees the dialog + spinner + Analyzing… copy.
+  if (rerender) rerender();
+
+  const url = projectId
+    ? `/api/projects/${projectId}/templates/advise`
+    : '/api/templates/advise';
+  try {
+    const res = await fetch(url, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ sourceType: st, sourceValue }),
+      signal: controller?.signal,
+    });
+    const data = await res.json().catch(() => ({}));
+    if (myToken !== _advisorRequestToken) return; // superseded — drop the result
+    if (!res.ok || !data?.ok || !data?.advice) {
+      throw new Error(data?.error || `Advisor failed (HTTP ${res.status}).`);
+    }
+    advisorStatus = 'ready';
+    advisorAdvice = data.advice;
+  } catch (err) {
+    if (myToken !== _advisorRequestToken) return; // user moved on; ignore
+    if (err?.name === 'AbortError') {
+      // Cancelled by the user via Cancel / re-trigger — leave dialog state
+      // to whatever dismissAdvisor() or the next call set.
+      return;
+    }
+    advisorStatus = 'error';
+    advisorError = err?.message || 'Advisor failed.';
+  } finally {
+    if (_advisorAbort === controller) _advisorAbort = null;
+    if (rerender && myToken === _advisorRequestToken) rerender();
+  }
+}
+
+/**
+ * Apply the advisor's recommendation by selecting it in the template
+ * dropdown. Closes the dialog. Returns true when applied, false when the
+ * advised template id is no longer in the catalog (resetting state).
+ */
+export function applyAdvisorRecommendation(templateId) {
+  if (!templateId) return false;
+  const known = (templates || []).some((t) => t.id === templateId);
+  if (!known) return false;
+  selectedTemplate = templateId;
+  advisorDialogOpen = false;
+  return true;
+}
+
+export function dismissAdvisor() {
+  // If a request is in flight, abort it so its late response doesn't
+  // re-populate the dialog after the user already closed it. The Python
+  // subprocess may keep running on the server (no way to interrupt the
+  // claude CLI mid-call) — only the UI flow is cancelled.
+  if (_advisorAbort) {
+    try {
+      _advisorAbort.abort();
+    } catch {
+      /* ignore */
+    }
+    _advisorAbort = null;
+  }
+  // Bump the request token so any in-flight handler whose AbortError
+  // failed to surface (mocked fetch in tests, race against fetch internals)
+  // sees its token go stale and discards its result.
+  _advisorRequestToken += 1;
+  if (advisorStatus === 'loading') {
+    advisorStatus = 'idle';
+    advisorError = '';
+    advisorAdvice = null;
+  } else if (advisorStatus === 'error') {
+    // Clear transient errors so re-opening doesn't show the stale message.
+    advisorStatus = 'idle';
+    advisorError = '';
+  }
+  // Otherwise keep advisorAdvice/advisorStatus around so a re-open shows
+  // the last completed result.
+  advisorDialogOpen = false;
 }
 
 /**
@@ -127,23 +296,41 @@ export function resolveEffectiveMaxBeads() {
 }
 
 /**
- * lit-html ref callback for the Max Beads <sl-select>.
+ * Resolve effective claude_md_mode for the dropdown default label.
+ * Precedence: selected template config.claude_md_mode → project settings → 'all'.
+ */
+export function resolveEffectiveClaudeMdMode() {
+  if (selectedTemplate && selectedTemplate !== 'default') {
+    const tmpl = (templates || []).find((t) => t.id === selectedTemplate);
+    const tmplMode = tmpl?.config?.claude_md_mode;
+    if (typeof tmplMode === 'string') return tmplMode;
+  }
+  return projectLevelClaudeMdMode ?? 'all';
+}
+
+/**
+ * lit-html ref callback for an <sl-select> whose "Template Default: <X>"
+ * option carries a dynamic value.
  *
  * Shoelace's sl-select derives `displayLabel` from `selectedOption.getTextLabel()`
  * inside selectionChanged(), which only fires on value/multiple changes — NOT
  * when the selected option's textContent changes underneath. Our first option
- * ("Template Default: <X>") embeds a dynamic value that shifts on template
- * switch, so attach a MutationObserver to force a re-derive whenever any
- * descendant sl-option's text content changes.
+ * embeds a dynamic value that shifts on template switch, so attach a
+ * MutationObserver to force a re-derive whenever any descendant sl-option's
+ * text content changes.
  *
  * lit-html refs fire only on mount/unmount, not per render, so setting up the
  * observer here is a once-per-instance cost. The trailing microtask refresh
  * covers the initial mount, after which the observer drives subsequent updates.
+ *
+ * Reused for any sl-select with a dynamic first-option label (Max Beads,
+ * CLAUDE.md mode). The per-element guard is keyed on the DOM node so each
+ * instance gets its own observer.
  */
 function _refreshSlSelectDisplay(el) {
   if (!el) return;
-  if (el.__maxBeadsObserverAttached) return;
-  el.__maxBeadsObserverAttached = true;
+  if (el.__dynamicLabelObserverAttached) return;
+  el.__dynamicLabelObserverAttached = true;
   const refresh = () => {
     if (typeof el.selectionChanged === 'function') {
       el.selectionChanged();
@@ -366,6 +553,7 @@ export async function submitNewRun({
   }
 
   const maxBeadsEl = document.getElementById('new-run-max-beads');
+  const claudeMdModeEl = document.getElementById('new-run-claude-md-mode');
   const msize = msizeEl ? parseInt(msizeEl.value, 10) || 1 : 1;
   const mloops = mloopsEl ? parseInt(mloopsEl.value, 10) || 1 : 1;
 
@@ -380,6 +568,13 @@ export async function submitNewRun({
       // Parse as number
       maxBeadsValue = parseInt(val, 10) || 0;
     }
+  }
+
+  // Parse claudeMdMode: empty string → null (passthrough), string → explicit mode
+  let claudeMdModeValue = claudeMdMode;
+  if (claudeMdModeEl) {
+    const val = claudeMdModeEl.value;
+    claudeMdModeValue = val === '' ? null : val;
   }
 
   const PR_BRANCH_RE = /^[a-zA-Z0-9._/-]+$/;
@@ -409,6 +604,10 @@ export async function submitNewRun({
     // Conditionally include maxBeads only when explicitly set (not null/passthrough)
     if (maxBeadsValue !== null) {
       body.maxBeads = maxBeadsValue;
+    }
+    // Conditionally include claudeMdMode only when explicitly set (not null/passthrough)
+    if (claudeMdModeValue !== null) {
+      body.claudeMdMode = claudeMdModeValue;
     }
     if (hasSource) body.sourceValue = sourceValue;
     if (hasPrompt) body.prompt = promptValue;
@@ -499,6 +698,8 @@ export function newRunView(_state, { rerender }) {
     planFiles = null;
     projectLevelMaxBeads = null;
     maxBeads = null;
+    projectLevelClaudeMdMode = null;
+    claudeMdMode = null;
     const newId = selectedProject;
     if (newId) {
       fetchBranches(newId).then(() => rerender());
@@ -520,6 +721,8 @@ export function newRunView(_state, { rerender }) {
     templates = null;
     projectLevelMaxBeads = null;
     maxBeads = null;
+    projectLevelClaudeMdMode = null;
+    claudeMdMode = null;
   }
 
   // Fetch branches once (null = not yet fetched, or project changed)
@@ -560,6 +763,12 @@ export function newRunView(_state, { rerender }) {
       // Parse as number
       maxBeads = parseInt(val, 10) || 0;
     }
+    rerender();
+  }
+
+  function handleClaudeMdModeChange(e) {
+    const val = e.target.value;
+    claudeMdMode = val === '' ? null : val;
     rerender();
   }
 
@@ -765,7 +974,28 @@ export function newRunView(_state, { rerender }) {
           <div class="new-run-section">
             <h3 class="new-run-section-title">Pipeline</h3>
             <div class="settings-field">
-              <label class="settings-label">Pipeline Template</label>
+              <div class="template-select-header">
+                <label class="settings-label">Pipeline Template</label>
+                <sl-button
+                  class="btn-suggest-template"
+                  size="small"
+                  variant="default"
+                  ?loading=${advisorStatus === 'loading'}
+                  @click=${() => {
+                    // Don't await here — requestTemplateAdvice paints the
+                    // loading frame synchronously via the rerender it
+                    // receives, then rerenders again when the result lands.
+                    requestTemplateAdvice({
+                      projectId: effectiveId,
+                      rerender,
+                    });
+                  }}
+                  title="Recommend the best-fit template based on your prompt or source"
+                >
+                  <span slot="prefix">${unsafeHTML(iconSvg(Sparkles, 14))}</span>
+                  Suggest
+                </sl-button>
+              </div>
               <sl-select value=${selectedTemplate} @sl-change=${handleTemplateChange}>
                 <sl-option value="default">${defaultOptionLabel()}</sl-option>
                 ${
@@ -907,6 +1137,33 @@ export function newRunView(_state, { rerender }) {
               </div>
             </div>
 
+            <div class="settings-field help-host">
+              ${helpFor('claude-md-mode')}
+              <label class="settings-label">CLAUDE.md Mode</label>
+              <sl-select id="new-run-claude-md-mode" ${ref(_refreshSlSelectDisplay)} value=${claudeMdMode === null ? '' : claudeMdMode} @sl-change=${handleClaudeMdModeChange}>
+                ${(() => {
+                  const effective = resolveEffectiveClaudeMdMode();
+                  return html`<sl-option value="">Template Default: ${effective}</sl-option>`;
+                })()}
+                <sl-option value="all">Explicit: all</sl-option>
+                <sl-option value="project">Explicit: project</sl-option>
+                <sl-option value="project+local">Explicit: project+local</sl-option>
+                <sl-option value="none">Explicit: none</sl-option>
+              </sl-select>
+              ${(() => {
+                const mode = claudeMdMode;
+                const effective = resolveEffectiveClaudeMdMode();
+                const bestEffortTag = html`<sl-tag size="small" variant="neutral">best-effort</sl-tag>`;
+                if (mode === null) {
+                  return html`<span class="settings-field-hint">Using Template Default (${effective}). Picking an Explicit option overrides this.</span>`;
+                }
+                if (mode === 'project' || mode === 'project+local') {
+                  return html`<span class="settings-field-hint">Explicit: ${mode} — overrides the template default. ${bestEffortTag} — project-scoped CLAUDE.md discovery may not find all files in complex repo layouts.</span>`;
+                }
+                return html`<span class="settings-field-hint">Explicit: ${mode} — overrides the template default.</span>`;
+              })()}
+            </div>
+
             <div class="settings-field">
               <label class="settings-label">Branch</label>
               <sl-select value=${selectedBranch} @sl-change=${handleBranchChange}>
@@ -922,6 +1179,128 @@ export function newRunView(_state, { rerender }) {
           </div>
         </div>
       </div>
+
+      ${advisorDialogView(rerender)}
     </div>
+  `;
+}
+
+/**
+ * Render the "Suggested template" dialog. Always present in the DOM so
+ * `?open` can drive it; renders nothing visible when closed.
+ */
+function advisorDialogView(rerender) {
+  const recommendedName = (() => {
+    if (!advisorAdvice?.template_id) return '';
+    const t = (templates || []).find((x) => x.id === advisorAdvice.template_id);
+    return t ? t.name || t.id : advisorAdvice.template_id;
+  })();
+  return html`
+    <sl-dialog
+      class="advisor-dialog"
+      label="Template Suggestion"
+      ?open=${advisorDialogOpen}
+      @sl-after-hide=${() => {
+        dismissAdvisor();
+        rerender();
+      }}
+    >
+      ${(() => {
+        if (advisorStatus === 'loading') {
+          return html`
+            <div class="advisor-dialog-body advisor-loading">
+              <sl-spinner></sl-spinner>
+              <span>Analyzing…</span>
+            </div>
+          `;
+        }
+        if (advisorStatus === 'error') {
+          return html`
+            <div class="advisor-dialog-body advisor-error">
+              <p>${advisorError || 'Advisor failed.'}</p>
+            </div>
+          `;
+        }
+        if (advisorStatus === 'ready' && advisorAdvice) {
+          const confTag = (() => {
+            const c = advisorAdvice.confidence || 'high';
+            const variant =
+              c === 'low' ? 'warning' : c === 'medium' ? 'neutral' : 'success';
+            return html`<sl-tag size="small" variant=${variant}>${c} confidence</sl-tag>`;
+          })();
+          return html`
+            <div class="advisor-dialog-body">
+              <div class="advisor-headline">
+                <strong class="advisor-template-name">${recommendedName}</strong>
+                ${confTag}
+              </div>
+              <p class="advisor-rationale">${advisorAdvice.rationale}</p>
+              ${
+                (advisorAdvice.alternatives || []).length > 0
+                  ? html`
+                    <sl-details summary="Other options" class="advisor-alternatives">
+                      <ul>
+                        ${(advisorAdvice.alternatives || []).map(
+                          (alt) => html`
+                            <li>
+                              <strong>${(() => {
+                                const t = (templates || []).find(
+                                  (x) => x.id === alt.template_id,
+                                );
+                                return t ? t.name || t.id : alt.template_id;
+                              })()}</strong>
+                              — ${alt.rationale || ''}
+                              <sl-button
+                                size="small"
+                                variant="default"
+                                class="btn-advisor-pick-alt"
+                                @click=${() => {
+                                  if (
+                                    applyAdvisorRecommendation(alt.template_id)
+                                  ) {
+                                    rerender();
+                                  }
+                                }}
+                              >Use instead</sl-button>
+                            </li>
+                          `,
+                        )}
+                      </ul>
+                    </sl-details>
+                  `
+                  : nothing
+              }
+            </div>
+          `;
+        }
+        return nothing;
+      })()}
+      <div slot="footer">
+        <sl-button
+          class="btn-advisor-cancel"
+          @click=${() => {
+            dismissAdvisor();
+            rerender();
+          }}
+        >${advisorStatus === 'error' ? 'Close' : 'Cancel'}</sl-button>
+        ${
+          advisorStatus === 'error'
+            ? nothing
+            : html`
+              <sl-button
+                variant="primary"
+                class="btn-advisor-accept"
+                ?disabled=${advisorStatus !== 'ready' || !advisorAdvice}
+                @click=${() => {
+                  if (advisorStatus !== 'ready' || !advisorAdvice) return;
+                  if (applyAdvisorRecommendation(advisorAdvice.template_id)) {
+                    rerender();
+                  }
+                }}
+              >Use this template</sl-button>
+            `
+        }
+      </div>
+    </sl-dialog>
   `;
 }

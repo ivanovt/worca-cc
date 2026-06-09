@@ -68,8 +68,8 @@ A row of "field pills" carrying the template's metadata:
 
 | Tab | What it controls | Maps to |
 |---|---|---|
-| **Agents** | Per-agent **model**, **max turns**, and **effort**; pipeline-level **auto mode** and **auto cap** for adaptive effort escalation. | `worca.agents.*`, `worca.effort` |
-| **Pipeline** | Per-stage on/off toggles and agent picker; **approval gates** (plan / PR); **retry loops** (implement/test, review, plan-review); **circuit breaker** (enable + max consecutive failures). | `worca.stages`, `worca.loops`, `worca.circuit_breaker`, `worca.milestones` |
+| **Agents** | Per-agent **model**, **max turns**, **effort**, and (Coordinator only) **max beads**; pipeline-level **auto mode** and **auto cap** for adaptive effort escalation. The Model dropdown lists every alias across Project / User / Built-in tiers with a tier section header and a ↗ jump-to-Models link. The Effort field carries an advisory yellow chip when set below the [recommended floor](/configuration/agents-and-models/#advisory-min-effort-indicators) for that role. | `worca.agents.*`, `worca.effort` |
+| **Pipeline** | Per-stage on/off toggles and agent picker; **approval gates** (plan / PR); **[CLAUDE.md load mode](/configuration/claude-md-mode/)**; **retry loops** (implement/test, review, plan-review); **circuit breaker** (enable + max consecutive failures). | `worca.stages`, `worca.claude_md_mode`, `worca.loops`, `worca.circuit_breaker`, `worca.milestones` |
 | **Governance** | Per-agent allowlists for **tools**, **skills**, and **subagents**. | `worca.governance.dispatch` |
 | **Overlays** | Read-only view of the prompt overlay files (`agents/*.md`) attached to this template, grouped by stage with sub-tabs for agent prompt and user prompt. Visible only when at least one overlay file is present. Overlays arrive via import, duplicate, or a filesystem drop — the tab surfaces them regardless of origin. | `agents/` directory |
 
@@ -97,6 +97,8 @@ You can also duplicate a built-in to the **same** id in project or user scope �
 
 Either flip the **★ Default** toggle inside the editor, or click **Set as default** on a card. This writes `worca.default_template` in your project's `.claude/settings.json` (as a `{ tier, id }` object — not a bare string), so every run uses that template unless you override with `--template` at launch.
 
+The toggle is available on **Project** and **Built-in** cards alike — built-ins ship with the worca-cc package, so pinning one as your project default is fully portable across collaborators. Only **User**-tier templates (which live in your `~/.worca/templates/` and never travel with the repo) are excluded.
+
 The **★ Default** badge moves to the newly selected card. To clear the default (so runs use raw project settings with no template), use **Clear default** or remove the `worca.default_template` key from Settings.
 
 :::tip[Renaming a default template]
@@ -112,9 +114,11 @@ Once a default template is in play, project settings for `agents`, `stages`, `lo
 - **Export** — click **Export** on any card (or inside the editor). The format is chosen automatically: `.zip` when the template has prompt overlay files (`agents/*.md`), `.json` for config-only templates. Secrets are redacted in either format, safe to share or commit. Export works on every tier, including built-ins.
 - **Import** — click **Import** in the list view to upload a `.json` or `.zip` bundle file. The UI runs a **preview pass** first and, if any collisions are detected, opens a dialog with two sections so you can decide what to do:
   - **Template collisions** — for each template id that already exists in the target scope, pick **Replace** (overwrite) or **Skip** (keep the existing).
-  - **Model alias collisions** — for each model alias in the bundle that already exists in your user-global settings (`~/.worca/settings.json`), pick **Rename** (zero-padded `-NN` suffix; the imported template's `config.agents.*.model` references are rewritten transactionally), **Overwrite** (replace the existing definition), or **Skip** (keep the existing).
+  - **Model alias collisions** — for each model alias in the bundle that already exists in the target scope (project or user), pick **Rename** (zero-padded `-NN` suffix; the imported template's `config.agents.*.model` references are rewritten transactionally), **Overwrite** (replace the existing definition), or **Skip** (keep the existing).
 
-  Click **Import** in the dialog footer to commit. The post-import view lists the templates that landed and any overlay files that came in.
+  Click **Import** in the dialog footer to commit. The post-import view lists the templates that landed and any overlay files that came in. Imported aliases carry an `Imported · <bundle-name>` provenance badge on the Models page that drops on the first UI save.
+
+![The import dialog after preview detects both kinds of collisions: a yellow "Template collisions" section showing feature-glm-ds → Replace, and a yellow "Model alias collisions" section showing glm-ds → Rename glm-ds-01, with "1 new alias will land cleanly: sonnet" below.](/screenshots/import-bundle/01-collision-dialog-templates.png)
 
 :::note[Gist sharing — JSON bundles only]
 The "Copy gist URL" action is available only on templates without prompt overlays. Templates with overlays must be shared as a downloaded `.zip` file attachment.

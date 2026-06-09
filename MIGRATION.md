@@ -894,6 +894,18 @@ Top-level Models page; bundle imports scope-honest; cross-tier model resolution 
 - **Imported models stamp `_imported_from` attribution metadata.** `worca templates import` writes `_imported_from: "<bundle-name>"` on each imported entry's `worca.models.<alias>` block. The Models page surfaces this as an "Imported · X" badge on the card and a banner in the editor. The badge is dropped on the first UI save (ownership transfer).
 - **No `worca init --upgrade` migration required.** Settings file shape is unchanged; the new resolution semantics are read-side only and the new UI page is purely additive in worca-ui. Old settings continue to work; the only observable behavior change is the cross-tier replace (above).
 
+### Optional improvements (0.53.0 → 0.54.0)
+
+These are not breaking changes — existing configurations continue to work unchanged. They are opt-in improvements you can apply at any time.
+
+- **Set `worca.claude_md_mode` to `"project"` for hermetic runs.** If you run worca across multiple machines, in CI, or in workspace/fleet scenarios where ancestor `CLAUDE.md` files from a parent directory could silently change agent behaviour, add this to your project settings:
+
+  ```json
+  { "worca": { "claude_md_mode": "project" } }
+  ```
+
+  This restricts each agent subprocess to only the project-root `CLAUDE.md`, producing consistent behaviour regardless of the contributor's directory structure. Use `"project+local"` to also keep `CLAUDE.md.local` for per-developer overrides. This setting flows through correctly on templated runs — built-in templates no longer pin `claude_md_mode: "all"`, so the project value applies unless a template explicitly overrides it. See [docs/claude-md-mode.md](./docs/claude-md-mode.md) for the full reference including constraints and template config.
+
 ## Getting help
 
 - Issues: https://github.com/SinishaDjukic/worca-cc/issues

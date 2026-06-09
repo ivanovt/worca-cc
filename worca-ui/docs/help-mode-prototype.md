@@ -80,6 +80,7 @@ After the initial 16-surface validation pass, the prototype was extended to cove
 | Editor tab: Agents | `agents-models` | configuration/agents-and-models |
 | Editor tab: Pipeline | `stages-config` | configuration/stages |
 | Editor tab: Governance | `dispatch` | advanced/dispatch-governance |
+| Editor → Pipeline → CLAUDE.md load mode section | `claude-md-mode` | configuration/claude-md-mode |
 
 ### Run Timeline (`run-timeline.js`)
 
@@ -92,6 +93,7 @@ After the initial 16-surface validation pass, the prototype was extended to cove
 | Surface | helpId | Doc target |
 |---|---|---|
 | New Run form | `launching` | running-pipelines/launching-a-run |
+| New Run → CLAUDE.md Mode dropdown | `claude-md-mode` | configuration/claude-md-mode |
 | Fleet Launcher form (fleet mode) | `fleet-runs` | advanced/fleet-runs |
 | Fleet Launcher form (workspace mode) | `workspace-runs` | advanced/workspace-runs |
 | Workspace Create form | `workspace-runs` | advanced/workspace-runs |

@@ -133,6 +133,12 @@ TEMPLATE_APPLIED = "pipeline.template.applied"
 TEMPLATE_DROPPED = "pipeline.template.dropped"
 
 # ---------------------------------------------------------------------------
+# CLAUDE.md load mode (1 event)
+# ---------------------------------------------------------------------------
+
+CLAUDE_MD_MODE_RESOLVED = "pipeline.claude_md.mode_resolved"
+
+# ---------------------------------------------------------------------------
 # Learn stage events (2 events)
 # ---------------------------------------------------------------------------
 
@@ -969,6 +975,30 @@ def template_dropped_payload(
 ) -> dict:
     """reason: 'not_found' | 'resolve_error' | 'missing_on_resume'."""
     return {"template_id": template_id, "reason": reason}
+
+
+# ---------------------------------------------------------------------------
+# CLAUDE.md load mode payload builders
+# ---------------------------------------------------------------------------
+
+def claude_md_mode_resolved_payload(
+    mode: str,
+    source: str,
+    overlay_path: "str | None",
+    exclude_count: int,
+) -> dict:
+    """Payload for pipeline.claude_md.mode_resolved (Tier 2 — pipeline-internal).
+
+    source: 'cli' | 'template' | 'project_settings' | 'default'
+    overlay_path: absolute path to overlay JSON or None (mode 'all' / 'none').
+    exclude_count: number of claudeMdExcludes entries written (0 for none/all).
+    """
+    return {
+        "mode": mode,
+        "source": source,
+        "overlay_path": overlay_path,
+        "exclude_count": exclude_count,
+    }
 
 
 # ---------------------------------------------------------------------------

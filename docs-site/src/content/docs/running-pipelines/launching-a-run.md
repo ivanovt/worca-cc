@@ -51,6 +51,20 @@ Pick the template that matches your task before launching. If you're unsure and 
 
 ![The launcher's Pipeline dropdown open, with the User, Project, and Built-in group labels separating the templates and the project default suffixed ★.](/screenshots/launching-a-run/02-template-dropdown.png)
 
+### Let worca pick for you — the Suggest button
+
+Next to the Pipeline dropdown is a **Suggest** button (sparkles icon). It analyses your work source — prompt, spec file, GitHub issue, or GitHub PR with review comments — via an LLM agent and recommends a best-fit template from your catalog (built-in + project + user) with a confidence level and one-sentence rationale.
+
+![The Run Pipeline launcher with the Suggest button visible next to the PIPELINE TEMPLATE dropdown.](/screenshots/launching-a-run/04-suggest-button.png)
+
+The result dialog shows the recommended template name, a confidence badge (`high confidence` / `medium` / `low`), the rationale, and a **Use this template** action that selects it in the dropdown:
+
+![The advisor result dialog showing the recommended template "Minor Feature" with a green "high confidence" badge and a rationale paragraph, plus Cancel and "Use this template" buttons.](/screenshots/launching-a-run/05-advisor-result.png)
+
+If the work source is a GitHub URL whose owner/repo doesn't match the project's, the advisor short-circuits with a clear *"This source belongs to X, but this project's repository is Y"* message before calling the agent — you don't pay for a confused recommendation.
+
+The same recommender is available on the CLI as `worca templates advise` for scripting or CI.
+
 ## Advanced options
 
 The launcher exposes a few optional knobs:
@@ -58,10 +72,14 @@ The launcher exposes a few optional knobs:
 - **Size / loop multipliers** — scale the per-agent turn budget and the retry-loop limits up for unusually large tasks.
 - **Base branch** — the branch the run's worktree forks from (defaults to the project's current HEAD).
 - **Plan file** — supply a pre-written plan to skip the Planner stage.
+- **Max Beads** — cap on how many beads the Coordinator may decompose the work into. The dropdown distinguishes **Template Default: *X*** (which re-resolves to whatever the current template ships) from **Explicit: *N*** (which overrides the template default for this run and survives template switches).
+- **CLAUDE.md Mode** — pin which `CLAUDE.md` files load for every agent in this run. Same Template-Default / Explicit pattern as Max Beads. Use **Explicit: project** for hermetic, reproducible runs across machines. See [CLAUDE.md load mode](/configuration/claude-md-mode/).
 
 Leave these at their defaults for most runs.
 
 ![The launcher's advanced section: size/loop multipliers, base branch, and the plan-file picker.](/screenshots/launching-a-run/03-advanced.png)
+
+![The Max Beads dropdown open with the Template Default: Auto option selected (checkmark) above the Explicit: Auto / 1 / 2 / 3 / 5 / 10 entries.](/screenshots/launching-a-run/06-max-beads.png)
 
 ## Launch
 

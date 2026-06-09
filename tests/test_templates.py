@@ -777,3 +777,68 @@ class TestStripTemplateOwned:
             assert any(
                 path[: len(owned)] == owned for owned in TEMPLATE_OWNED_KEYS
             ), f"carve-out {path} doesn't sit under any TEMPLATE_OWNED_KEYS path"
+
+
+class TestClaudeMdModePrecedence:
+    """claude_md_mode is a cross-template project setting — verify flow-through + precedence chain."""
+
+    def test_claude_md_mode_not_in_template_owned_keys(self):
+        # claude_md_mode must NOT be template-owned so project settings flow through
+        # when a built-in template is active and doesn't explicitly set the mode.
+        assert ("claude_md_mode",) not in TEMPLATE_OWNED_KEYS
+
+    def test_project_setting_survives_strip_template_owned(self):
+        """project Settings worca.claude_md_mode='project' flows through strip_template_owned
+        unchanged — the project value applies when no template overrides it."""
+        worca = {"claude_md_mode": "project", "models": {"opus": "id"}}
+        result = strip_template_owned(worca)
+        assert result.get("claude_md_mode") == "project"
+        assert result.get("models") == {"opus": "id"}
+
+    def test_template_explicit_config_wins_over_project_setting(self, tmp_path):
+        """template config.claude_md_mode='none' explicitly set wins over project 'project'
+        via deep-merge (overlay scalar wins)."""
+        from worca.utils.claude_md import resolve_claude_md_mode
+
+        # Effective settings after project base + template deep-merge where template set 'none'
+        effective = {"worca": {"claude_md_mode": "none"}}
+        settings_file = tmp_path / "settings.json"
+        settings_file.write_text(json.dumps(effective))
+
+        mode = resolve_claude_md_mode(None, str(settings_file))
+        assert mode == "none"
+
+    def test_cli_override_beats_project_and_template(self, tmp_path):
+        """explicit --claude-md-mode all beats project or template value."""
+        from worca.utils.claude_md import resolve_claude_md_mode
+
+        effective = {"worca": {"claude_md_mode": "project"}}
+        settings_file = tmp_path / "settings.json"
+        settings_file.write_text(json.dumps(effective))
+
+        mode = resolve_claude_md_mode("all", str(settings_file))
+        assert mode == "all"
+
+    def test_project_setting_flows_through_when_template_silent(self, tmp_path):
+        """End-to-end: project setting 'project' + template that does NOT set claude_md_mode
+        → project value flows through strip + merge → resolve returns 'project'."""
+        from worca.utils.claude_md import resolve_claude_md_mode
+
+        # Step 1: project Settings has claude_md_mode='project', other template-owned keys
+        project_worca = {"claude_md_mode": "project", "agents": {"coordinator": {}}}
+        # Step 2: strip_template_owned removes 'agents' but NOT 'claude_md_mode'
+        stripped = strip_template_owned(copy.deepcopy(project_worca))
+        assert "claude_md_mode" in stripped
+        assert "agents" not in stripped
+
+        # Step 3: template deep-merges its own config (no claude_md_mode key)
+        effective_settings = {"worca": stripped}
+        settings_file = tmp_path / "settings.json"
+        settings_file.write_text(json.dumps(effective_settings))
+
+        # No CLI override, no template override → project value wins
+        assert resolve_claude_md_mode(None, str(settings_file)) == "project"
+
+        # CLI override → CLI wins
+        assert resolve_claude_md_mode("all", str(settings_file)) == "all"
+        assert resolve_claude_md_mode("none", str(settings_file)) == "none"

@@ -36,6 +36,18 @@ The shipped defaults set explicit effort where judgment matters and leave it uns
 
 Set explicit effort for high-stakes or heavy-reasoning stages; leave it unset for mechanical ones.
 
+### Advisory recommended floors
+
+The Pipeline Templates editor renders an **advisory yellow indicator** when an agent's configured effort falls below a hardcoded recommended floor — a yellow chip beneath the Effort field on the Agents tab, and a matching chip beneath each stage's agent picker on the Pipeline tab. The hint is purely advisory: it isn't persisted to the template, the pipeline runtime never reads it, and saving stays enabled.
+
+| Floor | Agents |
+|---|---|
+| `high` | planner, plan_reviewer, reviewer, workspace_planner |
+| `medium` | coordinator, guardian |
+| `low` | implementer, tester, learner |
+
+See the screenshots in [Agents & models](/configuration/agents-and-models/#advisory-min-effort-indicators).
+
 ## Escalation and the cap
 
 On a loopback (tests fail, changes requested), the re-running agent steps up the ladder — `+1` rung for a test failure, `+2` for a review change-request. `auto_cap` (default `xhigh`) is the ceiling escalation can reach.

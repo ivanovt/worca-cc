@@ -1184,3 +1184,206 @@ class TestMaxBeadsWorkspace:
         )
         idx = cmd.index("--max-beads")
         assert cmd[idx + 1] == "0"
+
+
+# ---- Phase 5: --claude-md-mode passthrough -----------------------------------
+
+class TestClaudeMdModeWorkspace:
+    """--claude-md-mode is parsed and forwarded to dag_executor._build_child_cmd."""
+
+    def _parse(self, argv):
+        from worca.scripts.run_workspace import create_parser
+        return create_parser().parse_args(argv)
+
+    def test_claude_md_mode_default_none(self, tmp_path):
+        args = self._parse([str(tmp_path), "--prompt", "x"])
+        assert args.claude_md_mode is None
+
+    def test_claude_md_mode_parsed(self, tmp_path):
+        args = self._parse([str(tmp_path), "--prompt", "x", "--claude-md-mode", "project"])
+        assert args.claude_md_mode == "project"
+
+    def test_build_child_cmd_includes_claude_md_mode_when_set(self):
+        from worca.workspace.dag_executor import _build_child_cmd
+        cmd = _build_child_cmd(
+            workspace_id="w-001",
+            prompt="x",
+            guide_paths=[],
+            plan_path=None,
+            claude_md_mode="project+local",
+        )
+        idx = cmd.index("--claude-md-mode")
+        assert cmd[idx + 1] == "project+local"
+
+    def test_build_child_cmd_omits_claude_md_mode_when_none(self):
+        from worca.workspace.dag_executor import _build_child_cmd
+        cmd = _build_child_cmd(
+            workspace_id="w-001",
+            prompt="x",
+            guide_paths=[],
+            plan_path=None,
+            claude_md_mode=None,
+        )
+        assert "--claude-md-mode" not in cmd
+
+    def test_create_workspace_manifest_persists_claude_md_mode(self, tmp_path):
+        from worca.scripts.run_workspace import create_workspace_manifest
+        manifest = create_workspace_manifest(
+            workspace_id="ws_x",
+            workspace_root=str(tmp_path),
+            workspace_name="test",
+            prompt="x",
+            source=None,
+            guide_paths=[],
+            branch_template="ws/{slug}/{project}",
+            max_parallel=5,
+            skip_integration=False,
+            skip_planning=False,
+            tiers=[["lib"]],
+            projects_by_name={"lib": "lib"},
+            dependency_graph={"lib": []},
+            claude_md_mode="project",
+        )
+        assert manifest["claude_md_mode"] == "project"
+
+    def test_create_workspace_manifest_persists_max_beads(self, tmp_path):
+        from worca.scripts.run_workspace import create_workspace_manifest
+        manifest = create_workspace_manifest(
+            workspace_id="ws_x",
+            workspace_root=str(tmp_path),
+            workspace_name="test",
+            prompt="x",
+            source=None,
+            guide_paths=[],
+            branch_template="ws/{slug}/{project}",
+            max_parallel=5,
+            skip_integration=False,
+            skip_planning=False,
+            tiers=[["lib"]],
+            projects_by_name={"lib": "lib"},
+            dependency_graph={"lib": []},
+            max_beads=2,
+        )
+        assert manifest["max_beads"] == 2
+
+    def test_create_workspace_manifest_claude_md_mode_none_by_default(self, tmp_path):
+        from worca.scripts.run_workspace import create_workspace_manifest
+        manifest = create_workspace_manifest(
+            workspace_id="ws_x",
+            workspace_root=str(tmp_path),
+            workspace_name="test",
+            prompt="x",
+            source=None,
+            guide_paths=[],
+            branch_template="ws/{slug}/{project}",
+            max_parallel=5,
+            skip_integration=False,
+            skip_planning=False,
+            tiers=[["lib"]],
+            projects_by_name={"lib": "lib"},
+            dependency_graph={"lib": []},
+        )
+        assert manifest["claude_md_mode"] is None
+        assert manifest["max_beads"] is None
+
+    def test_resume_workspace_passes_claude_md_mode_and_max_beads_to_dag_executor(self, tmp_path):
+        from unittest.mock import patch, MagicMock
+        from worca.scripts.run_workspace import _resume_workspace
+
+        ws_root = str(tmp_path)
+        ws_id = "ws_202601011200_abc123"
+
+        manifest = {
+            "workspace_id": ws_id,
+            "workspace_name": "test",
+            "workspace_root": ws_root,
+            "status": "running",
+            "claude_md_mode": "project",
+            "max_beads": 3,
+            "skip_integration": True,
+            "dag": {"tiers": [{"tier": 0, "projects": ["lib"], "status": "completed"}]},
+            "children": [{"name": "lib", "status": "completed"}],
+            "integration_test": {"status": "pending"},
+            "plan": {},
+        }
+
+        mock_executor = MagicMock()
+        mock_executor.execute.return_value = {"status": "completed"}
+
+        with (
+            patch("worca.scripts.run_workspace.load_workspace_manifest", return_value=manifest),
+            patch("worca.scripts.run_workspace.classify_children_for_resume",
+                  return_value=({"lib"}, set())),
+            patch("worca.scripts.run_workspace.rebuild_resume_manifest"),
+            patch("worca.scripts.run_workspace.write_workspace_manifest"),
+            patch("worca.scripts.run_workspace.collect_stale_worktrees", return_value=[]),
+            patch("worca.scripts.run_workspace._settings_path_for_workspace",
+                  return_value=None),
+            patch("worca.scripts.run_workspace._register_active_run"),
+            patch("worca.scripts.run_workspace.emit_workspace_event"),
+            patch("worca.scripts.run_workspace.Workspace") as mock_ws_cls,
+            patch("worca.workspace.dag_executor.DagExecutor",
+                  return_value=mock_executor) as mock_dag_cls,
+        ):
+            mock_ws = MagicMock()
+            mock_ws.name = "test"
+            mock_ws.projects = []
+            mock_ws.integration_test = None
+            mock_ws_cls.load.return_value = mock_ws
+
+            _resume_workspace(ws_root, ws_id)
+
+        mock_dag_cls.assert_called_once()
+        call_kwargs = mock_dag_cls.call_args[1]
+        assert call_kwargs["claude_md_mode"] == "project"
+        assert call_kwargs["max_beads"] == 3
+
+    def test_resume_workspace_none_fields_when_absent_from_manifest(self, tmp_path):
+        from unittest.mock import patch, MagicMock
+        from worca.scripts.run_workspace import _resume_workspace
+
+        ws_root = str(tmp_path)
+        ws_id = "ws_202601011200_def456"
+
+        manifest = {
+            "workspace_id": ws_id,
+            "workspace_name": "test",
+            "workspace_root": ws_root,
+            "status": "running",
+            "skip_integration": True,
+            "dag": {"tiers": [{"tier": 0, "projects": ["lib"], "status": "completed"}]},
+            "children": [{"name": "lib", "status": "completed"}],
+            "integration_test": {"status": "pending"},
+            "plan": {},
+        }
+
+        mock_executor = MagicMock()
+        mock_executor.execute.return_value = {"status": "completed"}
+
+        with (
+            patch("worca.scripts.run_workspace.load_workspace_manifest", return_value=manifest),
+            patch("worca.scripts.run_workspace.classify_children_for_resume",
+                  return_value=({"lib"}, set())),
+            patch("worca.scripts.run_workspace.rebuild_resume_manifest"),
+            patch("worca.scripts.run_workspace.write_workspace_manifest"),
+            patch("worca.scripts.run_workspace.collect_stale_worktrees", return_value=[]),
+            patch("worca.scripts.run_workspace._settings_path_for_workspace",
+                  return_value=None),
+            patch("worca.scripts.run_workspace._register_active_run"),
+            patch("worca.scripts.run_workspace.emit_workspace_event"),
+            patch("worca.scripts.run_workspace.Workspace") as mock_ws_cls,
+            patch("worca.workspace.dag_executor.DagExecutor",
+                  return_value=mock_executor) as mock_dag_cls,
+        ):
+            mock_ws = MagicMock()
+            mock_ws.name = "test"
+            mock_ws.projects = []
+            mock_ws.integration_test = None
+            mock_ws_cls.load.return_value = mock_ws
+
+            _resume_workspace(ws_root, ws_id)
+
+        mock_dag_cls.assert_called_once()
+        call_kwargs = mock_dag_cls.call_args[1]
+        assert call_kwargs["claude_md_mode"] is None
+        assert call_kwargs["max_beads"] is None

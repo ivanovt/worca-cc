@@ -395,12 +395,21 @@ def _synthesize_pr_description(body: str, review_comments: list) -> str:
     return "\n".join(parts)
 
 
-def normalize_github_pr(source_value: str) -> WorkRequest:
+def normalize_github_pr(
+    source_value: str, *, repo_nwo: Optional[str] = None
+) -> WorkRequest:
     """Normalize a GitHub PR reference into a WorkRequest.
 
     source_value must be "gh:pr:N". Fetches PR metadata via gh CLI,
     ingests unresolved review threads via fetch_review_feedback(), and
     synthesizes description = original PR body + review feedback list.
+
+    When `repo_nwo` is provided (e.g. parsed from a full PR URL), the gh
+    CLI is pinned to that owner/repo via ``--repo``. Without it, gh falls
+    back to its default-repo resolution from the current working dir —
+    which silently misroutes the lookup when the launcher is run from a
+    project that doesn't own the PR (worca-ui in global mode, or any
+    cross-project launch).
     """
     if not source_value.startswith("gh:pr:"):
         raise ValueError(f"Expected gh:pr:N, got: {source_value}")
@@ -410,17 +419,27 @@ def normalize_github_pr(source_value: str) -> WorkRequest:
     except ValueError:
         raise ValueError(f"Invalid PR number in {source_value!r}")
 
-    result = subprocess.run(
+    cmd = ["gh", "pr", "view", str(pr_number)]
+    if repo_nwo:
+        cmd.extend(["--repo", repo_nwo])
+    cmd.extend(
         [
-            "gh", "pr", "view", str(pr_number), "--json",
+            "--json",
             "title,body,baseRefName,headRefName,isCrossRepository,author",
-        ],
+        ]
+    )
+
+    result = subprocess.run(
+        cmd,
         capture_output=True,
         text=True,
         env=get_env(),
     )
     if result.returncode != 0:
-        raise RuntimeError(f"Failed to fetch PR #{pr_number}: {result.stderr}")
+        repo_hint = f" in {repo_nwo}" if repo_nwo else ""
+        raise RuntimeError(
+            f"Failed to fetch PR #{pr_number}{repo_hint}: {result.stderr}"
+        )
 
     data = json.loads(result.stdout)
     title = data.get("title") or f"PR #{pr_number}"
@@ -429,12 +448,12 @@ def normalize_github_pr(source_value: str) -> WorkRequest:
     head_branch = data.get("headRefName", "")
     is_cross_repo = data.get("isCrossRepository", False)
 
-    # The PR and its review threads live in the *base* repo — resolve the
-    # owner/repo from the current repo (gh's default-repo logic), NOT from the
-    # PR's headRepository (which for a fork PR is the wrong repo, and which
-    # `gh pr view` does not even expose a nameWithOwner for). fetch_review_feedback
-    # filters out worca's own marker-prefixed comments (L1) on its own.
-    nwo = current_repo_nwo()
+    # The PR and its review threads live in the *base* repo. Prefer the
+    # explicit owner/repo (from the parsed URL) — that's the URL the user
+    # pasted and is unambiguous. Fall back to gh's default-repo resolution
+    # only when no URL was provided. fetch_review_feedback filters out
+    # worca's own marker-prefixed comments (L1) on its own.
+    nwo = repo_nwo or current_repo_nwo()
 
     review_comments = fetch_review_feedback(nwo, pr_number) if nwo else []
 
@@ -474,7 +493,10 @@ def normalize(source_type: str, source_value: str, **kwargs) -> WorkRequest:
             return normalize_github_pr(source_value)
         parsed = parse_pr_url(source_value)
         if parsed["provider"] == "github":
-            return normalize_github_pr(f"gh:pr:{parsed['number']}")
+            return normalize_github_pr(
+                f"gh:pr:{parsed['number']}",
+                repo_nwo=parsed.get("repo_path") or None,
+            )
         raise ValueError(f"PR source not yet supported: {source_value}")
     elif source_type == "source" or source_value.startswith(("gh:", "bd:")):
         # Detect full PR URLs before issue-URL conversion
@@ -482,7 +504,9 @@ def normalize(source_type: str, source_value: str, **kwargs) -> WorkRequest:
             parsed = parse_pr_url(source_value)
             if parsed["provider"] == "github":
                 ref = f"gh:pr:{parsed['number']}"
-                return normalize_github_pr(ref)
+                return normalize_github_pr(
+                    ref, repo_nwo=parsed.get("repo_path") or None
+                )
             if parsed["provider"] != "other":
                 raise ValueError(
                     f"PR source '{parsed['provider']}' not yet supported: {source_value}"
@@ -506,7 +530,9 @@ def normalize(source_type: str, source_value: str, **kwargs) -> WorkRequest:
         parsed = parse_pr_url(source_value)
         if parsed["provider"] == "github":
             ref = f"gh:pr:{parsed['number']}"
-            wr = normalize_github_pr(ref)
+            wr = normalize_github_pr(
+                ref, repo_nwo=parsed.get("repo_path") or None
+            )
             return wr
         if parsed["provider"] != "other":
             raise ValueError(
