@@ -254,6 +254,38 @@ Escalation fires on loopbacks but never exceeds `high`. Bead labels are emitted 
 
 Under `adaptive` mode, this explicit value overrides the coordinator's bead label. The label is still recorded with `bead_classified.skip_reason = "explicit_override"`.
 
+## Per-agent recommended effort floor (advisory indicator)
+
+The template editor ships a hardcoded recommendation for which agents warrant a careful starting effort. When the user picks a per-agent `effort` below that floor, the editor shows a yellow ⚠ indicator on the Effort field (Agents tab) and a matching chip under the stage's agent picker (Stages tab). Saving is never blocked.
+
+The recommendation is **not** template-editable, **not** persisted to template config, and **not** read by the runtime — `resolve_effort` neither knows about it nor adjusts behavior for it. It exists purely so users notice when a low effort would be unusual for the role.
+
+Source: `worca-ui/app/utils/effort-recommendations.js`.
+
+```js
+RECOMMENDED_MIN_EFFORT = {
+  planner:           'high',
+  plan_reviewer:     'high',
+  coordinator:       'medium',
+  implementer:       'low',
+  tester:            'low',
+  reviewer:          'high',
+  guardian:          'medium',
+  learner:           'low',
+  workspace_planner: 'high',
+};
+```
+
+| Floor | Agents | Rationale |
+|---|---|---|
+| `high` | planner, plan_reviewer, reviewer, workspace_planner | Heavy reasoning — plan quality compounds, review quality drives loop counts, cross-project planning is judgment-heavy |
+| `medium` | coordinator, guardian | Tighter-scope judgment — classification calls, irreversible PR/git work |
+| `low` | implementer, tester, learner | Mechanical or adaptive-driven — bead label or verification semantics carry the load |
+
+Templates running below these floors get a yellow ⚠ indicator on the Effort field and a matching chip on the Stages tab. The shipped fast-and-cheap templates (`quick-fix`, `feature-fast`) intentionally run some agents at `low` — those will show indicators and that's fine.
+
+To change the shipped recommendations, edit the map in `effort-recommendations.js` and rebuild worca-ui. There is no project-level or template-level override surface.
+
 ## Shipped template effort divergences
 
 Templates override the project defaults via deep-merge (see [Precedence](#precedence)). Unspecified keys fall through to the baseline. Only templates that diverge from the default `adaptive` + shipped agent values are listed:

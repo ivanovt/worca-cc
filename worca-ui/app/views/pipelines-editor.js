@@ -17,6 +17,10 @@ import { html, nothing } from 'lit-html';
 import { ifDefined } from 'lit-html/directives/if-defined.js';
 import { unsafeHTML } from 'lit-html/directives/unsafe-html.js';
 import { DISPATCH_DEFAULTS } from '../../server/dispatch-defaults.js';
+import {
+  effortBelowFloor,
+  RECOMMENDED_MIN_EFFORT,
+} from '../utils/effort-recommendations.js';
 import { helpFor } from '../utils/help-links.js';
 import {
   CircleCheck,
@@ -1635,6 +1639,33 @@ function _stagesSection(formBuffer, projectId, rerender) {
                     ${AGENT_NAMES.map((agent) => html`<sl-option value="${agent}">${agent}</sl-option>`)}
                     <sl-option value="none">None</sl-option>
                   </sl-select>
+                  ${(() => {
+                    // Read-only effort summary chip — surfaces the agent's
+                    // configured effort + advisory floor without leaving the
+                    // Stages tab. Read from the Agents form buffer (NOT from
+                    // stageConfig — effort lives per-agent).
+                    if (!isEnabled) return nothing;
+                    const agentName =
+                      stageConfig.agent || STAGE_AGENT_MAP[stageKey];
+                    if (!agentName || agentName === 'none') return nothing;
+                    const agentEntry = formBuffer?.agents?.[agentName] || {};
+                    const effort = agentEntry.effort;
+                    const floor = RECOMMENDED_MIN_EFFORT[agentName];
+                    const below =
+                      effort && floor && effortBelowFloor(effort, floor);
+                    if (!effort && !floor) return nothing;
+                    return html`<span
+                      class="settings-field-hint stage-effort-chip ${below ? 'settings-field-hint--warn' : ''}"
+                      data-stage="${stageKey}"
+                    >
+                      ${below ? '⚠ ' : ''}Effort
+                      ${effort ? html`<code>${effort}</code>` : 'unset'}${
+                        floor
+                          ? html` · recommended floor <code>${floor}</code>`
+                          : ''
+                      }
+                    </span>`;
+                  })()}
                 </div>
                 ${
                   stageKey === 'pr'
@@ -1963,6 +1994,22 @@ function _agentsTab(formBuffer, settings, projectId, rerender) {
                         html`<sl-option value="${level}">${level}</sl-option>`,
                     )}
                   </sl-select>
+                  ${(() => {
+                    const floor = RECOMMENDED_MIN_EFFORT[name];
+                    if (
+                      agent.effort &&
+                      floor &&
+                      effortBelowFloor(agent.effort, floor)
+                    ) {
+                      return html`<span
+                        class="settings-field-hint settings-field-hint--warn agent-effort-warn"
+                        data-agent="${name}"
+                      >
+                        ⚠ Below recommended floor <code>${floor}</code>.
+                      </span>`;
+                    }
+                    return nothing;
+                  })()}
                 </div>
                 ${
                   name === 'coordinator'
