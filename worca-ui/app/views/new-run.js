@@ -1137,7 +1137,8 @@ export function newRunView(_state, { rerender }) {
               </div>
             </div>
 
-            <div class="settings-field">
+            <div class="settings-field help-host">
+              ${helpFor('claude-md-mode')}
               <label class="settings-label">CLAUDE.md Mode</label>
               <sl-select id="new-run-claude-md-mode" ${ref(_refreshSlSelectDisplay)} value=${claudeMdMode === null ? '' : claudeMdMode} @sl-change=${handleClaudeMdModeChange}>
                 ${(() => {

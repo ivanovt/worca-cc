@@ -65,8 +65,16 @@ export const HELP_LINKS = Object.freeze({
     title: 'Agents & models',
   },
   models: {
-    slug: 'configuration/agents-and-models',
+    slug: 'configuration/models',
     title: 'Models',
+  },
+  'claude-md-mode': {
+    slug: 'configuration/claude-md-mode',
+    title: 'CLAUDE.md load mode',
+  },
+  'min-effort': {
+    slug: 'configuration/agents-and-models',
+    title: 'Recommended effort floors',
   },
   'stages-config': {
     slug: 'configuration/stages',

@@ -2165,7 +2165,8 @@ function _claudeMdModeSection(formBuffer, projectId, rerender) {
   const mode = formBuffer?.claude_md_mode ?? '';
   const isProjectScoped = mode === 'project' || mode === 'project+local';
   return html`
-    <div class="settings-tab-content">
+    <div class="settings-tab-content help-host">
+      ${helpFor('claude-md-mode')}
       <h3 class="settings-section-title">CLAUDE.md load mode</h3>
       <p class="settings-section-desc">
         Pins which CLAUDE.md files Claude Code loads for every agent
