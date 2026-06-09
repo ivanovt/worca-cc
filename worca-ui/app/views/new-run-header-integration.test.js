@@ -24,6 +24,7 @@ vi.mock('lit-html/directives/unsafe-html.js', () => ({
 vi.mock('../utils/icons.js', () => ({
   iconSvg: () => '',
   FileText: 'FileText',
+  Sparkles: 'Sparkles',
   Circle: 'Circle',
   CircleAlert: 'CircleAlert',
   CircleCheck: 'CircleCheck',
@@ -44,6 +45,7 @@ describe('header Start button contract — getNewRunSubmitState + getEffectivePr
     vi.doMock('../utils/icons.js', () => ({
       iconSvg: () => '',
       FileText: 'FileText',
+      Sparkles: 'Sparkles',
       Circle: 'Circle',
       CircleAlert: 'CircleAlert',
       CircleCheck: 'CircleCheck',
@@ -149,6 +151,7 @@ describe('header Start button — disabled state derivation', () => {
     vi.doMock('../utils/icons.js', () => ({
       iconSvg: () => '',
       FileText: 'FileText',
+      Sparkles: 'Sparkles',
       Circle: 'Circle',
       CircleAlert: 'CircleAlert',
       CircleCheck: 'CircleCheck',

@@ -17,6 +17,7 @@ vi.mock('lit-html/directives/unsafe-html.js', () => ({
 vi.mock('../utils/icons.js', () => ({
   iconSvg: () => '<svg></svg>',
   FileText: 'FileText',
+  Sparkles: 'Sparkles',
   Circle: 'Circle',
   CircleAlert: 'CircleAlert',
   CircleCheck: 'CircleCheck',
@@ -58,6 +59,7 @@ describe('new-run — template tier order', () => {
     vi.doMock('../utils/icons.js', () => ({
       iconSvg: () => '<svg></svg>',
       FileText: 'FileText',
+      Sparkles: 'Sparkles',
       Circle: 'Circle',
       CircleAlert: 'CircleAlert',
       CircleCheck: 'CircleCheck',

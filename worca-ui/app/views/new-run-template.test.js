@@ -15,6 +15,7 @@ vi.mock('lit-html/directives/ref.js', () => ({
 vi.mock('../utils/icons.js', () => ({
   iconSvg: () => '',
   FileText: 'FileText',
+  Sparkles: 'Sparkles',
   Circle: 'Circle',
   CircleAlert: 'CircleAlert',
   CircleCheck: 'CircleCheck',
@@ -55,6 +56,7 @@ describe('new-run — template module state and submit', () => {
     vi.doMock('../utils/icons.js', () => ({
       iconSvg: () => '',
       FileText: 'FileText',
+      Sparkles: 'Sparkles',
       Circle: 'Circle',
       CircleAlert: 'CircleAlert',
       CircleCheck: 'CircleCheck',
@@ -158,6 +160,7 @@ describe('new-run — fetchTemplates via newRunView', () => {
     vi.doMock('../utils/icons.js', () => ({
       iconSvg: () => '',
       FileText: 'FileText',
+      Sparkles: 'Sparkles',
       Circle: 'Circle',
       CircleAlert: 'CircleAlert',
       CircleCheck: 'CircleCheck',
@@ -257,6 +260,7 @@ describe('new-run — defaultOptionLabel reflects worca.default_template', () =>
     vi.doMock('../utils/icons.js', () => ({
       iconSvg: () => '',
       FileText: 'FileText',
+      Sparkles: 'Sparkles',
       Circle: 'Circle',
       CircleAlert: 'CircleAlert',
       CircleCheck: 'CircleCheck',
@@ -316,6 +320,7 @@ describe('new-run — preselect default template when worca.default_template is 
     vi.doMock('../utils/icons.js', () => ({
       iconSvg: () => '',
       FileText: 'FileText',
+      Sparkles: 'Sparkles',
       Circle: 'Circle',
       CircleAlert: 'CircleAlert',
       CircleCheck: 'CircleCheck',

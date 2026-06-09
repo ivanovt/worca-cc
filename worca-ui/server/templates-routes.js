@@ -747,6 +747,76 @@ export function createTemplatesRoutes() {
   );
 
   /**
+   * POST /api/projects/:projectId/templates/advise
+   * Body: { sourceType, sourceValue?, model? }
+   *
+   * Asks the Python advisor to pick the best-fit pipeline template for
+   * the given source. `sourceType` mirrors the launcher's options
+   * ("none" | "spec" | "source" | "pr", or "prompt"/"plan" when called
+   * directly). The route forwards "none" to the Python advisor as
+   * "prompt" so the prompt textarea path works unchanged.
+   *
+   * Returns { ok: true, advice: { template_id, rationale, confidence,
+   * alternatives: [...] } } on success.
+   */
+  router.post('/templates/advise', (req, res) => {
+    const body = req.body || {};
+    const rawSourceType = String(body.sourceType || '').trim();
+    if (!rawSourceType) {
+      return res
+        .status(400)
+        .json({ ok: false, error: 'sourceType is required' });
+    }
+    // Launcher uses "none" for the prompt textarea path. Map it to the
+    // backend's `prompt` source so the same wire shape covers both.
+    const sourceType = rawSourceType === 'none' ? 'prompt' : rawSourceType;
+    const ALLOWED = new Set(['prompt', 'spec', 'source', 'pr', 'plan']);
+    if (!ALLOWED.has(sourceType)) {
+      return res.status(400).json({
+        ok: false,
+        error: `sourceType must be one of: ${Array.from(ALLOWED).join(', ')}`,
+      });
+    }
+    const sourceValue = String(body.sourceValue || '');
+    if (sourceType !== 'prompt' && !sourceValue.trim()) {
+      return res.status(400).json({
+        ok: false,
+        error: 'sourceValue is required for non-prompt sources',
+      });
+    }
+    if (sourceType === 'prompt' && !sourceValue.trim()) {
+      return res
+        .status(400)
+        .json({ ok: false, error: 'sourceValue (prompt text) is required' });
+    }
+    const model =
+      body.model && typeof body.model === 'string' ? body.model : 'sonnet';
+    const { projectRoot } = req.project;
+    try {
+      const stdout = runWorcaTemplates(
+        projectRoot,
+        [
+          'advise',
+          '--source-type',
+          sourceType,
+          '--source-value',
+          '-',
+          '--model',
+          model,
+        ],
+        { stdin: sourceValue, timeout: 90000 },
+      );
+      const advice = JSON.parse(stdout || '{}');
+      res.json({ ok: true, advice });
+    } catch (err) {
+      const status = statusForCliCode(err.cliCode);
+      res
+        .status(status === 500 ? 500 : status)
+        .json({ ok: false, error: err.message || 'advise failed' });
+    }
+  });
+
+  /**
    * POST /api/projects/:projectId/templates/validate
    * Body: { config }
    *

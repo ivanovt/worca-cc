@@ -1320,6 +1320,73 @@ class TestNormalizeGithubPrDispatch:
         wr = normalize("source", "https://github.com/owner/repo/pull/33")
         assert wr.source_ref == "gh:pr:33"
 
+    # --- repo_nwo propagation from a parsed URL ---
+    # When a full GitHub PR URL is passed (regardless of dispatch path),
+    # the owner/repo must reach `gh pr view --repo …` so the lookup hits
+    # the right repo rather than gh's current-dir default. Without this,
+    # launching against worca-cc/pull/313 from a different project would
+    # silently try to find PR #313 in that other project's repo.
+
+    @patch("worca.orchestrator.work_request.fetch_review_feedback", return_value=[])
+    @patch("worca.orchestrator.work_request.subprocess")
+    def test_full_url_passes_repo_flag_to_gh_view(
+        self, mock_subprocess, mock_fetch
+    ):
+        mock_result = MagicMock()
+        mock_result.returncode = 0
+        mock_result.stdout = json.dumps(_DISPATCH_PR_RESPONSE)
+        mock_subprocess.run.return_value = mock_result
+        normalize("source", "https://github.com/some-owner/some-repo/pull/313")
+        cmd = mock_subprocess.run.call_args[0][0]
+        assert "--repo" in cmd
+        idx = cmd.index("--repo")
+        assert cmd[idx + 1] == "some-owner/some-repo"
+
+    @patch("worca.orchestrator.work_request.fetch_review_feedback", return_value=[])
+    @patch("worca.orchestrator.work_request.subprocess")
+    def test_full_url_uses_url_repo_for_review_feedback(
+        self, mock_subprocess, mock_fetch
+    ):
+        mock_result = MagicMock()
+        mock_result.returncode = 0
+        mock_result.stdout = json.dumps(_DISPATCH_PR_RESPONSE)
+        mock_subprocess.run.return_value = mock_result
+        normalize(
+            "pr", "https://github.com/some-owner/some-repo/pull/313"
+        )
+        # Reviews must come from the URL's repo, not current_repo_nwo()
+        mock_fetch.assert_called_once_with("some-owner/some-repo", 313)
+
+    @patch("worca.orchestrator.work_request.fetch_review_feedback", return_value=[])
+    @patch("worca.orchestrator.work_request.subprocess")
+    def test_bare_gh_pr_scheme_still_falls_back_to_current_repo(
+        self, mock_subprocess, mock_fetch
+    ):
+        mock_result = MagicMock()
+        mock_result.returncode = 0
+        mock_result.stdout = json.dumps(_DISPATCH_PR_RESPONSE)
+        mock_subprocess.run.return_value = mock_result
+        normalize("source", "gh:pr:55")
+        cmd = mock_subprocess.run.call_args[0][0]
+        # No --repo flag — gh resolves the current-dir default repo.
+        assert "--repo" not in cmd
+        # Reviews come from current_repo_nwo() = "owner/repo" (fixture).
+        mock_fetch.assert_called_once_with("owner/repo", 55)
+
+    @patch("worca.orchestrator.work_request.subprocess")
+    def test_pr_fetch_error_message_includes_repo_hint(
+        self, mock_subprocess
+    ):
+        from worca.orchestrator.work_request import normalize_github_pr
+
+        mock_result = MagicMock()
+        mock_result.returncode = 1
+        mock_result.stdout = ""
+        mock_result.stderr = "Could not resolve to a PullRequest"
+        mock_subprocess.run.return_value = mock_result
+        with pytest.raises(RuntimeError, match=r"in some-owner/some-repo"):
+            normalize_github_pr("gh:pr:313", repo_nwo="some-owner/some-repo")
+
 
 # --- graph report static-injection surface removed (W-053 query pivot) ---
 

@@ -32,6 +32,7 @@ describe('new-run — maxBeads passthrough sentinel', () => {
     vi.doMock('../utils/icons.js', () => ({
       iconSvg: () => '',
       FileText: 'FileText',
+      Sparkles: 'Sparkles',
       Circle: 'Circle',
       CircleAlert: 'CircleAlert',
       CircleCheck: 'CircleCheck',
@@ -110,6 +111,7 @@ describe('new-run — project-level maxBeads caching', () => {
     vi.doMock('../utils/icons.js', () => ({
       iconSvg: () => '',
       FileText: 'FileText',
+      Sparkles: 'Sparkles',
       Circle: 'Circle',
       CircleAlert: 'CircleAlert',
       CircleCheck: 'CircleCheck',
@@ -264,6 +266,7 @@ describe('new-run — resolveEffectiveMaxBeads helper', () => {
     vi.doMock('../utils/icons.js', () => ({
       iconSvg: () => '',
       FileText: 'FileText',
+      Sparkles: 'Sparkles',
       Circle: 'Circle',
       CircleAlert: 'CircleAlert',
       CircleCheck: 'CircleCheck',
@@ -373,6 +376,7 @@ describe('new-run — maxBeads seeding from template', () => {
     vi.doMock('../utils/icons.js', () => ({
       iconSvg: () => '',
       FileText: 'FileText',
+      Sparkles: 'Sparkles',
       Circle: 'Circle',
       CircleAlert: 'CircleAlert',
       CircleCheck: 'CircleCheck',
@@ -517,6 +521,7 @@ describe('new-run — maxBeads in submit body', () => {
     vi.doMock('../utils/icons.js', () => ({
       iconSvg: () => '',
       FileText: 'FileText',
+      Sparkles: 'Sparkles',
       Circle: 'Circle',
       CircleAlert: 'CircleAlert',
       CircleCheck: 'CircleCheck',

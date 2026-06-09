@@ -54,6 +54,7 @@ import Search from 'lucide/dist/esm/icons/search';
 import Settings from 'lucide/dist/esm/icons/settings';
 import Shield from 'lucide/dist/esm/icons/shield';
 import SlidersHorizontal from 'lucide/dist/esm/icons/sliders-horizontal';
+import Sparkles from 'lucide/dist/esm/icons/sparkles';
 import Square from 'lucide/dist/esm/icons/square';
 import Star from 'lucide/dist/esm/icons/star';
 import Sun from 'lucide/dist/esm/icons/sun';
@@ -143,6 +144,7 @@ export {
   Settings,
   Shield,
   SlidersHorizontal,
+  Sparkles,
   Square,
   Star,
   Sun,
