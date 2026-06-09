@@ -2371,6 +2371,16 @@ sl-input [slot="prefix"] {
   margin-top: 2px;
 }
 
+.settings-field-hint--warn {
+  color: var(--warning, #b8860b);
+}
+
+.settings-field-hint--warn code {
+  color: inherit;
+  background: transparent;
+  padding: 0;
+}
+
 /* Export-mode picker (standalone vs delta): roomy rows, with each option's
    description on its own line aligned under the option title (not the radio). */
 .export-mode-group sl-radio::part(base) {
