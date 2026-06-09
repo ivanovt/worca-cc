@@ -86,7 +86,7 @@ def test_launch_param_status_mode_default_none_absent():
 
 
 def test_overlay_file_written_for_none_mode(tmp_path):
-    """mode='none' writes autoMemoryEnabled:false overlay to run_dir."""
+    """mode='none' writes autoMemoryEnabled:false + claudeMdExcludes overlay to run_dir."""
     from worca.utils.claude_md import build_overlay, resolve_claude_md_mode
 
     run_dir = tmp_path / "runs" / "run-001"
@@ -104,7 +104,9 @@ def test_overlay_file_written_for_none_mode(tmp_path):
     overlay_path.write_text(json.dumps(overlay_dict, indent=2), encoding="utf-8")
 
     content = json.loads(overlay_path.read_text(encoding="utf-8"))
-    assert content == {"autoMemoryEnabled": False}
+    assert content["autoMemoryEnabled"] is False
+    assert "**/CLAUDE.md" in content["claudeMdExcludes"]
+    assert "**/CLAUDE.local.md" in content["claudeMdExcludes"]
 
 
 def test_overlay_file_not_written_for_all_mode(tmp_path):

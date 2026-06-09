@@ -11,7 +11,7 @@ By default Claude Code merges every `CLAUDE.md` it finds when walking up from th
 | `all` (default) | Standard Claude Code loading — no change | No overlay, no `--settings` flag |
 | `project` | Project-root `CLAUDE.md` only | `claudeMdExcludes` list blocking home + org-policy + all ancestor paths; also excludes `CLAUDE.local.md` |
 | `project+local` | Project-root `CLAUDE.md` + `CLAUDE.local.md` | Same blocklist, but `CLAUDE.local.md` is kept |
-| `none` | No CLAUDE.md loading; auto-memory disabled | `{"autoMemoryEnabled": false}` |
+| `none` | No CLAUDE.md loading; auto-memory disabled | `{"autoMemoryEnabled": false, "claudeMdExcludes": ["**/CLAUDE.md", "**/CLAUDE.local.md", <home>, <org-policy paths>]}` |
 
 ## Precedence chain
 
@@ -31,7 +31,7 @@ worca.claude_md_mode             ← project settings.json (flows through even u
 
 **1. Blocklist-only.** `claudeMdExcludes` is a deny-list passed to Claude Code. For `project` and `project+local`, worca emits one pattern per ancestor directory (walked at run start) plus user-home and org-policy paths. This covers the common cases, but it can only block paths it knows about at launch time. Dynamic mounts or symlinks resolved after launch are not covered.
 
-**2. `none` mode disables auto-memory as a side effect.** Claude Code's `autoMemoryEnabled: false` overlay disables both CLAUDE.md loading and the automatic memory subsystem (`~/.claude/memory/`). If you want to suppress CLAUDE.md loading but keep auto-memory, use `project` instead of `none`.
+**2. `none` mode disables auto-memory as a side effect.** Claude Code's `autoMemoryEnabled: false` overlay disables the automatic memory subsystem (`~/.claude/memory/`). It does **not** by itself disable CLAUDE.md auto-discovery — those are separate concerns in Claude Code (per `claude --help` for `--bare`). To block CLAUDE.md as well, `none` mode also writes a broad `claudeMdExcludes` blocklist (`**/CLAUDE.md`, `**/CLAUDE.local.md`, plus the same enumerated user-home and org-policy paths used by `project`). If you want to suppress CLAUDE.md loading but keep auto-memory writes enabled, use `project` instead of `none`.
 
 **3. Managed/org CLAUDE.md immunity.** The org-policy paths (`/etc/claude-code/CLAUDE.md`, `/Library/Application Support/ClaudeCode/CLAUDE.md`, `C:/ProgramData/ClaudeCode/CLAUDE.md`) are included in the blocklist for forward-compatibility, but the managed/org CLAUDE.md is loaded by Claude Code at a lower layer that `claudeMdExcludes` does not currently cover. Those patterns are emitted anyway so the behaviour is correct once the underlying Claude Code issue is resolved.
 

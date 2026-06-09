@@ -33,21 +33,49 @@ def build_overlay(mode: str, project_root: str) -> Optional[dict]:
     """Return the settings overlay dict for the given mode, or None for 'all'.
 
     - 'all'          -> None (no overlay file written, no --settings flag)
-    - 'none'         -> {"autoMemoryEnabled": False}
+    - 'none'         -> {"autoMemoryEnabled": False, "claudeMdExcludes": [<broad blocklist>]}
     - 'project'      -> {"claudeMdExcludes": [<all paths except project CLAUDE.md>]}
     - 'project+local'-> {"claudeMdExcludes": [<all paths except project CLAUDE.md + CLAUDE.local.md>]}
+
+    The 'none' mode pairs ``autoMemoryEnabled: false`` (disables auto-memory
+    writes) with a broad ``claudeMdExcludes`` block. Empirically,
+    ``autoMemoryEnabled: false`` alone does NOT prevent Claude Code from
+    loading CLAUDE.md — those two concerns are separate (per
+    ``claude --help`` for ``--bare``). The ``**/CLAUDE.md`` glob is what
+    actually blocks loading; the absolute paths are belt-and-suspenders for
+    layers that may not resolve the glob (user-home + org-policy paths).
     """
     if mode == "all":
         return None
 
     if mode == "none":
-        return {"autoMemoryEnabled": False}
+        return {
+            "autoMemoryEnabled": False,
+            "claudeMdExcludes": _build_none_excludes(),
+        }
 
     if mode in ("project", "project+local"):
         excludes = _build_excludes(mode, project_root)
         return {"claudeMdExcludes": excludes}
 
     raise ValueError(f"Unknown claude_md_mode: {mode!r}. Valid: {sorted(_VALID_MODES)}")
+
+
+def _build_none_excludes() -> list:
+    """Build the claudeMdExcludes list for 'none' mode.
+
+    Combines a broad ``**/`` glob (which Claude Code honours) with the
+    same enumerated absolute paths the 'project' mode uses for user-home
+    and org-policy locations, in POSIX form for cross-platform stability.
+    """
+    home_posix = PurePosixPath(Path.home().as_posix())
+    return [
+        "**/CLAUDE.md",
+        "**/CLAUDE.local.md",
+        str(home_posix / ".claude" / "CLAUDE.md"),
+        str(home_posix / "CLAUDE.md"),
+        *_ORG_POLICY_PATHS,
+    ]
 
 
 def _build_excludes(mode: str, project_root: str) -> list:

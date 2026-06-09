@@ -18,9 +18,24 @@ def test_build_overlay_all_returns_none():
     assert build_overlay("all", "/some/project") is None
 
 
-def test_build_overlay_none_disables_automemory():
+def test_build_overlay_none_disables_automemory_and_excludes_claudemd():
+    """none mode combines autoMemoryEnabled:false with a broad claudeMdExcludes.
+
+    autoMemoryEnabled alone is empirically insufficient to disable CLAUDE.md
+    auto-discovery in Claude Code — the **/CLAUDE.md glob is what actually
+    blocks loading. We keep autoMemoryEnabled:false too so auto-memory writes
+    stay disabled as the docs promise.
+    """
     result = build_overlay("none", "/some/project")
-    assert result == {"autoMemoryEnabled": False}
+    assert result["autoMemoryEnabled"] is False
+    assert "**/CLAUDE.md" in result["claudeMdExcludes"]
+    assert "**/CLAUDE.local.md" in result["claudeMdExcludes"]
+    # Belt-and-suspenders absolute paths
+    home_posix = Path.home().as_posix()
+    assert f"{home_posix}/.claude/CLAUDE.md" in result["claudeMdExcludes"]
+    assert f"{home_posix}/CLAUDE.md" in result["claudeMdExcludes"]
+    # Org-policy paths (forward-compat)
+    assert "/etc/claude-code/CLAUDE.md" in result["claudeMdExcludes"]
 
 
 def test_build_overlay_project_contains_claudemd_excludes():
