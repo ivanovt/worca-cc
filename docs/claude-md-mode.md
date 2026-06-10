@@ -40,10 +40,10 @@ worca.claude_md_mode             ← project settings.json (flows through even u
 **Per-run (CLI):**
 
 ```bash
-python .claude/scripts/run_pipeline.py --prompt "..." --claude-md-mode project
-python .claude/scripts/run_worktree.py --prompt "..." --claude-md-mode project
-python .claude/scripts/run_fleet.py   --projects ... --claude-md-mode project
-python .claude/scripts/run_workspace.py <parent-dir> --claude-md-mode project
+python .claude/worca/scripts/run_pipeline.py --prompt "..." --claude-md-mode project
+python .claude/worca/scripts/run_worktree.py --prompt "..." --claude-md-mode project
+python .claude/worca/scripts/run_fleet.py   --projects ... --claude-md-mode project
+python .claude/worca/scripts/run_workspace.py <parent-dir> --claude-md-mode project
 ```
 
 **Project default (`settings.json`):**
@@ -77,7 +77,7 @@ The canonical use case. A workspace run coordinates N projects under `~/monorepo
 
 ```bash
 # All workspace child pipelines see only their project-root CLAUDE.md
-python .claude/scripts/run_workspace.py ~/monorepo --prompt "..." --claude-md-mode project
+python .claude/worca/scripts/run_workspace.py ~/monorepo --prompt "..." --claude-md-mode project
 ```
 
 Fleet runs across heterogeneous machines benefit similarly: a developer running the fleet on a machine without the monorepo ancestor CLAUDE.md gets identical agent behaviour to CI.

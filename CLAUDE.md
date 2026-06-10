@@ -17,10 +17,10 @@ cd my-project/worca-ui && npm install && npm run build && cd -
 cd my-project && claude
 
 # Autonomous mode (in-place)
-python .claude/scripts/run_pipeline.py --prompt "Add user auth"
+python .claude/worca/scripts/run_pipeline.py --prompt "Add user auth"
 
 # Autonomous mode in an isolated git worktree (parallel-safe)
-python .claude/scripts/run_worktree.py --prompt "Add user auth" [--branch main] [--guide spec.md]
+python .claude/worca/scripts/run_worktree.py --prompt "Add user auth" [--branch main] [--guide spec.md]
 # --branch: base branch for the new worktree (default: current HEAD)
 # --guide: path to a reference guide injected into the plan prompt (repeatable, requires W-040)
 # All four entry scripts (run_pipeline.py, run_worktree.py, run_fleet.py, run_workspace.py) accept
@@ -80,22 +80,13 @@ Project-level skills and subagents (under `.claude/skills/` and `.claude/agents/
 
 ### Skills (invoke explicitly)
 
-| Skill | When to use |
-|---|---|
-| `/worca-dev-precommit` | Before every commit. Picks the right subset of ruff / biome / vitest / playwright / npm-pack based on what the branch changed. |
-| `/worca-plan-new` | Filing a new W-NNN feature plan. Allocates the next ID, scaffolds `docs/plans/W-NNN-*.md` from `_TEMPLATE.md`, creates the GitHub issue with correct title/labels/plan-link. |
-| `/worca-issue` | Reading, listing, or filing GitHub issues. Wraps the `--json` workaround and the W-NNN-vs-bug title convention. |
-| `/worca-pr-prep` | Before merging a PR. Verifies CI green, branch rebased, then merges via `gh pr merge --merge` (never local merge). |
-| `/worca-coverage` | Running Python coverage. Wraps `scripts/coverage.py` for `ci`, step-by-step, and baseline comparison. |
-| `/worca-release` | Cutting a stable release (worca-cc, @worca/ui, or both). |
-| `/worca-rc` | Cutting a release candidate. |
-| `/worca-docs-publish` | Publishing the docs site (docs.worca.dev) between releases — fast-forwards `docs-live` to `master` after a local build check. |
-| `/worca-docs-diagram` | Authoring a docs-site diagram in the canonical animated-SVG style. Wraps the shared `docs-site/src/components/FlowDiagram.astro` (nodes + blue forward / amber return edges + tooltips, light+dark, reduced-motion) so every diagram stays consistent. |
-| `/state-action-matrix` | Loading the pipeline state-action spec before touching states/transitions/gating. |
-| `/worca-ui-add-page` | Scaffolding a new worca-ui section across all 4-5 routing wire-up points (view file, main dispatch, header title, sidebar entry, WS/fetch hooks). |
-| `/worca-ui-add-card` | Scaffolding a new card view following `worca-ui/docs/card-layout.md` — top/meta/(stages)/actions with central variant map. |
-| `/worca-event-add` | Scaffolding a new worca event type across `types.py`, the payload builder, tests, and (if Tier 1) the chat renderer. Reference: `docs/events.md`. |
-| `/worca-webhook-test` | Signing and POSTing a synthetic event to a configured webhook URL — verifies HMAC, reachability, and (for control webhooks) the control-action response. |
+All dev-time skills live in `.claude/skills/` (prefixed `worca-*`, plus `state-action-matrix`). They self-describe and appear in the session skill list — check there for the full set and triggers rather than maintaining a copy here. Rituals to internalize:
+
+- `/worca-dev-precommit` before every commit — picks the right ruff / biome / vitest / playwright / npm-pack subset for what the branch changed.
+- `/worca-pr-prep` before merging a PR — verifies CI green and rebase, then merges via `gh pr merge --merge` (never local merge).
+- `/worca-plan-new` to file a W-NNN feature plan; `/worca-issue` for reading/listing/filing GitHub issues (bakes in the `--json` workaround).
+- `/state-action-matrix` before touching pipeline states, transitions, or action gating.
+- Scaffolding skills (`/worca-ui-add-page`, `/worca-ui-add-card`, `/worca-event-add`) over hand-wiring — they cover wire-up points that silently fail when missed.
 
 ### Subagents (dispatch via Agent tool)
 
@@ -137,54 +128,17 @@ Agent config in `.claude/settings.json` under the `worca` namespace. Key section
 
 ### Model Profiles (`worca.models`)
 
-Entries in `worca.models` are either a plain string (model ID) or `{id, env}` — the `env` map is merged into the subprocess environment when that model runs, useful for routing through alternative endpoints or tuning per-stage settings like `CLAUDE_CODE_MAX_OUTPUT_TOKENS`.
+Entries are either a plain model-ID string or `{id, env}` — the `env` map merges into the subprocess environment when that model runs (alt-endpoint routing, per-stage tuning like `CLAUDE_CODE_MAX_OUTPUT_TOKENS`). Key gotchas:
 
-Key gotchas:
+- **Secrets** belong in `settings.local.json` (gitignored, deep-merged over `settings.json`); the UI Secrets panel writes only there. Never inline secrets in `settings.json`. Worktree runs materialize the parent's secrets into the worktree's gitignored `settings.json`.
+- **Reserved keys** matching `WORCA_*`, `PATH`, or `CLAUDECODE` are silently stripped with a stderr warning (denylist shared between `src/worca/utils/env.py` and `worca-ui/server/reserved-env-keys.json`).
+- **Cost source per alias:** if an alias's `env` sets `ANTHROPIC_BASE_URL`, worca overrides Claude CLI's `total_cost_usd` from `worca.pricing.models.<alias>`; otherwise the CLI's number is authoritative.
 
-- **Secrets** belong in `settings.local.json` (gitignored, deep-merged over `settings.json`). The UI Secrets panel writes exclusively to this file. Never inline secrets in `settings.json`.
-- **Reserved keys** matching `WORCA_*`, `PATH`, or `CLAUDECODE` are silently stripped with a stderr warning. Denylist shared between Python (`src/worca/utils/env.py`) and JS (`worca-ui/server/reserved-env-keys.json`).
-- **Worktree materialization:** parent's `settings.local.json` secrets are materialized into the worktree's `settings.json` (gitignored). Same on-disk plaintext exposure model as `~/.aws/credentials`.
-- **`work_request.py` haiku pin:** `extract_work_request` resolves `--model builtin:haiku` so title generation is deterministic regardless of user/project shadowing. This is a hard pin — user/project shadows of the `haiku` alias do **not** affect title generation.
-- **Cost source per alias:** if an alias's `env` block sets `ANTHROPIC_BASE_URL` (alt-endpoint routing), worca overrides Claude CLI's `total_cost_usd` using `worca.pricing.models.<alias>`. Otherwise Claude CLI's number is authoritative and the Pricing tab is informational/fallback. The trigger set lives in `_ALT_ENDPOINT_ENV_KEYS` in `src/worca/orchestrator/stages.py`.
-
-#### Tier-pinned refs
-
-Model refs in agent configs (`worca.agents.<name>.model`) and template configs support a `tier:alias` syntax that pins the alias to a specific settings tier:
-
-```
-tier:alias   →   user:sonnet   |   project:opus   |   builtin:haiku
-```
-
-- **Regex:** `^(user|project|builtin):([A-Za-z0-9_-]+)$`
-- **Bare alias** (no `tier:` prefix): resolved against the merged `worca.models` dict (project shadows user). The bare form is the default save behaviour — the UI writes bare aliases to `settings.json` by default (D1).
-- **`user:alias`**: hard-pinned to `~/.worca/settings.json`; ignores any project-level definition of that alias.
-- **`project:alias`**: hard-pinned to `.claude/settings.json`; ignores any user-level definition.
-- **`builtin:alias`**: resolves from the package's `_DEFAULT_MODEL_MAP` (`src/worca/utils/settings.py`), bypassing both user and project settings entirely. `work_request.py` uses `builtin:haiku` so title generation is always deterministic.
-- **Auto-pin on bundle import (D3):** `worca templates import` rewrites bare refs to `{scope}:alias` where `scope` matches the `--scope` argument (`user` or `project`). This prevents a template exported from one project from silently picking up a different project's same-named alias.
-- **`worca models add --tier`:** adds or updates an alias scoped to a specific tier (`user` or `project`); `builtin` is rejected (read-only). See Phase 7 in the models CLI.
-- **Preflight errors:** a pinned ref that names an alias not present in the target tier's stash raises a `PreflightError` before the run starts (Phase 5b).
-
-Full precedence reference: [`docs/configuration-precedence.md`](./docs/configuration-precedence.md).
+Model refs also support **tier pinning** (`user:alias` / `project:alias` / `builtin:alias`) to bypass alias shadowing between settings tiers — `work_request.py` hard-pins `builtin:haiku` so title generation is deterministic regardless of user/project shadows. Full syntax, bare-alias resolution, import auto-pinning, and precedence: [`docs/configuration-precedence.md`](./docs/configuration-precedence.md).
 
 ### Effort Levels (`worca.effort`)
 
-Per-agent reasoning effort (`low | medium | high | xhigh | max`) is configured via `worca.agents.<agent>.effort` and governed by a pipeline-level `worca.effort` block. Omitted `effort` means "use Claude Code's model default." Full reference: [`docs/effort.md`](./docs/effort.md).
-
-`worca.effort.auto_mode` controls starting point and loopback escalation:
-
-| Mode | Starting point | Escalation on loopbacks |
-|---|---|---|
-| `disabled` | Per-agent value or model default | No |
-| `reactive` | Per-agent value or model default | Yes |
-| `adaptive` (default) | Per-agent value if set, else coordinator's bead label | Yes |
-
-Under `adaptive`, the coordinator classifies each bead's complexity via `worca-effort:<level>` labels during decomposition. The implementer uses that label as its starting point (unless an explicit per-agent value overrides it).
-
-Key points:
-- **`auto_cap`** (default `xhigh`) is the ceiling for runtime-resolved levels.
-- **Model-aware ladders:** effort rungs are model-specific. The shipped models (Opus 4.6, Sonnet 4.6) lack `xhigh` — the 4-rung ladder is `low/medium/high/max`. Resolution collapses requested levels onto the model's ladder.
-- **Env-var seam:** resolved effort passes through `CLAUDE_CODE_EFFORT_LEVEL`. This is the only non-interactive way to set `max`.
-- Set `auto_mode: "disabled"` to reproduce pre-W-052 behavior (no escalation, no bead-label consumption).
+Per-agent reasoning effort (`low | medium | high | xhigh | max`) via `worca.agents.<agent>.effort`; omitted means model default. `worca.effort.auto_mode` defaults to `adaptive`: the coordinator labels each bead's complexity (`worca-effort:<level>`) as the implementer's starting point, and loopbacks escalate effort, capped by `auto_cap` (default `xhigh`). Resolved effort passes through `CLAUDE_CODE_EFFORT_LEVEL` — the only non-interactive way to set `max`. Set `auto_mode: "disabled"` for pre-W-052 behavior. Full reference (modes, model-specific effort ladders): [`docs/effort.md`](./docs/effort.md).
 
 ## Code Hosting
 
@@ -284,30 +238,9 @@ cd worca-ui && rm -rf node_modules/.cache && npx playwright test e2e/<spec>.spec
 
 Do **not** binary-bisect the spec to find the offending block — the file is fine; the cache is stale. And do not try to "reproduce" it by importing the spec outside the test runner (`node -e "import('./e2e/x.spec.js')"`) — running a Playwright spec outside `npx playwright test` *always* throws this exact error, so it is not a signal.
 
-**Coverage runs** (Python) use the centralized runner in `scripts/coverage.py`:
+**Coverage runs** (Python) use the centralized runner in `scripts/coverage.py`. `python scripts/coverage.py ci` is the one-shot (erase stale state → pytest under `WORCA_COVERAGE=1` → combine fragments → `coverage-out/coverage.json` + `.xml`); `compare --baseline=… --current=…` diffs per-module deltas; `--include-unit-tests` adds in-process unit coverage (doubles wall time, full baseline only). Key gotcha: `WORCA_COVERAGE=1` enables subprocess-level coverage for integration runs AND auto-disables `pytest-cov` — without that, pytest-cov silently consumes the fragments before `coverage combine` can merge them.
 
-```bash
-python scripts/coverage.py ci                                     # run + combine + JSON + XML + text
-python scripts/coverage.py ci --include-unit-tests                # include unit tests (wraps pytest with coverage run)
-python scripts/coverage.py run                                    # pytest under WORCA_COVERAGE=1
-python scripts/coverage.py combine                                # merge .coverage.* fragments
-python scripts/coverage.py report --format=text                   # terminal (default)
-python scripts/coverage.py report --format=json --out=cov.json    # augmented JSON
-python scripts/coverage.py report --format=html                   # htmlcov/
-python scripts/coverage.py compare --baseline=before.json --current=after.json
-```
-
-`ci` is the one-shot used locally and in CI: it erases stale state, runs pytest with `WORCA_COVERAGE=1`, combines fragments, and writes `coverage-out/coverage.json` (augmented schema with `summary`, `modules`, `omitted`, `raw`) plus `coverage-out/coverage.xml` (Cobertura-compatible). The pytest exit code is forwarded so CI fails on real test regressions even when coverage upload succeeds.
-
-`--include-unit-tests` wraps the pytest invocation itself with `coverage run --parallel-mode` and targets `tests/` (instead of `tests/integration/` only), so in-process unit test calls are measured alongside subprocess fragments. Default off — doubles wall time but produces accurate per-module numbers for modules exercised only by unit tests. Pass this flag explicitly when a full-coverage baseline is needed.
-
-`compare` diffs a current `coverage.json` against a saved baseline and prints per-module pp deltas — useful for per-phase tracking without bolting in a `--fail-under` gate. Threshold enforcement stays out of scope until baselines stabilize.
-
-The integration suite uses subprocess-level coverage — each pipeline run is wrapped with `coverage run --parallel-mode` by `tests/integration/conftest.py:_wrap_with_coverage`, producing one fragment per pipeline subprocess. Setting `WORCA_COVERAGE=1` activates this AND auto-disables `pytest-cov` for the run (via the `pytest_load_initial_conftests` hook in `tests/conftest.py`) — without that, pytest-cov's session_finish hook silently consumes the fragments before `coverage combine` can merge them. Without `WORCA_COVERAGE=1`, the standard `pytest --cov=worca` flow stays available for unit-test coverage.
-
-The raw `coverage` CLI still works for ad-hoc use (`coverage combine && coverage report`); the runner is just a thin orchestrator that handles the cleanup-and-combine sequencing and exposes a JSON shape stable enough for downstream tooling.
-
-> Use `/worca-coverage` for the common flows — it wraps `scripts/coverage.py` with the right env vars and surfaces the comparison workflow.
+> Use `/worca-coverage` for all common flows — it wraps the runner with the right env vars and subcommands.
 
 ## Governance
 
@@ -354,17 +287,9 @@ See `src/worca/agents/core/planner.md`, `reviewer.md`, and `tester.md` for the p
 
 ## Knowledge Graph (Graphify)
 
-Optional, **off by default**. When `worca.graphify.enabled` is `true` (project-level), the **Preflight** stage builds a per-commit code knowledge graph with the [graphify](https://github.com/safishamsi/graphify) CLI (`graphify update`), content-addressed under `$WORCA_CACHE/ast/<repo-id>/<sha>/graphify/` with a `.complete` marker. Nothing is written into the repo tree.
+Optional, **off by default** (`worca.graphify.enabled`, project-level). The Preflight stage builds a per-commit code knowledge graph with the [graphify](https://github.com/safishamsi/graphify) CLI, content-addressed under `$WORCA_CACHE/ast/` — nothing is written into the repo tree. Agents query it on demand (a bare `graphify query "<question>"` reads the cached graph via the exported `GRAPHIFY_OUT`); they are never fed the report. Authority order: **guide > plan > graph > description** (the graph is advisory orientation). The `pre_tool_use` hook blocks mutating graphify subcommands and allows reads (`worca.governance.guards.block_graphify_mutation`, default `true`) — the pipeline owns all graph builds.
 
-**Agents query the graph on demand — they are not fed the report.** When a `ready` graph exists, the runner exports `GRAPHIFY_OUT=<snapshot>/graphify` into every agent subprocess (`run_agent(..., graphify_out=…)`), so a bare `graphify query "<question>"` reads the cached `graph.json` (graphify ≥0.8.16 honors `GRAPHIFY_OUT` for reads). Each stage prompt carries only a one-line availability note (`{{#if has_graphify}}` in the `.block.md`); the how-to-use guidance is a static `## Knowledge graph (advisory)` section in each agent's core `.md`. No report content or graph path is ever injected. Authority order: **guide > plan > graph > description** (the graph is advisory orientation).
-
-`GRAPH_REPORT.md` is built and cached for **humans** — the UI Graphify tab surfaces a copy-able `graphify query "<question>" --graph <path>` snippet — not for agents.
-
-**Governance:** the `pre_tool_use` hook blocks mutating graphify subcommands (`update`, `install`, `uninstall`, `add`, `hook`, `merge-driver`, `watch`, `clone`) and allows reads (`query`, `explain`, `path`, `affected`, `diagnose`), gated by `worca.governance.guards.block_graphify_mutation` (default `true`). The pipeline owns all graph builds (preflight + post-guardian cache-warm), run as detached subprocesses that bypass the hook.
-
-**Install (only if enabling):** `uv tool install 'graphifyy>=0.8.16,<1'` — the PyPI package is `graphifyy` (double-y); the CLI it installs is `graphify`. Prefer `uv`/`pipx` over plain `pip` so the CLI lands on PATH. Worca pins `>=0.8.16,<1` (the `update` command + `GRAPHIFY_OUT`-honoring reads).
-
-Spec: [`docs/plans/W-053-graphify-integration.md`](./docs/plans/W-053-graphify-integration.md).
+**Install (only if enabling):** `uv tool install 'graphifyy>=0.8.16,<1'` — the PyPI package is `graphifyy` (double-y); the CLI it installs is `graphify`. Full spec: [`docs/plans/W-053-graphify-integration.md`](./docs/plans/W-053-graphify-integration.md).
 
 ## worca-ui Development
 
@@ -439,7 +364,7 @@ Running worktrees are never eligible for cleanup. Use `git worktree list` to see
 
 ## Fleet Runs
 
-Fan out a single work-request to N independent projects in parallel via `python .claude/scripts/run_fleet.py --projects <paths> --prompt "..."`. Supports `--guide` (repeatable), `--plan` (shared plan skips child Planner), `--plan-first` (reference-project planning), `--base`/`--head-template` for branch naming, `--max-parallel` (default 5), and a circuit breaker on failure ratio (default 0.30).
+Fan out a single work-request to N independent projects in parallel via `python .claude/worca/scripts/run_fleet.py --projects <paths> --prompt "..."`. Supports `--guide` (repeatable), `--plan` (shared plan skips child Planner), `--plan-first` (reference-project planning), `--base`/`--head-template` for branch naming, `--max-parallel` (default 5), and a circuit breaker on failure ratio (default 0.30).
 
 Lifecycle actions on an existing fleet_id: `--pause` (paused at next checkpoint), `--stop` (immediate SIGTERM), `--resume` (continues in place or re-dispatches failed children). `--branch` is explicitly rejected — use `--base` + `--head-template`. Worktree cleanup via `worca cleanup --fleet-id <id>`.
 
@@ -447,7 +372,7 @@ Full walkthrough (every flag, halt-vs-pause-vs-stop matrix, circuit breaker sema
 
 ## Workspace Runs
 
-Coordinate changes across interdependent projects with dependency-ordered execution via `python .claude/scripts/run_workspace.py <parent-dir> --prompt "..."`. Unlike fleet runs (same prompt to N independent projects), workspace runs decompose one prompt into per-project sub-plans, execute them in DAG tier order, run cross-project integration tests, and create linked PRs with dependency metadata.
+Coordinate changes across interdependent projects with dependency-ordered execution via `python .claude/worca/scripts/run_workspace.py <parent-dir> --prompt "..."`. Unlike fleet runs (same prompt to N independent projects), workspace runs decompose one prompt into per-project sub-plans, execute them in DAG tier order, run cross-project integration tests, and create linked PRs with dependency metadata.
 
 A workspace is defined by `workspace.json` in a parent directory listing sibling projects with `depends_on` relationships, an optional `integration_test` command, and an optional `umbrella_repo`. Initialize with `worca workspace init <parent>`. Child pipelines are standard worca runs via `run_worktree.py` — governance, hooks, and stage machinery are unchanged.
 
