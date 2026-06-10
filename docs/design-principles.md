@@ -2,6 +2,7 @@
 
 Consolidated rationale behind worca-cc's major architectural choices — the *why*, not the *how*.
 Implementation detail lives in the per-feature plans under [`docs/plans/`](./plans/); this doc is the index of decisions.
+For a point-in-time audit of how well the implementation lives up to these principles (robustness, modularity, duplication), see [`architecture-review-2026-06.md`](./architecture-review-2026-06.md).
 
 ## UI Stack
 - **Shoelace** for components — polished modern UI without adopting a heavy framework.
