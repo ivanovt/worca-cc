@@ -1,7 +1,7 @@
 {
   "id": "feature-minor",
   "name": "Minor Feature",
-  "description": "Lean feature pipeline for well-scoped work a planner can handle confidently. Full implement/test/review/PR; no plan-review stage, no learn stage, no plan-approval gate \u2014 runs autonomously. Supplying a plan skips the PLAN stage.",
+  "description": "Lean autonomous pipeline for well-scoped features. Full implement/test/review/PR but no plan review, no learn, no approval gates. Good fit for PR-revision work where scope is already constrained by review comments.",
   "builtin": true,
   "created_at": "2026-05-27T00:00:00Z",
   "tags": [

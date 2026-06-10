@@ -1,7 +1,7 @@
 {
   "id": "refactor",
   "name": "Refactor",
-  "description": "Full pipeline with all agents on Opus. Reviewer enforces behavioral preservation. PR opened for human review before merge; learn stage captures invariants surfaced during the refactor.",
+  "description": "Full pipeline for refactor work — \"restructure without changing behavior\", \"behavioral preservation\", \"no functional change\". Review enforces behavioral preservation; learn stage captures invariants. PR opened for human review.",
   "builtin": true,
   "created_at": "2026-03-10T00:00:00Z",
   "tags": [

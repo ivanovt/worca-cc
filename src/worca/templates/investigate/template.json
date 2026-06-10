@@ -1,7 +1,7 @@
 {
   "id": "investigate",
   "name": "Investigation",
-  "description": "Analysis mode. Opus planner explores codebase and produces a detailed report. The guardian publishes the plan to docs/plans/ and opens a PR. No implementation changes.",
+  "description": "Read-only investigation mode — \"how does X work\", \"audit Y\", \"analyze Z\". Produces a detailed analysis report, publishes it to `docs/plans/`, and opens a PR. No code changes.",
   "builtin": true,
   "created_at": "2026-03-10T00:00:00Z",
   "tags": [

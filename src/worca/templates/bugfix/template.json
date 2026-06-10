@@ -1,7 +1,7 @@
 {
   "id": "bugfix",
   "name": "Bugfix",
-  "description": "Fast bug fix pipeline. Opus planner investigates root cause, coordinator creates focused tasks, implementer fixes.",
+  "description": "Fast pipeline for fixing a single defect — bug language (\"fix\", \"broken\", \"regression\"), no pre-drafted plan. Root-cause investigation followed by a targeted fix.",
   "builtin": true,
   "created_at": "2026-03-10T00:00:00Z",
   "tags": [
