@@ -1,4 +1,5 @@
 import { html, nothing } from 'lit-html';
+import { formatCost } from '../utils/format-cost.js';
 
 // ─── Fleet status badge mapping (W-040 §13.7) ────────────────────────────────
 
@@ -82,12 +83,6 @@ function _computeFleetCost(children) {
     }
   }
   return total;
-}
-
-function _formatCost(usd) {
-  if (!usd) return null;
-  if (usd < 0.01) return `$${usd.toFixed(4)}`;
-  return `$${usd.toFixed(2)}`;
 }
 
 // localStorage key per fleet
@@ -176,7 +171,7 @@ export function fleetHeaderView(
   const progressText = progressParts.join(' · ');
 
   const cost = _computeFleetCost(children);
-  const costText = _formatCost(cost);
+  const costText = formatCost(cost);
 
   const toggleIcon = isExpanded ? 'chevron-down' : 'chevron-right';
   const groupClass = isExpanded

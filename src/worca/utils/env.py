@@ -6,6 +6,8 @@ This module discovers those directories at import time and provides an
 env dict that guarantees they're reachable.
 """
 
+import importlib.resources
+import json
 import os
 import shutil
 
@@ -23,21 +25,17 @@ for _tool in _TOOLS:
             _extra_dirs.append(_dir)
 
 
-RESERVED_ENV_KEYS = frozenset({
-    "PATH",
-    "CLAUDECODE",
-    "WORCA_AGENT",
-    "WORCA_PROJECT_ROOT",
-    "WORCA_RUN_ID",
-    "WORCA_RUN_DIR",
-    "WORCA_PLAN_FILE",
-    "WORCA_EVENTS_PATH",
-    "WORCA_TARGET_BRANCH",
-    "WORCA_COVERAGE",
-    "WORCA_SKIP_BEADS",
-    "WORCA_CLAUDE_BIN",
-})
-RESERVED_PREFIXES = ("WORCA_",)
+# Single source of truth for the reserved-env-key denylist, shared with the
+# worca-ui server: build-frontend.js copies this schema into
+# worca-ui/server/schemas/reserved-env-keys.json at every UI build, so the
+# Python runtime and the JS server can never drift (arch review 2026-06).
+_reserved = json.loads(
+    importlib.resources.files("worca.schemas")
+    .joinpath("reserved_env_keys.json")
+    .read_text(encoding="utf-8")
+)
+RESERVED_ENV_KEYS = frozenset(_reserved["keys"])
+RESERVED_PREFIXES = tuple(_reserved["prefixes"])
 
 
 def filter_model_env(model_env: dict[str, str]) -> tuple[dict[str, str], list[str]]:

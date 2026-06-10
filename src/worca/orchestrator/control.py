@@ -58,14 +58,17 @@ def read_control(run_id: str, base: str = _DEFAULT_BASE) -> dict | None:
         Parsed control dict, or None if file does not exist.
 
     Raises:
-        ValueError: If the file contents fail schema validation.
+        ValueError: If the file is not valid JSON or fails schema validation.
     """
     path = control_path(run_id, base=base)
     if not os.path.exists(path):
         return None
 
-    with open(path, encoding="utf-8") as f:
-        data = json.load(f)
+    try:
+        with open(path, encoding="utf-8") as f:
+            data = json.load(f)
+    except json.JSONDecodeError as e:
+        raise ValueError(f"control file {path} is not valid JSON: {e}") from e
 
     _validate(data)
     return data

@@ -85,6 +85,10 @@ export class ProcessManager {
     this.projectRoot = projectRoot || process.cwd();
     this.settingsPath = settingsPath ?? null;
     this.prefsDir = prefsDir ?? null;
+    // Run IDs with a resume spawn currently in flight. The in-place resume
+    // path resolves on a 2s timer (not actual startup), so without this a
+    // second resume request in that window double-spawns the same run.
+    this.startingRuns = new Set();
   }
 
   /**
@@ -417,6 +421,26 @@ export class ProcessManager {
     let resumeCtx = null;
     if (opts.resume && opts.runId) {
       resumeCtx = this.resolveRunContext(opts.runId);
+
+      // Double-spawn guard (architecture review 2026-06): refuse to resume a
+      // run that already has a live pipeline process (pipeline.pid alive) or
+      // a resume spawn still in flight. The body below is synchronous up to
+      // spawn, so check-then-add cannot interleave with another request.
+      if (this.startingRuns.has(opts.runId)) {
+        const err = new Error(
+          `Run ${opts.runId} already has a resume in flight — refusing to spawn a duplicate`,
+        );
+        err.code = 'already_running';
+        throw err;
+      }
+      const running = this.getRunningPid(opts.runId);
+      if (running) {
+        const err = new Error(
+          `Run ${opts.runId} already has a live pipeline process (pid ${running.pid}) — refusing to spawn a duplicate`,
+        );
+        err.code = 'already_running';
+        throw err;
+      }
     }
     const cwd =
       resumeCtx && resumeCtx.worcaDir !== this.worcaDir
@@ -643,7 +667,14 @@ export class ProcessManager {
       });
     }
 
-    return new Promise((resolve, reject) => {
+    // Claim the in-flight slot just before spawning (sync from the guard
+    // check above, so no interleaving) and release it once the spawn settles
+    // — by then the runner has normally written its pipeline.pid, which the
+    // getRunningPid() guard takes over from here.
+    const startingRunId = opts.resume && opts.runId ? opts.runId : null;
+    if (startingRunId) this.startingRuns.add(startingRunId);
+
+    const startPromise = new Promise((resolve, reject) => {
       const child = spawn('python3', args, {
         detached: true,
         stdio: 'ignore',
@@ -692,6 +723,13 @@ export class ProcessManager {
         resolve({ pid: child.pid });
       });
     });
+
+    if (startingRunId) {
+      return startPromise.finally(() => {
+        this.startingRuns.delete(startingRunId);
+      });
+    }
+    return startPromise;
   }
 
   /**

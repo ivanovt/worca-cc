@@ -608,21 +608,36 @@ _A code knowledge graph is preloaded — **orient with `graphify query "<questio
 {{/if}}"""
 
 
+def test_graphify_reminder_block_carries_canonical_note():
+    """The canonical per-run graphify availability note is single-sourced in
+    graphify-reminder.block.md (arch review 2026-06 dedup) — stage blocks
+    reference it via {{block:graphify-reminder}} instead of carrying copies."""
+    assert _read("graphify-reminder.block.md").strip() == GRAPHIFY_NOTE_TEXT
+
+
 def test_graphify_note_present_in_all_block_files():
-    """Every .block.md must include the canonical per-run graphify
-    availability note."""
+    """Every stage .block.md must reference the shared graphify reminder block
+    (resolved recursively by resolve_blocks at prompt-build time)."""
     drift = []
     for fname in ALL_BLOCK_FILES:
         content = _read(fname)
-        if GRAPHIFY_NOTE_TEXT not in content:
+        if "{{block:graphify-reminder}}" not in content:
             drift.append(fname)
     assert not drift, (
-        "graphify note missing from: "
+        "graphify reminder block reference missing from: "
         + ", ".join(drift)
-        + " — note must be byte-identical across all .block.md files. "
-        "If you intentionally changed the wording, update GRAPHIFY_NOTE_TEXT "
-        "in this test and apply the same change to every file in "
-        "ALL_BLOCK_FILES."
+        + " — every stage .block.md must contain {{block:graphify-reminder}}."
+    )
+
+
+def test_crg_reminder_block_referenced_in_all_block_files():
+    """Same single-sourcing for the CRG availability note."""
+    drift = [
+        fname for fname in ALL_BLOCK_FILES
+        if "{{block:crg-reminder}}" not in _read(fname)
+    ]
+    assert not drift, (
+        "crg reminder block reference missing from: " + ", ".join(drift)
     )
 
 
@@ -651,7 +666,7 @@ def test_graphify_note_appears_after_guide_block():
     for fname in ALL_BLOCK_FILES:
         content = _read(fname)
         guide_pos = content.find("{{#if has_guide}}")
-        graph_pos = content.find("{{#if has_graphify}}")
+        graph_pos = content.find("{{block:graphify-reminder}}")
         if guide_pos >= 0 and graph_pos >= 0 and graph_pos < guide_pos:
             wrong_order.append(fname)
     assert not wrong_order, (
@@ -677,14 +692,24 @@ CORE_AGENT_FILES = [
 KNOWLEDGE_GRAPH_HEADING = "## Knowledge graph (use for orientation)"
 
 
+def test_knowledge_graph_section_single_sourced():
+    """The how-to-use-the-graph behavior section is single-sourced in
+    graphify-orientation.block.md (arch review 2026-06 dedup), wrapped in
+    {{#if has_graphify}} so it only renders when a graph is attached."""
+    block = _read("graphify-orientation.block.md")
+    assert KNOWLEDGE_GRAPH_HEADING in block
+    assert "{{#if has_graphify}}" in block
+    assert "graphify query" in block
+
+
 def test_knowledge_graph_section_in_all_core_agents():
-    """Every pipeline agent's core .md defines the how-to-use-the-graph
-    behavior, wrapped in {{#if has_graphify}} so it only renders when a graph is
-    attached. The per-run note in .block.md reinforces it in the user message."""
+    """Every pipeline agent's core .md pulls in the shared knowledge-graph
+    section via {{block:graphify-orientation}} (resolved by resolve_agent)."""
     missing = []
     for fname in CORE_AGENT_FILES:
-        if KNOWLEDGE_GRAPH_HEADING not in _read(fname):
+        if "{{block:graphify-orientation}}" not in _read(fname):
             missing.append(fname)
     assert not missing, (
-        "Knowledge graph section missing from core agents: " + ", ".join(missing)
+        "graphify-orientation block reference missing from core agents: "
+        + ", ".join(missing)
     )

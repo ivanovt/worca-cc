@@ -609,3 +609,88 @@ class TestDeliverWebhookSync:
             deliver_webhook_sync(SAMPLE_EVENT, wh)
 
         assert timeouts_used == [8.0]  # timeout_ms / 1000
+
+
+# ---------------------------------------------------------------------------
+# Delivery audit trail (architecture review 2026-06)
+# ---------------------------------------------------------------------------
+
+
+class TestDeliveryAuditTrail:
+    """Delivery outcomes are recorded to webhook-deliveries.jsonl so operators
+    can tell whether a webhook was attempted and whether it succeeded —
+    stderr-only logging left no per-run audit trail."""
+
+    @pytest.fixture(autouse=True)
+    def _audit(self, tmp_path):
+        from worca.events.webhook import set_delivery_audit_path
+        self.audit_path = str(tmp_path / "webhook-deliveries.jsonl")
+        set_delivery_audit_path(self.audit_path)
+        yield
+        set_delivery_audit_path(None)
+
+    def _records(self):
+        with open(self.audit_path, encoding="utf-8") as f:
+            return [json.loads(line) for line in f if line.strip()]
+
+    def _ok_urlopen(self, req, timeout):
+        resp = MagicMock()
+        resp.__enter__ = lambda s: s
+        resp.__exit__ = MagicMock(return_value=False)
+        resp.status = 200
+        resp.read.return_value = b"{}"
+        return resp
+
+    def test_success_recorded(self):
+        wh = _wh(events=["*"])
+        with patch("urllib.request.urlopen", side_effect=self._ok_urlopen):
+            deliver_webhook_sync(SAMPLE_EVENT, wh)
+
+        recs = self._records()
+        assert len(recs) == 1
+        assert recs[0]["outcome"] == "delivered"
+        assert recs[0]["event_type"] == "pipeline.run.started"
+        assert recs[0]["event_id"] == SAMPLE_EVENT["event_id"]
+        assert recs[0]["url"] == wh["url"]
+
+    def test_non_retryable_4xx_recorded_as_failed(self):
+        def fake_urlopen(req, timeout):
+            resp = MagicMock()
+            resp.__enter__ = lambda s: s
+            resp.__exit__ = MagicMock(return_value=False)
+            resp.status = 404
+            resp.read.return_value = b""
+            return resp
+
+        wh = _wh(events=["*"])
+        with patch("urllib.request.urlopen", side_effect=fake_urlopen):
+            deliver_webhook_sync(SAMPLE_EVENT, wh)
+
+        recs = self._records()
+        assert len(recs) == 1
+        assert recs[0]["outcome"] == "failed"
+        assert "404" in recs[0]["detail"]
+
+    def test_retries_exhausted_recorded_as_failed(self):
+        from urllib.error import URLError
+
+        wh = _wh(events=["*"], max_retries=1)
+        with patch("urllib.request.urlopen", side_effect=URLError("refused")), \
+             patch("time.sleep"):
+            deliver_webhook_sync(SAMPLE_EVENT, wh)
+
+        recs = self._records()
+        assert len(recs) == 1
+        assert recs[0]["outcome"] == "failed"
+        assert recs[0]["attempts"] >= 1
+
+    def test_no_audit_path_is_noop(self):
+        """With no audit path configured, delivery works and nothing is written."""
+        from worca.events.webhook import set_delivery_audit_path
+        set_delivery_audit_path(None)
+        wh = _wh(events=["*"])
+        with patch("urllib.request.urlopen", side_effect=self._ok_urlopen):
+            result = deliver_webhook_sync(SAMPLE_EVENT, wh)
+        assert result == {}
+        import os
+        assert not os.path.exists(self.audit_path)

@@ -5,23 +5,18 @@
 
 import { mkdir, open, readFile } from 'node:fs/promises';
 import { dirname } from 'node:path';
-import { toTelegramHtml } from '../markdown.js';
+import {
+  renderSegments,
+  SEND_BACKOFF_DELAYS,
+  TELEGRAM_HTML_STYLE,
+} from '../render-segments.js';
 
 const TELEGRAM_API = 'https://api.telegram.org';
 const LONG_POLL_TIMEOUT_SEC = 30;
-const SEND_BACKOFF_DELAYS = [1000, 5000, 30000];
 
 // ---------------------------------------------------------------------------
-// HTML escaping + renderer
+// HTML renderer
 // ---------------------------------------------------------------------------
-
-function escapeHtml(text) {
-  return String(text)
-    .replace(/&/g, '&amp;')
-    .replace(/</g, '&lt;')
-    .replace(/>/g, '&gt;')
-    .replace(/"/g, '&quot;');
-}
 
 /**
  * Render a NormalizedMessage to Telegram HTML.
@@ -29,34 +24,7 @@ function escapeHtml(text) {
  * @returns {string}
  */
 export function renderToHtml(msg) {
-  const parts = [];
-  if (msg.title) {
-    parts.push(`<b>${escapeHtml(msg.title)}</b>\n`);
-  }
-  for (const seg of msg.body) {
-    switch (seg.kind) {
-      case 'markdown':
-        parts.push(toTelegramHtml(seg.value));
-        break;
-      case 'bold':
-        parts.push(`<b>${escapeHtml(seg.value)}</b>`);
-        break;
-      case 'code':
-        parts.push(`<code>${escapeHtml(seg.value)}</code>`);
-        break;
-      case 'code_block':
-        parts.push(`<pre>${escapeHtml(seg.value)}</pre>`);
-        break;
-      case 'link':
-        parts.push(
-          `<a href="${escapeHtml(seg.href ?? '')}">${escapeHtml(seg.value)}</a>`,
-        );
-        break;
-      default: // 'text'
-        parts.push(escapeHtml(seg.value));
-    }
-  }
-  return parts.join('');
+  return renderSegments(msg, TELEGRAM_HTML_STYLE);
 }
 
 // ---------------------------------------------------------------------------

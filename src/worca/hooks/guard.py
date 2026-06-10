@@ -131,23 +131,41 @@ def _is_force_push(command: str) -> bool:
     return False
 
 
+# Token-boundary aware: matches `git commit` (any whitespace) but not the
+# read-only subcommands `git commit-graph` / `git commit-tree`, nor unrelated
+# words like "commitment".
+_GIT_COMMIT_RE = re.compile(r"\bgit\s+commit(?![\w-])")
+
+
 def _is_git_commit(command: str) -> bool:
-    """Check if command contains git commit."""
+    """Check if command invokes git commit (not commit-graph/commit-tree)."""
     if _is_safe_command(command):
         return False
-    return "git commit" in command
+    return bool(_GIT_COMMIT_RE.search(command))
+
+
+# Boundary-aware test-runner detection. Covers the runners this repo and its
+# consumer projects actually use; \b prevents matching inside unrelated words
+# (e.g. "digest" must not match "jest").
+_TEST_COMMAND_RES = tuple(re.compile(p) for p in (
+    r"\bpytest\b",
+    r"\bnpm\s+(?:run\s+)?test\b",
+    r"\byarn\s+test\b",
+    r"\bcargo\s+test\b",
+    r"\bgo\s+test\b",
+    r"\bvitest\b",
+    r"\bjest\b",
+    r"\bmake\s+test\b",
+    r"\bplaywright\s+test\b",
+))
 
 
 def _is_test_command(command: str) -> bool:
     """Check if command runs tests."""
     if _is_safe_command(command):
         return False
-    test_patterns = [
-        "pytest", "python -m pytest", "npm test", "npm run test",
-        "yarn test", "cargo test", "go test",
-    ]
     cmd_lower = command.lower()
-    return any(p in cmd_lower for p in test_patterns)
+    return any(r.search(cmd_lower) for r in _TEST_COMMAND_RES)
 
 
 def _is_file_write_via_bash(command: str) -> bool:
@@ -266,15 +284,21 @@ def _crg_mutation_guard_enabled() -> bool:
 def _guard_flag_enabled(key: str) -> bool:
     """Whether a governance guard flag is active (default True).
 
-    Reads ``worca.governance.guards.<key>`` from the project settings
-    (resolved relative to the hook's cwd, which the pre_tool_use hook pins
-    to the project root). Defaults to True — and stays True on any read
-    error — so the guard is on unless a project explicitly opts out.
+    Reads ``worca.governance.guards.<key>`` from the same settings file the
+    dispatch hooks use: ``WORCA_SETTINGS_PATH`` (the runner-pinned *effective*
+    settings — template-merged) when set, else the project's on-disk
+    ``.claude/settings.json`` (resolved relative to the hook's cwd, which the
+    pre_tool_use hook pins to the project root). Defaults to True — and stays
+    True on any read error — so the guard is on unless a project explicitly
+    opts out.
     """
     try:
+        from worca.hooks.tracking import _settings_path
         from worca.utils.settings import load_settings
+
+        path = _settings_path() or ".claude/settings.json"
         guards = (
-            load_settings(".claude/settings.json")
+            load_settings(path)
             .get("worca", {})
             .get("governance", {})
             .get("guards", {})

@@ -25,7 +25,7 @@
     "bin/worca-ui.js",
     "server/**/*.js",
     "server/schemas/keys.json",
-    "server/reserved-env-keys.json",
+    "server/schemas/reserved-env-keys.json",
     "server/known-tools.json",
     "server/known-skills.json",
     "!server/**/*.test.js",
@@ -41,6 +41,7 @@
     "app/utils/stage-order.js",
     "app/utils/state-actions.js",
     "app/utils/status-constants.js",
+    "app/utils/event-constants.js",
     "scripts/build-frontend.js"
   ],
   "engines": {

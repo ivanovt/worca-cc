@@ -1,6 +1,7 @@
 import { html, nothing } from 'lit-html';
 import { unsafeHTML } from 'lit-html/directives/unsafe-html.js';
 import { elapsed, formatDuration, formatTimestamp } from '../utils/duration.js';
+import { formatCost } from '../utils/format-cost.js';
 import { Archive, iconSvg, Pause, Play, RotateCcw } from '../utils/icons.js';
 import { statusClass, statusIcon } from '../utils/status-badge.js';
 import { fleetStatusTooltip, fleetStatusVariant } from './group-rendering.js';
@@ -47,12 +48,6 @@ export function projectBadgesView(children = []) {
 function _resolveChildStatus(child) {
   // Manifest children carry `status`; live Run objects carry `pipeline_status`.
   return child.status || child.pipeline_status || 'pending';
-}
-
-function _formatCost(usd) {
-  if (!usd) return null;
-  if (usd < 0.01) return `$${usd.toFixed(4)}`;
-  return `$${usd.toFixed(2)}`;
 }
 
 function _aggregateCounts(children) {
@@ -271,8 +266,8 @@ export function fleetCardView(fleet, children = [], options = {}) {
             : nothing
         }
         ${
-          _formatCost(costUsd)
-            ? html`<span class="run-card-meta-item"><span class="meta-label">Cost:</span> <span class="meta-value">${_formatCost(costUsd)}</span></span>`
+          formatCost(costUsd)
+            ? html`<span class="run-card-meta-item"><span class="meta-label">Cost:</span> <span class="meta-value">${formatCost(costUsd)}</span></span>`
             : nothing
         }
       </div>

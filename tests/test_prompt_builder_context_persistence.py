@@ -3,6 +3,7 @@
 import json
 import os
 
+import pytest
 
 from worca.orchestrator.prompt_builder import PromptBuilder
 
@@ -253,6 +254,24 @@ def test_save_context_no_truncation_when_under_100kb(tmp_path):
 
     assert "plan_approach" in data
     assert "assigned_bead_id" in data
+
+
+def test_load_context_corrupt_json_raises(tmp_path):
+    """A corrupt prompt_context.json must fail the resume loudly, not silently
+    continue with missing inter-stage context (arch review 2026-06)."""
+    ctx_path = str(tmp_path / "prompt_context.json")
+    with open(ctx_path, "w") as f:
+        f.write("{broken json!")
+
+    pb = PromptBuilder("title", "desc")
+    with pytest.raises(ValueError, match="prompt_context"):
+        pb.load_context(ctx_path)
+
+
+def test_load_context_missing_file_still_noop(tmp_path):
+    """Missing file remains a silent no-op — only *corrupt* files are fatal."""
+    pb = PromptBuilder("title", "desc")
+    pb.load_context(str(tmp_path / "does_not_exist.json"))  # must not raise
 
 
 def test_load_context_after_resume_affects_context(tmp_path):

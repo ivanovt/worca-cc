@@ -15,6 +15,7 @@
       "scripts/**/*.js",
       "!app/main.bundle.js",
       "!app/utils/status-constants.js",
+      "!app/utils/event-constants.js",
       "!node_modules"
     ]
   },

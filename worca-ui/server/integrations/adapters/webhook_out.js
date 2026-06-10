@@ -3,9 +3,13 @@
  * @module adapters/webhook_out
  */
 
-import { toDiscordMarkdown, toPlainText, toSlackMrkdwn } from '../markdown.js';
-
-const SEND_BACKOFF_DELAYS = [1000, 5000, 30000];
+import { toPlainText } from '../markdown.js';
+import {
+  DISCORD_STYLE,
+  renderSegments,
+  SEND_BACKOFF_DELAYS,
+  SLACK_STYLE,
+} from '../render-segments.js';
 
 // ---------------------------------------------------------------------------
 // Internal text helpers
@@ -20,57 +24,11 @@ function bodyToPlain(msg) {
 }
 
 function bodyToMrkdwn(msg) {
-  const parts = [];
-  if (msg.title) parts.push(`*${msg.title}*\n`);
-  for (const seg of msg.body) {
-    switch (seg.kind) {
-      case 'markdown':
-        parts.push(toSlackMrkdwn(seg.value));
-        break;
-      case 'bold':
-        parts.push(`*${seg.value}*`);
-        break;
-      case 'code':
-        parts.push(`\`${seg.value}\``);
-        break;
-      case 'code_block':
-        parts.push(`\`\`\`\n${seg.value}\n\`\`\``);
-        break;
-      case 'link':
-        parts.push(`<${seg.href ?? ''}|${seg.value}>`);
-        break;
-      default:
-        parts.push(seg.value);
-    }
-  }
-  return parts.join('');
+  return renderSegments(msg, SLACK_STYLE);
 }
 
 function bodyToMarkdown(msg) {
-  const parts = [];
-  if (msg.title) parts.push(`**${msg.title}**\n`);
-  for (const seg of msg.body) {
-    switch (seg.kind) {
-      case 'markdown':
-        parts.push(toDiscordMarkdown(seg.value));
-        break;
-      case 'bold':
-        parts.push(`**${seg.value}**`);
-        break;
-      case 'code':
-        parts.push(`\`${seg.value}\``);
-        break;
-      case 'code_block':
-        parts.push(`\`\`\`\n${seg.value}\n\`\`\``);
-        break;
-      case 'link':
-        parts.push(`[${seg.value}](${seg.href ?? ''})`);
-        break;
-      default:
-        parts.push(seg.value);
-    }
-  }
-  return parts.join('');
+  return renderSegments(msg, DISCORD_STYLE);
 }
 
 // ---------------------------------------------------------------------------

@@ -150,3 +150,17 @@ def test_valid_actions_contains_pause():
 
 def test_valid_actions_contains_stop():
     assert "stop" in VALID_ACTIONS
+
+
+# --- malformed JSON (architecture review 2026-06) ---
+
+
+def test_read_control_malformed_json_raises_value_error(tmp_path):
+    """A control file with broken JSON raises a descriptive ValueError, not a raw JSONDecodeError."""
+    from pathlib import Path
+
+    p = Path(control_path("run-1", base=str(tmp_path)))
+    p.parent.mkdir(parents=True, exist_ok=True)
+    p.write_text("{not valid json", encoding="utf-8")
+    with pytest.raises(ValueError, match="not valid JSON"):
+        read_control("run-1", base=str(tmp_path))
