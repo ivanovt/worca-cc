@@ -50,7 +50,7 @@ The `depends_on` lists form a DAG. Projects are sorted into **tiers**: tier 0 ha
 ## Launch
 
 ```bash
-python .claude/scripts/run_workspace.py /path/to/parent \
+python .claude/worca/scripts/run_workspace.py /path/to/parent \
   --prompt "Add user authentication across all services"
 ```
 
@@ -91,7 +91,7 @@ Children run with PR creation deferred to the orchestrator, so they commit and p
 ## Resume and cleanup
 
 ```bash
-python .claude/scripts/run_workspace.py /path/to/parent --resume ws_202601011200_abc12345
+python .claude/worca/scripts/run_workspace.py /path/to/parent --resume ws_202601011200_abc12345
 worca cleanup --workspace-id ws_202601011200_abc12345
 ```
 

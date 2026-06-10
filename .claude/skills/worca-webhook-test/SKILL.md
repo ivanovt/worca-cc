@@ -161,6 +161,6 @@ If `--save-response`, also write the raw response to `/tmp/worca-webhook-test-<e
 ## What this skill does NOT do
 
 - Does not configure webhooks in `settings.json` — that's a manual edit.
-- Does not run the full pipeline — use `python .claude/scripts/run_pipeline.py` for that.
+- Does not run the full pipeline — use `python .claude/worca/scripts/run_pipeline.py` for that.
 - Does not test receiver retry behavior — only sends one POST.
 - Does not enumerate all event types — for that, see `docs/events.md`.

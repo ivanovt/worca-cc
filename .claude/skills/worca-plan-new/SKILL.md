@@ -187,5 +187,5 @@ Plan created:
 Next:
   1. Fill in the plan stub (Problem, Proposal, Design, Implementation Plan, Test Plan).
   2. Run /worca-plan-template-reviewer once the plan is drafted to check conventions.
-  3. Start work with: python .claude/scripts/run_worktree.py --source gh:issue:<number>
+  3. Start work with: python .claude/worca/scripts/run_worktree.py --source gh:issue:<number>
 ```

@@ -12,7 +12,7 @@ worca workspace init /path/to/parent
 
 # 2. Edit workspace.json to define dependencies and integration test
 # 3. Run the workspace pipeline
-python .claude/scripts/run_workspace.py /path/to/parent \
+python .claude/worca/scripts/run_workspace.py /path/to/parent \
   --prompt "Add user authentication across all services"
 ```
 
@@ -140,31 +140,31 @@ Workspace runs support four planning modes, controlled by `--skip-planning`, `--
 
 ```bash
 # Basic workspace run
-python .claude/scripts/run_workspace.py /path/to/parent \
+python .claude/worca/scripts/run_workspace.py /path/to/parent \
   --prompt "Add user authentication"
 
 # With normative guide
-python .claude/scripts/run_workspace.py /path/to/parent \
+python .claude/worca/scripts/run_workspace.py /path/to/parent \
   --prompt "Migrate to v2 API" \
   --guide ./migration-spec.md \
   --guide ./breaking-changes.md
 
 # Skip planning (each project plans independently)
-python .claude/scripts/run_workspace.py /path/to/parent \
+python .claude/worca/scripts/run_workspace.py /path/to/parent \
   --prompt "Apply logging standards" \
   --skip-planning
 
 # Custom branch names
-python .claude/scripts/run_workspace.py /path/to/parent \
+python .claude/worca/scripts/run_workspace.py /path/to/parent \
   --prompt "Add auth" \
   --branch "feat/auth/{project}"
 
 # Dry run — inspect the DAG without launching
-python .claude/scripts/run_workspace.py /path/to/parent \
+python .claude/worca/scripts/run_workspace.py /path/to/parent \
   --prompt "Add auth" --dry-run
 
 # From a GitHub issue
-python .claude/scripts/run_workspace.py /path/to/parent \
+python .claude/worca/scripts/run_workspace.py /path/to/parent \
   --source gh:issue:42
 ```
 
@@ -173,7 +173,7 @@ python .claude/scripts/run_workspace.py /path/to/parent \
 Attach one or more normative reference guides with `--guide`:
 
 ```bash
-python .claude/scripts/run_workspace.py /path/to/parent \
+python .claude/worca/scripts/run_workspace.py /path/to/parent \
   --prompt "Migrate to v2 API" \
   --guide ./migration-spec.md
 ```
@@ -274,7 +274,7 @@ Children run with `WORCA_DEFER_PR=1`, so they commit and push their branch but s
 Failed, halted, and `integration_failed` workspace runs can be resumed:
 
 ```bash
-python .claude/scripts/run_workspace.py /path/to/parent \
+python .claude/worca/scripts/run_workspace.py /path/to/parent \
   --resume ws_202601011200_abc12345
 ```
 

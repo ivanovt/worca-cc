@@ -367,7 +367,7 @@ W-040: Fleet runs — cross-repository fan-out of a single work-request.
 - **`run_fleet.py`** — new entry point that fans a single work-request out to N independent project repositories in parallel. Each target gets its own isolated pipeline (own git worktree, own branch, own PR), grouped under a shared `fleet_id` in `pipelines.d/`.
 
   ```bash
-  python .claude/scripts/run_fleet.py \
+  python .claude/worca/scripts/run_fleet.py \
     --projects /path/to/repo-a /path/to/repo-b /path/to/repo-c \
     --prompt "Apply authentication migration"
   ```
@@ -434,7 +434,7 @@ W-047: Multi-repo coordinated pipelines (workspace runs).
 - **`run_workspace.py`** — new entry point that coordinates changes across interdependent repos with dependency-ordered execution. Unlike fleet runs (same prompt to N repos), workspace runs decompose one prompt into repo-specific sub-plans, execute them in DAG tier order, run cross-repo integration tests, and create linked PRs with dependency metadata.
 
   ```bash
-  python .claude/scripts/run_workspace.py /path/to/parent \
+  python .claude/worca/scripts/run_workspace.py /path/to/parent \
     --prompt "Add user authentication across all services"
   ```
 

@@ -268,7 +268,7 @@ claude                    # then type: /worca-sync
 #    contributors use and exercises the full UI → server → orchestrator flow.
 #
 #    CLI fallback (headless/CI):
-#    python .claude/scripts/run_pipeline.py --prompt "your test task"
+#    python .claude/worca/scripts/run_pipeline.py --prompt "your test task"
 ```
 
 ## Cutting Release Candidates

@@ -43,7 +43,7 @@ worca status <run-id>
 
 ## The underlying scripts
 
-`worca run` is a thin wrapper over the pipeline entry-point scripts in `.claude/scripts/`. For fleet and workspace runs you call those scripts directly — `run_fleet.py` and `run_workspace.py` — covered in [Fleet runs](/advanced/fleet-runs/) and [Workspace runs](/advanced/workspace-runs/). The full flag tables for all four scripts are in the [Pipeline scripts reference](/reference/pipeline-scripts/).
+`worca run` is a thin wrapper over the pipeline entry-point scripts in `.claude/worca/scripts/`. For fleet and workspace runs you call those scripts directly — `run_fleet.py` and `run_workspace.py` — covered in [Fleet runs](/advanced/fleet-runs/) and [Workspace runs](/advanced/workspace-runs/). The full flag tables for all four scripts are in the [Pipeline scripts reference](/reference/pipeline-scripts/).
 
 :::caution[Governance]
 Outside the dashboard you still get worca's governance — only the Guardian can commit, dangerous operations are blocked, and the test gate halts repeated failures. See [Governance](/concepts/governance/).

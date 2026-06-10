@@ -5,7 +5,7 @@ sidebar:
   order: 2
 ---
 
-The run modes are backed by four scripts in `.claude/scripts/`. `worca run` wraps the single-run ones; fleet and workspace runs call their scripts directly. Run any with `--help` for the version-matched list.
+The run modes are backed by four scripts in `.claude/worca/scripts/`. `worca run` wraps the single-run ones; fleet and workspace runs call their scripts directly. Run any with `--help` for the version-matched list.
 
 :::tip
 The [Run Pipeline launcher](/running-pipelines/launching-a-run/) is the recommended way to start single, worktree, fleet, and workspace runs — it sets the template, guide, parallelism, and tier order for you. These scripts are the low-level surface the launcher (and `worca run`) invokes; reach for them when scripting in CI or driving a run headlessly.

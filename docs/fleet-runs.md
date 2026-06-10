@@ -5,7 +5,7 @@ Fan out a single work-request to N independent project repositories in parallel.
 ## Quick start
 
 ```bash
-python .claude/scripts/run_fleet.py \
+python .claude/worca/scripts/run_fleet.py \
   --projects /path/to/repo-a /path/to/repo-b /path/to/repo-c \
   --prompt "Apply the new authentication standard"
 ```
@@ -174,12 +174,12 @@ Pass project paths inline or via a file:
 
 ```bash
 # Inline
-python .claude/scripts/run_fleet.py \
+python .claude/worca/scripts/run_fleet.py \
   --projects /repos/frontend /repos/backend /repos/mobile \
   --prompt "Upgrade ESLint to v9"
 
 # From a file (one path per line)
-python .claude/scripts/run_fleet.py \
+python .claude/worca/scripts/run_fleet.py \
   --projects-file repos.txt \
   --prompt "Upgrade ESLint to v9"
 ```
@@ -190,12 +190,12 @@ Use `--prompt` for inline text or `--source` for an external reference. They are
 
 ```bash
 # From a GitHub issue
-python .claude/scripts/run_fleet.py \
+python .claude/worca/scripts/run_fleet.py \
   --projects /repos/frontend /repos/backend \
   --source gh:issue:42
 
 # From a bead
-python .claude/scripts/run_fleet.py \
+python .claude/worca/scripts/run_fleet.py \
   --projects /repos/frontend /repos/backend \
   --source bd:bd-abc123
 ```
@@ -205,7 +205,7 @@ python .claude/scripts/run_fleet.py \
 A guide is a normative reference document (migration spec, RFC, compliance requirement) that every child's agents must treat as the highest-authority source. Attach one or more guides with `--guide`:
 
 ```bash
-python .claude/scripts/run_fleet.py \
+python .claude/worca/scripts/run_fleet.py \
   --projects /repos/frontend /repos/backend \
   --prompt "Migrate to v2 API" \
   --guide ./migration-spec.md \
@@ -228,7 +228,7 @@ Fleet children need distinct branch names to avoid PR collisions. Two separate f
 | `--base BRANCH` | PR base branch shared across the fleet | `main` |
 
 ```bash
-python .claude/scripts/run_fleet.py \
+python .claude/worca/scripts/run_fleet.py \
   --projects /repos/frontend /repos/backend \
   --prompt "Migrate to v2 API" \
   --head-template "migration/v2/{project}" \
@@ -269,7 +269,7 @@ By default each child runs its own Planner, which produces N independent strateg
 Provide a pre-written plan file. Every child receives it and skips the PLAN stage entirely:
 
 ```bash
-python .claude/scripts/run_fleet.py \
+python .claude/worca/scripts/run_fleet.py \
   --projects /repos/frontend /repos/backend /repos/mobile \
   --prompt "Apply logging standards" \
   --plan ./shared-plan.md
@@ -280,13 +280,13 @@ python .claude/scripts/run_fleet.py \
 The first child runs the Planner; once its `MASTER_PLAN.md` appears, it is copied to `~/.worca/fleet-runs/<fleet_id>/shared-plan.md` and all remaining children launch with that plan:
 
 ```bash
-python .claude/scripts/run_fleet.py \
+python .claude/worca/scripts/run_fleet.py \
   --projects /repos/frontend /repos/backend /repos/mobile \
   --prompt "Migrate to v2 API" \
   --plan-first
 
 # Or specify a reference project explicitly
-python .claude/scripts/run_fleet.py \
+python .claude/worca/scripts/run_fleet.py \
   --projects /repos/frontend /repos/backend /repos/mobile \
   --prompt "Migrate to v2 API" \
   --plan-first /repos/frontend
@@ -307,7 +307,7 @@ Each child runs its own Planner. Strategies may diverge. Use only when per-repo 
 `--max-parallel` caps how many children run concurrently (default: 5). Children are dispatched in batches; the circuit breaker check fires between batches.
 
 ```bash
-python .claude/scripts/run_fleet.py \
+python .claude/worca/scripts/run_fleet.py \
   --projects /repos/a /repos/b /repos/c /repos/d /repos/e /repos/f \
   --prompt "Upgrade dependencies" \
   --max-parallel 3
@@ -319,7 +319,7 @@ The circuit breaker halts unstarted children when failures exceed a threshold. D
 
 ```bash
 # Lower threshold — halt earlier (50% failures)
-python .claude/scripts/run_fleet.py \
+python .claude/worca/scripts/run_fleet.py \
   --projects /repos/a /repos/b /repos/c /repos/d \
   --prompt "Apply migration" \
   --fleet-failure-threshold 0.50
@@ -366,9 +366,9 @@ done
 A running fleet can be paused or stopped, and a halted / stopped / paused / failed fleet can be resumed:
 
 ```bash
-python .claude/scripts/run_fleet.py --pause  f_202601011200_abc12345
-python .claude/scripts/run_fleet.py --stop   f_202601011200_abc12345
-python .claude/scripts/run_fleet.py --resume f_202601011200_abc12345
+python .claude/worca/scripts/run_fleet.py --pause  f_202601011200_abc12345
+python .claude/worca/scripts/run_fleet.py --stop   f_202601011200_abc12345
+python .claude/worca/scripts/run_fleet.py --resume f_202601011200_abc12345
 ```
 
 `--pause`, `--stop`, and `--resume` are mutually exclusive lifecycle actions on an existing `fleet_id`. See [Halt vs. Pause vs. Stop](#halt-vs-pause-vs-stop) for what each does to in-flight children.

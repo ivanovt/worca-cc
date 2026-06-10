@@ -24,7 +24,7 @@ worca run --worktree --prompt "Migrate to the v2 API" --guide ./migration-spec.m
 ```
 
 ```bash
-python .claude/scripts/run_fleet.py \
+python .claude/worca/scripts/run_fleet.py \
   --projects /repos/frontend /repos/backend \
   --prompt "Migrate to the v2 API" \
   --guide ./migration-spec.md \

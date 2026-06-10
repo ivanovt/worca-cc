@@ -43,10 +43,10 @@ Project-wide, you can pin a default in `.claude/settings.json`:
 Or per-run on the CLI:
 
 ```bash
-python .claude/scripts/run_pipeline.py  --prompt "..." --claude-md-mode project
-python .claude/scripts/run_worktree.py  --prompt "..." --claude-md-mode project
-python .claude/scripts/run_fleet.py     --projects ... --claude-md-mode project
-python .claude/scripts/run_workspace.py <parent>     --claude-md-mode project
+python .claude/worca/scripts/run_pipeline.py  --prompt "..." --claude-md-mode project
+python .claude/worca/scripts/run_worktree.py  --prompt "..." --claude-md-mode project
+python .claude/worca/scripts/run_fleet.py     --projects ... --claude-md-mode project
+python .claude/worca/scripts/run_workspace.py <parent>     --claude-md-mode project
 ```
 
 ## Precedence

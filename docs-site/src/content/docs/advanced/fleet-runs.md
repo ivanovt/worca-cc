@@ -18,7 +18,7 @@ The rest of this page is the **CLI and automation** reference — the full flag 
 ## Launching from the CLI
 
 ```bash
-python .claude/scripts/run_fleet.py \
+python .claude/worca/scripts/run_fleet.py \
   --projects /repos/frontend /repos/backend /repos/mobile \
   --prompt "Apply the new authentication standard"
 ```
@@ -42,7 +42,7 @@ done
 Fleet children need distinct branches to avoid PR collisions. Two flags control the two branch concepts — `--head-template` for the per-child branch agents commit to, and `--base` for the shared PR base:
 
 ```bash
-python .claude/scripts/run_fleet.py \
+python .claude/worca/scripts/run_fleet.py \
   --projects /repos/frontend /repos/backend \
   --prompt "Migrate to v2 API" \
   --head-template "migration/v2/{project}" \
@@ -68,7 +68,7 @@ By default each child plans independently, producing N strategies. For fleet wor
 Both defaults (max-parallel and the failure threshold) are set in **Settings → Fleet & guide**; the flags here override them for a single invocation.
 
 ```bash
-python .claude/scripts/run_fleet.py \
+python .claude/worca/scripts/run_fleet.py \
   --projects /repos/a /repos/b /repos/c /repos/d \
   --prompt "Apply migration" \
   --max-parallel 3 \
@@ -88,7 +88,7 @@ Three operator actions wind down an in-flight fleet; none of them launch new chi
 Resume a `halted` / `paused` / `failed` fleet with `--resume <fleet_id>`: paused/interrupted children continue in place, while pending/failed children are re-dispatched fresh. Completed children are left alone.
 
 ```bash
-python .claude/scripts/run_fleet.py --resume f_202601011200_abc12345
+python .claude/worca/scripts/run_fleet.py --resume f_202601011200_abc12345
 ```
 
 Fleet manifests live at `~/.worca/fleet-runs/<fleet_id>.json`. The dashboard's fleet detail view shows the ID in its header.
