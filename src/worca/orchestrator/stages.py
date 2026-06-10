@@ -1,7 +1,19 @@
 """Pipeline stage definitions and transition validation."""
+import os
+import sys
 from enum import Enum
 
-from worca.utils.settings import load_settings, resolve_model
+from worca.utils.settings import (
+    load_settings,
+    load_settings_with_global_fallback,
+    resolve_model,
+    _parse_model_ref,
+    resolve_tier_pinned,
+)
+
+
+class PreflightError(Exception):
+    """Raised when a tier-pinned model ref fails to resolve at preflight time."""
 
 
 class Stage(Enum):
@@ -99,7 +111,12 @@ def _resolve_model(shorthand, model_map):
     return resolve_model(shorthand, model_map)
 
 
-def get_stage_config(stage: Stage, settings_path: str = ".claude/settings.json") -> dict:
+def get_stage_config(
+    stage: Stage,
+    settings_path: str = ".claude/settings.json",
+    *,
+    global_path: str | None = None,
+) -> dict:
     """Read settings.json and return agent config for the given stage.
 
     Agent mapping priority:
@@ -107,10 +124,16 @@ def get_stage_config(stage: Stage, settings_path: str = ".claude/settings.json")
     2. STAGE_AGENT_MAP[stage] (hardcoded default)
 
     Model resolution:
-    1. worca.agents.<agent>.model (shorthand like "sonnet")
-    2. Resolved via worca.models mapping in settings, then _DEFAULT_MODEL_MAP
+    1. WORCA_MODEL_<AGENT> env var (highest priority, logs override to stderr)
+    2. worca.agents.<agent>.model — tier-pinned ('tier:alias') or bare alias
+    3. Resolved via worca.models / _DEFAULT_MODEL_MAP
+
+    Pass global_path to enable tier-pinned ('user:'/'project:') resolution via the
+    per-tier stash.  Without global_path, 'user:' and 'project:' pins raise
+    PreflightError.  'builtin:' pins always work (no stash needed).
     """
-    settings = _read_settings(settings_path)
+    settings = load_settings_with_global_fallback(settings_path, global_path=global_path)
+
     worca = settings.get("worca", {})
 
     # Determine agent: prefer stages config, fall back to hardcoded map
@@ -124,10 +147,39 @@ def get_stage_config(stage: Stage, settings_path: str = ".claude/settings.json")
     agent_config = worca.get("agents", {}).get(agent_name, {})
     model_map = worca.get("models", {})
     raw_model = agent_config.get("model", "sonnet")
-    model_id, model_env = _resolve_model(raw_model, model_map)
+
+    # WORCA_MODEL_<AGENT> env var wins over both bare and tier-pinned refs.
+    env_var_name = f"WORCA_MODEL_{agent_name.upper()}"
+    env_override = os.environ.get(env_var_name)
+    if env_override:
+        print(
+            f"[stages] model override: {env_var_name}={env_override!r} overrides {raw_model!r}",
+            file=sys.stderr,
+        )
+        raw_model = env_override
+
+    # Detect tier-pinned refs; malformed refs fall through to bare passthrough.
+    try:
+        tier, _alias = _parse_model_ref(raw_model)
+    except ValueError:
+        tier = None
+
+    if tier is not None:
+        # user:/project: require the per-tier stash populated by load_settings_with_global_fallback.
+        if tier in ("user", "project") and "_worca_tier_views" not in settings:
+            raise PreflightError(
+                f"tier-pinned ref {raw_model!r}: per-tier views unavailable; "
+                "load settings via load_settings_with_global_fallback"
+            )
+        model_id, model_env, error_msg = resolve_tier_pinned(raw_model, settings)
+        if error_msg:
+            raise PreflightError(error_msg)
+    else:
+        model_id, model_env = _resolve_model(raw_model, model_map)
+
     model_alias = raw_model if raw_model != model_id else None
     _reroutes_api = bool(_ALT_ENDPOINT_ENV_KEYS & set(model_env or {}))
-    cost_alias = raw_model if _reroutes_api else None
+    cost_alias = (_alias if tier else raw_model) if _reroutes_api else None
     return {
         "agent": agent_name,
         "model": model_id,
@@ -139,6 +191,32 @@ def get_stage_config(stage: Stage, settings_path: str = ".claude/settings.json")
         "max_beads": agent_config.get("max_beads", 0),
         "schema": STAGE_SCHEMA_MAP.get(stage, f"{stage.value}.json"),
     }
+
+
+def validate_tier_pinned_agent_models(settings: dict) -> list:
+    """Validate all tier-pinned agent model refs in settings.
+
+    Returns a list of error strings (empty if all pins resolve).
+    Bare refs are ignored — opaque pass-through is preserved.
+    """
+    agents_cfg = settings.get("worca", {}).get("agents", {})
+    errors = []
+    for role, agent_config in agents_cfg.items():
+        if not isinstance(agent_config, dict):
+            continue
+        ref = agent_config.get("model")
+        if ref is None:
+            continue
+        try:
+            tier, _alias = _parse_model_ref(ref)
+        except ValueError:
+            continue  # malformed — caught by template validator
+        if tier is None:
+            continue  # bare ref
+        _, _, error_msg = resolve_tier_pinned(ref, settings)
+        if error_msg:
+            errors.append(f"agents.{role}.model: {error_msg}")
+    return errors
 
 
 def get_enabled_stages(settings_path: str = ".claude/settings.json") -> list:

@@ -33,6 +33,7 @@ from worca.orchestrator.file_access_aggregation import aggregate_iteration_file_
 from worca.orchestrator.stages import (
     Stage, get_stage_config, get_enabled_stages, STAGE_AGENT_MAP,
     is_learn_enabled, resolve_plan_review_mode,
+    PreflightError, validate_tier_pinned_agent_models,
 )
 from worca.orchestrator.work_request import WorkRequest
 from worca.state.status import (
@@ -53,7 +54,7 @@ from worca.utils.proc import pid_is_alive
 from worca.utils.proc_registry import kill_all_tracked
 from worca.utils.git import create_branch, current_branch, get_current_git_head
 from worca.utils.pr_url import parse_pr_url
-from worca.utils.settings import load_global_settings, load_settings
+from worca.utils.settings import load_global_settings, load_settings, load_settings_with_global_fallback
 from worca.scripts.crg_preflight import run_crg_preflight
 from worca.scripts.graphify_preflight import run_graphify_preflight
 from worca.utils.graphify import (
@@ -2876,6 +2877,16 @@ def run_pipeline(
             stage_idx = 0
         else:
             stage_idx = 0
+
+        # Validate tier-pinned agent model refs before entering the stage loop
+        # so errors surface at preflight rather than mid-stage.
+        _tier_settings = load_settings_with_global_fallback(settings_path)
+        _tier_errors = validate_tier_pinned_agent_models(_tier_settings)
+        if _tier_errors:
+            raise PreflightError(
+                "Tier-pinned agent model refs failed to resolve:\n"
+                + "\n".join(f"  {e}" for e in _tier_errors)
+            )
 
         # Track triggers for loop-back iterations
         _next_trigger = {}  # {stage_value: trigger_reason}

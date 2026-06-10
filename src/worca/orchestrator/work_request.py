@@ -8,7 +8,7 @@ from typing import Optional
 
 from worca.utils.env import get_env, filter_model_env
 from worca.utils.gh_pr import current_repo_nwo, fetch_review_feedback
-from worca.utils.settings import load_settings, resolve_model
+from worca.utils.settings import load_settings, resolve_model, resolve_tier_pinned
 
 _DEFAULT_PLAN_PATH_TEMPLATE = "docs/plans/{timestamp}-{title_slug}.md"
 # Matches GitHub issue URLs: https://github.com/owner/repo/issues/42
@@ -71,8 +71,16 @@ def generate_smart_title(content: str, source_hint: str = "") -> str:
     prompt += f"\n\nContent:\n{truncated}"
 
     settings = load_settings(".claude/settings.json")
-    models_cfg = settings.get("worca", {}).get("models", {})
-    model_id, model_env = resolve_model("haiku", models_cfg)
+    model_id, model_env, err = resolve_tier_pinned("builtin:haiku", settings)
+    if err:
+        import sys
+        print(
+            f"warning: builtin:haiku pin failed ({err}); falling back to bare haiku",
+            file=sys.stderr,
+        )
+        model_id, model_env = resolve_model(
+            "haiku", settings.get("worca", {}).get("models", {})
+        )
     safe_env, _ = filter_model_env(model_env)
 
     try:

@@ -4,7 +4,9 @@
 import json
 import os
 
-from worca.utils.settings import deep_merge, load_settings
+import pytest
+
+from worca.utils.settings import deep_merge, load_settings, normalize_model_entry
 
 
 # ---------------------------------------------------------------------------
@@ -639,3 +641,24 @@ class TestEffortSettings:
         assert result["worca"]["effort"]["auto_cap"] == "high"
         assert result["worca"]["effort"]["auto_mode"] == "adaptive"
         assert result["worca"]["fleet"]["max_parallel"] == 5
+
+
+class TestNormalizeModelEntryColonRejection:
+    """Colon-in-alias guard on normalize_model_entry."""
+
+    def test_rejects_colon_in_alias(self):
+        with pytest.raises(ValueError, match="colon"):
+            normalize_model_entry("claude-opus-4-7", alias="user:opus")
+
+    def test_rejects_colon_dict_form(self):
+        with pytest.raises(ValueError, match="colon"):
+            normalize_model_entry({"id": "claude-opus-4-7"}, alias="project:x")
+
+    def test_valid_alias_no_colon_passes(self):
+        result = normalize_model_entry("claude-opus-4-7", alias="my-model")
+        assert result["id"] == "claude-opus-4-7"
+
+    def test_no_alias_arg_unchanged(self):
+        result = normalize_model_entry("claude-sonnet-4-6")
+        assert result == {"id": "claude-sonnet-4-6", "env": {}}
+

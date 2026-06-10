@@ -3,7 +3,7 @@
  * Run with: cd worca-ui && npx playwright test e2e/pipelines-editor.spec.js --workers=1
  */
 import { test, expect } from '@playwright/test';
-import { mkdirSync, writeFileSync } from 'node:fs';
+import { mkdirSync, readFileSync, writeFileSync } from 'node:fs';
 import { join } from 'node:path';
 import { startServer } from './fixtures.js';
 
@@ -469,6 +469,109 @@ test('edit governance dispatch section', async ({ page }) => {
     const inputValue = await plannerInput.inputValue();
     expect(inputValue).toBe('Bis');
   } finally {
+    await ctx.close();
+  }
+});
+
+// ─── Smoke: user-tier pin lock toggle save and reload round-trip ────────────
+
+test('user-tier pinned model round-trips through save and reload', async ({ page }) => {
+  const ctx = await startServer();
+  // Redirect WORCA_HOME to an isolated directory so the user-tier model
+  // entry doesn't pollute the real ~/.worca/settings.json.
+  const origWorcaHome = process.env.WORCA_HOME;
+  process.env.WORCA_HOME = ctx.worcaDir;
+
+  try {
+    // Write a user-tier model into the isolated WORCA_HOME.
+    // globalSettingsPath() reads WORCA_HOME lazily, so this takes effect
+    // on the first /api/models request.
+    writeFileSync(
+      join(ctx.worcaDir, 'settings.json'),
+      JSON.stringify({ worca: { models: { 'my-model': 'claude-opus-4-7' } } }, null, 2),
+    );
+
+    // Create a project template that pins planner to the user-tier alias.
+    const templateDir = join(ctx.dir, '.claude', 'templates', 'tier-lock-test');
+    mkdirSync(templateDir, { recursive: true });
+    writeFileSync(
+      join(templateDir, 'template.json'),
+      JSON.stringify(
+        {
+          id: 'tier-lock-test',
+          name: 'Tier Lock Test',
+          description: '',
+          tags: [],
+          config: {
+            agents: { planner: { model: 'user:my-model', max_turns: 30 } },
+          },
+        },
+        null,
+        2,
+      ),
+    );
+
+    // Load in the editor
+    await page.goto(`${ctx.url}/#/templates/project/tier-lock-test/edit`, GOTO_OPTS);
+    await expect(page.locator('.pipelines-editor')).toBeAttached({ timeout: 30000 });
+
+    // Wait for template name to populate (signals loadTemplate completed)
+    await expect
+      .poll(
+        async () =>
+          page
+            .locator('.editor-name-input')
+            .evaluate((el) => el.value)
+            .catch(() => null),
+        { timeout: 5000 },
+      )
+      .toBe('Tier Lock Test');
+
+    // Lock toggle must be present for the planner agent (data-testid set in _agentsTab)
+    await expect(
+      page.locator('[data-testid="model-lock-toggle-planner"]'),
+    ).toBeAttached({ timeout: 5000 });
+
+    // Save — accept the first non-GET /templates response
+    const apiResponse = page.waitForResponse(
+      (res) =>
+        res.url().includes('/templates') && res.request().method() !== 'GET',
+      { timeout: 10000 },
+    );
+    const saveButton = page.locator('.editor-footer sl-button', {
+      hasText: 'Save',
+    });
+    await expect(saveButton).toBeAttached();
+    await saveButton.click();
+    const response = await apiResponse;
+    expect(response.ok()).toBe(true);
+
+    // Verify the saved file preserved the tier-pinned ref
+    const saved = JSON.parse(readFileSync(join(templateDir, 'template.json'), 'utf8'));
+    expect(saved.config?.agents?.planner?.model).toBe('user:my-model');
+
+    // Reload and assert the lock toggle is still present (round-trip confirmed)
+    await page.reload(GOTO_OPTS);
+    await expect(page.locator('.pipelines-editor')).toBeAttached({ timeout: 30000 });
+    await expect
+      .poll(
+        async () =>
+          page
+            .locator('.editor-name-input')
+            .evaluate((el) => el.value)
+            .catch(() => null),
+        { timeout: 5000 },
+      )
+      .toBe('Tier Lock Test');
+    await expect(
+      page.locator('[data-testid="model-lock-toggle-planner"]'),
+    ).toBeAttached({ timeout: 5000 });
+  } finally {
+    if (origWorcaHome === undefined) {
+      delete process.env.WORCA_HOME;
+    } else {
+      process.env.WORCA_HOME = origWorcaHome;
+    }
     await ctx.close();
   }
 });

@@ -39,6 +39,7 @@ import Lightbulb from 'lucide/dist/esm/icons/lightbulb';
 import List from 'lucide/dist/esm/icons/list';
 import Loader from 'lucide/dist/esm/icons/loader';
 import Lock from 'lucide/dist/esm/icons/lock';
+import LockOpen from 'lucide/dist/esm/icons/lock-open';
 import Moon from 'lucide/dist/esm/icons/moon';
 import PanelLeftClose from 'lucide/dist/esm/icons/panel-left-close';
 import PanelLeftOpen from 'lucide/dist/esm/icons/panel-left-open';
@@ -129,6 +130,7 @@ export {
   List,
   Loader,
   Lock,
+  LockOpen,
   Moon,
   PanelLeftClose,
   PanelLeftOpen,

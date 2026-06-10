@@ -32,6 +32,7 @@ from worca.orchestrator.bundle import (
     collect_referenced_model_aliases,
     fetch_bundle,
     redact_bundle,
+    strip_tier_prefixes,
     validate_bundle,
 )
 from worca.orchestrator.templates import (
@@ -40,7 +41,7 @@ from worca.orchestrator.templates import (
     materialize_config,
 )
 from worca.utils.env import filter_model_env
-from worca.utils.settings import deep_merge
+from worca.utils.settings import _parse_model_ref, deep_merge
 
 
 def _resolve_dirs(project_root: str | None = None):
@@ -974,6 +975,12 @@ def cmd_templates_export(args):
 
     any_overlays = any("_overlays" in e for e in template_entries)
 
+    # Pre-redaction pass: strip user:/project: prefixes from agent model refs so
+    # bundles ship bare refs (post-D2 wire format). builtin: and bare refs are
+    # preserved verbatim. Malformed refs are left as-is — the validator flagged
+    # them earlier; export is not the right place to silently rewrite them.
+    template_entries = strip_tier_prefixes(template_entries)
+
     dest = args.to
     if dest in ("gist", "gist:public"):
         if any_overlays:
@@ -1322,7 +1329,13 @@ def cmd_templates_import(args):
     # --preview: print collisions JSON and exit without writing. Used by the
     # worca-ui import flow to drive the collision dialog before commit.
     if preview_only:
-        preview = _build_collision_preview(bundle_models, bundle_pricing, models_settings_path)
+        preview = _build_collision_preview(
+            bundle_models,
+            bundle_pricing,
+            models_settings_path,
+            bundle_templates=list(bundle_templates),
+            landing_tier=scope,
+        )
         preview["template_ids"] = [t.get("id") for t in bundle_templates]
         preview["template_collisions"] = template_collisions_meta
         # Models, pricing, and templates all land in the same scope now
@@ -1343,9 +1356,20 @@ def cmd_templates_import(args):
     )
 
     # Apply the rename map to templates BEFORE _atomic_import so the on-disk
-    # template never references a stale alias name. Transactional with the
-    # rename in the settings patch.
-    _rewrite_template_model_refs(to_import, rename_map)
+    # template never references a stale alias name. Also auto-pins all bare
+    # refs to the landing tier. Transactional with the rename in the settings patch.
+    ref_rewrites = _rewrite_template_model_refs(to_import, rename_map, landing_tier=scope)
+    if ref_rewrites:
+        print(
+            f"info: rewrote {len(ref_rewrites)} template model ref(s) to pin to --scope {scope!r}:",
+            file=sys.stderr,
+        )
+        for tmpl_id, role, old_ref, new_ref, reason in ref_rewrites:
+            reason_label = reason.replace("_", " ")
+            print(
+                f"  - {tmpl_id}.{role}.model: {old_ref} → {new_ref} ({reason_label})",
+                file=sys.stderr,
+            )
 
     # Stamp bundle attribution on each imported model entry so the Models
     # page can surface a small "Imported from <X>" badge. Prefer the
@@ -1535,33 +1559,81 @@ def _find_next_alias_name(base: str, taken: set[str], cap: int = 99) -> str | No
 
 
 def _rewrite_template_model_refs(
-    templates: dict, rename_map: dict[str, str]
-) -> None:
-    """Rewrite every ``config.agents.*.model`` reference in *templates* that
-    points at a renamed alias. Mutates in place; called transactionally with
-    the rename map AFTER collision resolution and BEFORE _atomic_import so the
-    on-disk template never references a stale alias.
+    templates: dict, rename_map: dict[str, str], landing_tier: str = "project"
+) -> list[tuple]:
+    """Rewrite every ``config.agents.*.model`` reference in *templates*.
+
+    Mutates in place; called AFTER collision resolution and BEFORE
+    _atomic_import so the on-disk template never references a stale alias or
+    bare ref.
+
+    Rules per ref:
+    - builtin:alias  → pass through unchanged.
+    - user:/project: → wire-format violation (bundles must not carry tier
+      prefixes); emit stderr warning, strip the prefix, treat as bare.
+    - bare alias     → apply rename_map, then rewrite to
+                       ``{landing_tier}:{resolved_alias}``.
+
+    Returns a list of (template_id, role, old_ref, new_ref, reason) tuples
+    where reason ∈ {auto_pin, auto_pin_after_rename, wire_format_violation}.
     """
-    if not rename_map:
-        return
-    for tmpl in templates.values():
+    rewrites: list[tuple] = []
+    for tmpl_id, tmpl in templates.items():
         config = tmpl.get("config")
         if not isinstance(config, dict):
             continue
         agents = config.get("agents")
         if not isinstance(agents, dict):
             continue
-        for agent_cfg in agents.values():
-            if isinstance(agent_cfg, dict):
-                model = agent_cfg.get("model")
-                if isinstance(model, str) and model in rename_map:
-                    agent_cfg["model"] = rename_map[model]
+        for role, agent_cfg in agents.items():
+            if not isinstance(agent_cfg, dict):
+                continue
+            model = agent_cfg.get("model")
+            if not isinstance(model, str):
+                continue
+            old_ref = model
+            try:
+                tier, alias = _parse_model_ref(model)
+            except ValueError:
+                # Malformed ref — leave unchanged, no rewrite recorded.
+                continue
+
+            if tier == "builtin":
+                continue
+
+            reason: str
+            if tier in ("user", "project"):
+                # Wire-format violation: bundles must export bare aliases only.
+                print(
+                    f"warning: wire_format_violation: template '{tmpl_id}' agent "
+                    f"'{role}' model ref '{model}' carries a tier prefix — "
+                    f"stripping and re-pinning to --scope {landing_tier!r}",
+                    file=sys.stderr,
+                )
+                reason = "wire_format_violation"
+                # alias is already stripped of the prefix
+            else:
+                # Bare ref: apply rename map, then pin to landing tier.
+                new_alias = rename_map.get(alias, alias)
+                if new_alias != alias:
+                    reason = "auto_pin_after_rename"
+                    alias = new_alias
+                else:
+                    reason = "auto_pin"
+
+            new_ref = f"{landing_tier}:{alias}"
+            agent_cfg["model"] = new_ref
+            rewrites.append((tmpl_id, role, old_ref, new_ref, reason))
+    return rewrites
 
 
 def _build_collision_preview(
     bundle_models: dict | None,
     bundle_pricing: dict | None,
     settings_path: str | None,
+    *,
+    bundle_templates: list | None = None,
+    landing_tier: str = "project",
 ) -> dict:
     """Return a JSON-serializable preview of incoming alias collisions.
 
@@ -1574,6 +1646,11 @@ def _build_collision_preview(
             ...
           ],
           "new_aliases": ["claude-private", ...],
+          "ref_rewrites": [
+            {"template_id": "t1", "role": "planner",
+             "old": "glm-ds", "new": "project:glm-ds", "reason": "auto_pin"},
+            ...
+          ],
           "settings_path": "/Users/.../.worca/settings.json"
         }
 
@@ -1601,9 +1678,34 @@ def _build_collision_preview(
             })
         else:
             new_aliases.append(alias)
+
+    # Compute ref rewrites using an empty rename_map (no collision resolution
+    # yet in preview mode). The UI can derive the renamed-ref cascade by
+    # applying suggested_rename values from collisions to these entries.
+    ref_rewrites: list[dict] = []
+    if bundle_templates:
+        import copy
+        preview_templates = {
+            t["id"]: copy.deepcopy(t)
+            for t in bundle_templates
+            if isinstance(t, dict) and "id" in t
+        }
+        raw_rewrites = _rewrite_template_model_refs(
+            preview_templates, {}, landing_tier=landing_tier
+        )
+        for tmpl_id, role, old_ref, new_ref, reason in raw_rewrites:
+            ref_rewrites.append({
+                "template_id": tmpl_id,
+                "role": role,
+                "old": old_ref,
+                "new": new_ref,
+                "reason": reason,
+            })
+
     return {
         "collisions": collisions,
         "new_aliases": sorted(new_aliases),
+        "ref_rewrites": ref_rewrites,
         "settings_path": settings_path,
     }
 

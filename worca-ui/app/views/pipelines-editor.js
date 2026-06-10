@@ -26,6 +26,8 @@ import {
   CircleCheck,
   FileText,
   iconSvg,
+  Lock,
+  LockOpen,
   RefreshCw,
   Save,
   Shield,
@@ -69,6 +71,11 @@ let editorState = {
   // (project-owned), so it lives here, not in the template config. Without it
   // the dropdown falls back to built-in defaults only and custom aliases vanish.
   settings: { worca: {} },
+  // Raw [{tier, alias, ...}] rows from /api/models — one entry per (tier, alias)
+  // pair. Unlike modelTierMap (which collapses to the highest-priority tier),
+  // this preserves both a user-tier and a project-tier row for the same alias
+  // so the lock-toggle dropdown can enumerate each row independently.
+  modelTierRows: [],
   loading: true,
   error: null,
   saving: false,
@@ -115,6 +122,7 @@ export function initEditorState() {
     template: null,
     builtinTemplate: null,
     settings: { worca: {} },
+    modelTierRows: [],
     loading: true,
     error: null,
     saving: false,
@@ -266,6 +274,11 @@ export function buildFormBuffer(templateConfig, settings) {
       model: agentConfig.model || 'sonnet',
       max_turns: agentConfig.max_turns || 30,
       effort: agentConfig.effort || null,
+      // UI-only lock flag: true when the saved model is a tier-pinned ref
+      // (e.g. 'user:glm-ds'). Stripped by formBufferToConfig — never persisted.
+      _model_pin_locked:
+        typeof agentConfig.model === 'string' &&
+        agentConfig.model.includes(':'),
     };
     if (name === 'coordinator') {
       agentEntry.max_beads = agentConfig.max_beads ?? 0;
@@ -642,6 +655,60 @@ export function slugifyId(name) {
 }
 
 /**
+ * Check each agent's model for tier-pinned refs (e.g. 'user:glm-ds') that
+ * no longer exist in the named tier. Returns warning-severity issue objects
+ * for any missing pins so the caller can push them to validationIssues.
+ */
+function _checkPinnedRefWarnings(formBuffer, tierRows) {
+  const rowKeySet = new Set(tierRows.map((r) => `${r.tier}::${r.alias}`));
+  const warnings = [];
+  for (const [agentName, agent] of Object.entries(formBuffer?.agents || {})) {
+    const model = agent.model;
+    if (typeof model !== 'string' || !model.includes(':')) continue;
+    const sep = model.indexOf(':');
+    const tier = model.slice(0, sep);
+    const alias = model.slice(sep + 1);
+    if (!rowKeySet.has(`${tier}::${alias}`)) {
+      warnings.push({
+        field: `agents.${agentName}.model`,
+        severity: 'warning',
+        message: `${model} no longer exists in ${tier} tier — pin will fail preflight`,
+      });
+    }
+  }
+  return warnings;
+}
+
+/**
+ * Toggle the tier-pin lock for an agent's model in the current form buffer.
+ *
+ * OFF→ON: rewrites the bare alias to '<tier>:<alias>' using the highest-priority
+ *         tier from modelTierMap.
+ * ON→OFF: strips the tier prefix back to the bare alias.
+ *
+ * Exported so tests can exercise the toggle logic directly without simulating
+ * a DOM click event.
+ */
+export function applyModelLockToggle(agentName) {
+  const agent = editorState.formBuffer?.agents?.[agentName];
+  if (!agent) return;
+  const tierMap = editorState.modelTierMap || {};
+  const currentModel = agent.model || 'sonnet';
+  const nowLocked = !agent._model_pin_locked;
+  if (nowLocked) {
+    if (!currentModel.includes(':')) {
+      const tier = tierMap[currentModel] || 'other';
+      agent.model = `${tier}:${currentModel}`;
+    }
+  } else {
+    if (currentModel.includes(':')) {
+      agent.model = currentModel.slice(currentModel.indexOf(':') + 1);
+    }
+  }
+  agent._model_pin_locked = nowLocked;
+}
+
+/**
  * Load a template from the server by (tier, id).
  *
  * The editor is now strict about tiers — every call must specify
@@ -687,18 +754,24 @@ async function _loadProjectSettings(projectId) {
       return;
     }
     const data = await res.json();
+    const rows = data.models || [];
+    // Store the raw rows so the per-agent dropdown can enumerate every
+    // (tier, alias) pair — e.g. both user:glm-ds and project:glm-ds —
+    // instead of collapsing to the highest-priority tier only.
+    editorState.modelTierRows = rows;
+    // Keep the derived tierMap (highest-priority tier per alias) for backward-
+    // compatible consumers: tier badge, tierTitle, link-out arrow when unlocked.
     const tierMap = {};
-    for (const m of data.models || []) {
-      // Project shadows User shadows Builtin — record the highest-priority
-      // tier per alias (mirrors how resolve_model() picks).
+    for (const m of rows) {
       const priority = { project: 3, user: 2, builtin: 1 };
       const current = tierMap[m.alias];
-      if (!current || priority[m.tier] > priority[current]) {
+      if (!current || (priority[m.tier] || 0) > (priority[current] || 0)) {
         tierMap[m.alias] = m.tier;
       }
     }
     editorState.modelTierMap = tierMap;
   } catch {
+    editorState.modelTierRows = [];
     editorState.modelTierMap = {};
   }
 }
@@ -767,6 +840,15 @@ export async function loadTemplate(tier, tid, projectId) {
         2,
       );
       editorState.validationIssues = [];
+      // Warn about tier-pinned refs that no longer exist in their named tier
+      // (e.g. 'user:glm-ds' when the user tier has no glm-ds entry). Keeps
+      // the value verbatim so the user can decide whether to fix or unlock.
+      editorState.validationIssues.push(
+        ..._checkPinnedRefWarnings(
+          editorState.formBuffer,
+          editorState.modelTierRows || [],
+        ),
+      );
 
       // Load built-in template for diff if this template shadows a built-in
       if (shadowsBuiltin(data.template || {}))
@@ -1726,58 +1808,68 @@ function _stagesSection(formBuffer, projectId, rerender) {
  */
 function _agentsTab(formBuffer, settings, projectId, rerender) {
   const agents = formBuffer?.agents || {};
-  // Base options come from the project's worca.models (+ built-in defaults).
-  // Union in any alias an agent currently references but that isn't in that
-  // list (a project alias that failed to load, or one later removed from
-  // worca.models) so the select never renders blank and the value round-trips.
-  const referencedModels = Object.values(agents)
-    .map((a) => a?.model)
-    .filter((m) => typeof m === 'string' && m.length > 0);
   const tierMap = editorState.modelTierMap || {};
-  // `getModelOptions(settings?.worca)` reads only the project's
-  // `worca.models` (so for a project that defined just `glm-ds`, that's
-  // the lone PROJECT option). The full per-tier inventory was already
-  // fetched into `modelTierMap` from /api/projects/:id/models — union
-  // its keys too so built-in and user-tier aliases populate the dropdown
-  // (PROJECT shadowing semantics still hold via `groupModelOptionsByTier`
-  // since `tierMap` records the highest-priority tier per alias).
-  const modelOptions = Array.from(
-    new Set([
-      ...getModelOptions(settings?.worca),
-      ...Object.keys(tierMap),
-      ...referencedModels,
-    ]),
-  );
+  const tierRows = editorState.modelTierRows || [];
+
+  // Build the full row list for the dropdown: start from the per-tier rows
+  // fetched from /api/models. Unlike the old flat modelOptions list (which
+  // collapsed user+project rows for the same alias to just one entry), this
+  // keeps both so the lock-toggle dropdown can enumerate each independently.
+  // Orphan rows are added for any model ref not already covered.
+  const rowKeySet = new Set(tierRows.map((r) => `${r.tier}::${r.alias}`));
+  const allModelRows = [...tierRows];
+  for (const alias of getModelOptions(settings?.worca)) {
+    const t = tierMap[alias] || 'other';
+    const key = `${t}::${alias}`;
+    if (!rowKeySet.has(key)) {
+      allModelRows.push({ tier: t, alias });
+      rowKeySet.add(key);
+    }
+  }
+  for (const ag of Object.values(agents)) {
+    const modelRef = ag?.model;
+    if (!modelRef) continue;
+    if (modelRef.includes(':')) {
+      const sep = modelRef.indexOf(':');
+      const tier = modelRef.slice(0, sep);
+      const alias = modelRef.slice(sep + 1);
+      const key = `${tier}::${alias}`;
+      if (!rowKeySet.has(key)) {
+        allModelRows.push({ tier: tier || 'other', alias });
+        rowKeySet.add(key);
+      }
+    } else {
+      const t = tierMap[modelRef] || 'other';
+      const key = `${t}::${modelRef}`;
+      if (!rowKeySet.has(key)) {
+        allModelRows.push({ tier: t, alias: modelRef });
+        rowKeySet.add(key);
+      }
+    }
+  }
+
   const effort = formBuffer?.effort || {};
   const autoMode = effort.auto_mode || 'adaptive';
   const autoCap = effort.auto_cap || 'xhigh';
   const state = editorState;
-  // Group the per-agent Model dropdown options by tier, mirroring the
-  // "Base template" picker on the New Pipeline / template-create dialog
-  // (small group label + sl-divider + indented options). Keeps the
-  // tier-aware UX consistent across surfaces — the previous "alias · P"
-  // single-letter suffix was implicit and easy to miss; group headers
-  // are explicit and let the user see the whole inventory grouped by
-  // where each alias lives.
-  //
-  // Order: PROJECT → USER → BUILT-IN — matches the resolution priority
-  // (Project shadows User shadows Built-in), so the first group is the
-  // tier the runtime actually picks from.
-  const groupModelOptionsByTier = (aliases) => {
+  // Group rows by tier: PROJECT → USER → BUILT-IN → OTHER.
+  // Each sl-option value is 'tier::alias' (double-colon) so user:glm-ds and
+  // project:glm-ds are separately selectable — the sl-change handler translates
+  // back to the saved model string based on the lock flag.
+  const groupModelOptionsByTier = (rows) => {
     const buckets = { project: [], user: [], builtin: [], other: [] };
-    for (const m of aliases) {
-      const t = tierMap[m] || 'other';
-      (buckets[t] || buckets.other).push(m);
+    for (const r of rows) {
+      const bucket = buckets[r.tier];
+      if (bucket) bucket.push(r);
+      else buckets.other.push(r);
     }
     for (const key of Object.keys(buckets)) {
-      buckets[key].sort((a, b) => a.localeCompare(b));
+      buckets[key].sort((a, b) => a.alias.localeCompare(b.alias));
     }
     return [
       { tier: 'project', label: 'PROJECT', items: buckets.project },
       { tier: 'user', label: 'USER', items: buckets.user },
       { tier: 'builtin', label: 'BUILT-IN', items: buckets.builtin },
-      // Aliases referenced by the template but missing from worca.models
-      // (orphans) — surfaced last so they don't silently disappear.
       {
         tier: 'other',
         label: 'OTHER (referenced but not in worca.models)',
@@ -1873,6 +1965,18 @@ function _agentsTab(formBuffer, settings, projectId, rerender) {
       <div class="settings-cards">
         ${AGENT_NAMES.map((name) => {
           const agent = agents[name] || {};
+          // Compute the dropdown's internal key ('tier::alias', double-colon).
+          // Bare 'glm-ds' maps to the highest-priority tier from tierMap;
+          // pinned 'user:glm-ds' maps directly to 'user::glm-ds'.
+          const modelRef = agent.model || 'sonnet';
+          const selectedInternalKey = (() => {
+            if (modelRef.includes(':')) {
+              const sep = modelRef.indexOf(':');
+              return `${modelRef.slice(0, sep)}::${modelRef.slice(sep + 1)}`;
+            }
+            return `${tierMap[modelRef] || 'other'}::${modelRef}`;
+          })();
+          const isLocked = agent._model_pin_locked || false;
           return html`
             <div class="settings-card">
               <div class="settings-card-header">
@@ -1884,12 +1988,20 @@ function _agentsTab(formBuffer, settings, projectId, rerender) {
                   <div class="agent-model-select-row">
                     <sl-select
                       id="agent-${name}-model"
-                      .value=${agent.model || 'sonnet'}
+                      .value=${selectedInternalKey}
                       size="small"
                       hoist
                       @sl-change=${(e) => {
-                        editorState.formBuffer.agents[name].model =
-                          e.target.value;
+                        const key = e.target.value;
+                        const sep = key.indexOf('::');
+                        if (sep === -1) return;
+                        const tier = key.slice(0, sep);
+                        const alias = key.slice(sep + 2);
+                        const locked =
+                          editorState.formBuffer.agents[name]._model_pin_locked;
+                        editorState.formBuffer.agents[name].model = locked
+                          ? `${tier}:${alias}`
+                          : alias;
                         rerender();
                       }}
                       @sl-blur=${() => {
@@ -1902,34 +2014,47 @@ function _agentsTab(formBuffer, settings, projectId, rerender) {
                       }}
                     >
                       ${(() => {
-                        // Render grouped tier sections — first PROJECT,
-                        // then USER, then BUILT-IN, matching the resolver
-                        // priority. Each group: small label + divider +
-                        // indented option rows (same pattern as the
-                        // template-create "Base template" picker).
-                        const groups = groupModelOptionsByTier(modelOptions);
+                        const groups = groupModelOptionsByTier(allModelRows);
                         return groups.flatMap((g, idx) => [
                           idx > 0 ? html`<sl-divider></sl-divider>` : '',
                           html`<small class="template-group-label">${g.label}</small>`,
                           ...g.items.map(
-                            (m) => html`<sl-option
+                            (row) => html`<sl-option
                               class="template-grouped"
-                              value="${m}"
-                              title=${tierTitle(m)}
-                            >${m}</sl-option>`,
+                              value="${row.tier}::${row.alias}"
+                              title=${tierTitle(row.alias)}
+                            >${row.alias}</sl-option>`,
                           ),
                         ]);
                       })()}
                     </sl-select>
+                    <button
+                      class="icon-btn model-lock-btn${isLocked ? ' model-lock-btn--locked' : ''}"
+                      data-testid="model-lock-toggle-${name}"
+                      title=${
+                        isLocked
+                          ? 'Pinned to tier — click to use bare alias'
+                          : 'Unlocked — click to pin to current tier'
+                      }
+                      aria-label=${isLocked ? 'Unpin model tier' : 'Pin model to tier'}
+                      @click=${() => {
+                        applyModelLockToggle(name);
+                        rerender();
+                      }}
+                    >${unsafeHTML(iconSvg(isLocked ? Lock : LockOpen, 14))}</button>
                     ${(() => {
-                      const alias = agent.model || 'sonnet';
-                      const t = tierMap[alias];
+                      // Link-out arrow: target the pinned tier when locked,
+                      // else the highest-priority tier from tierMap.
+                      let alias, t;
+                      if (modelRef.includes(':')) {
+                        const sep = modelRef.indexOf(':');
+                        alias = modelRef.slice(sep + 1);
+                        t = isLocked ? modelRef.slice(0, sep) : tierMap[alias];
+                      } else {
+                        alias = modelRef;
+                        t = tierMap[alias];
+                      }
                       if (!t) return '';
-                      // Use the full project-scoped Models URL so the
-                      // page lands in the right project context (matching
-                      // the route the user is editing this template in).
-                      // Falls back to the short form when projectId is
-                      // absent (single-project mode).
                       const href = projectId
                         ? `#/project/${projectId}/models/${encodeURIComponent(alias)}/edit/${t}`
                         : `#/models/${encodeURIComponent(alias)}/edit/${t}`;

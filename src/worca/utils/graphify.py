@@ -215,12 +215,11 @@ def build_subprocess_env(
     given, sets ``GRAPHIFY_OUT`` so graphify reads/writes the per-commit cache
     snapshot instead of a ``graphify-out/`` dir in the repo.
     """
-    from worca.utils.settings import resolve_model
+    from worca.utils.settings import resolve_tier_pinned
 
     env = dict(base_env if base_env is not None else os.environ)
     if cfg.model_profile:
-        models_cfg = settings.get("worca", {}).get("models", {})
-        _, model_env = resolve_model(cfg.model_profile, models_cfg)
+        _, model_env, _ = resolve_tier_pinned(cfg.model_profile, settings)
         env.update(model_env)
     if graphify_out:
         env["GRAPHIFY_OUT"] = graphify_out

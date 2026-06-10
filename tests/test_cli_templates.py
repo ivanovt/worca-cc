@@ -1651,7 +1651,7 @@ class TestExportImportRoundtrip:
         assert landed["name"] == "Shared"
         # Imported config matches the redacted bundle — no webhooks leaked through.
         assert "webhooks" not in landed["config"]
-        assert landed["config"]["agents"]["planner"]["model"] == "opus"
+        assert landed["config"]["agents"]["planner"]["model"] == "project:opus"
 
 
 class TestImportRollbackOnSettingsFailure:
@@ -1834,7 +1834,7 @@ class TestImportCrossDeviceSafety:
         landed = json.loads(
             (project_dir / "imported-tmpl" / "template.json").read_text()
         )
-        assert landed["config"]["agents"]["planner"]["model"] == "opus"
+        assert landed["config"]["agents"]["planner"]["model"] == "project:opus"
         # Settings.json picked up the new model alias (imported entries
         # carry an `_imported_from` provenance stamp — compare by id).
         post = json.loads(settings_path.read_text())
@@ -2905,8 +2905,8 @@ class TestImportAliasRename:
         assert "glm-ds-01" in written["worca"]["models"]
         # Imported entry carries `_imported_from`; compare by id.
         assert _model_id(written["worca"]["models"]["glm-ds-01"]) == "claude-opus-4-7"
-        # Template ref rewritten transactionally
-        assert landed["config"]["agents"]["planner"]["model"] == "glm-ds-01"
+        # Template ref rewritten transactionally and pinned to landing tier
+        assert landed["config"]["agents"]["planner"]["model"] == "project:glm-ds-01"
 
     def test_rename_probes_next_available_suffix(self, tmp_path):
         written, landed = self._run(
@@ -2919,7 +2919,7 @@ class TestImportAliasRename:
             on_conflict="rename",
         )
         assert "glm-ds-02" in written["worca"]["models"]
-        assert landed["config"]["agents"]["planner"]["model"] == "glm-ds-02"
+        assert landed["config"]["agents"]["planner"]["model"] == "project:glm-ds-02"
 
     def test_resolutions_file_per_alias_overwrite(self, tmp_path):
         written, landed = self._run(
@@ -2930,7 +2930,7 @@ class TestImportAliasRename:
         )
         # Bundle-imported entry carries `_imported_from`; compare by id.
         assert _model_id(written["worca"]["models"]["glm-ds"]) == "claude-opus-4-7"
-        assert landed["config"]["agents"]["planner"]["model"] == "glm-ds"
+        assert landed["config"]["agents"]["planner"]["model"] == "project:glm-ds"
 
     def test_resolutions_file_per_alias_skip_keeps_local(self, tmp_path):
         written, landed = self._run(
@@ -2940,7 +2940,7 @@ class TestImportAliasRename:
             resolutions={"glm-ds": {"action": "skip"}},
         )
         assert written["worca"]["models"]["glm-ds"] == {"id": "claude-opus-4-6"}
-        assert landed["config"]["agents"]["planner"]["model"] == "glm-ds"
+        assert landed["config"]["agents"]["planner"]["model"] == "project:glm-ds"
 
     def test_resolutions_file_explicit_new_name(self, tmp_path):
         written, landed = self._run(
@@ -2950,7 +2950,7 @@ class TestImportAliasRename:
             resolutions={"glm-ds": {"action": "rename", "new_name": "glm-ds-private"}},
         )
         assert "glm-ds-private" in written["worca"]["models"]
-        assert landed["config"]["agents"]["planner"]["model"] == "glm-ds-private"
+        assert landed["config"]["agents"]["planner"]["model"] == "project:glm-ds-private"
 
     def test_skip_policy_drops_alias_and_leaves_template_pointing_at_existing(self, tmp_path):
         written, landed = self._run(
@@ -2960,7 +2960,7 @@ class TestImportAliasRename:
             on_conflict="skip",
         )
         assert written["worca"]["models"]["glm-ds"] == {"id": "claude-opus-4-6"}
-        assert landed["config"]["agents"]["planner"]["model"] == "glm-ds"
+        assert landed["config"]["agents"]["planner"]["model"] == "project:glm-ds"
 
 
 class TestImportPreview:
