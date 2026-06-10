@@ -3,7 +3,8 @@
 After issue #165 the env-var branching that used to live in
 ``guardian.md`` prose now lives in
 ``worca.orchestrator.guardian_context``. These tests render the
-template via ``resolve_placeholders`` for each fleet/workspace/standalone
+template via ``resolve_agent`` (the production pipeline: blocks →
+conditionals → placeholders) for each fleet/workspace/standalone
 combination and assert on the resolved output.
 
 The previous content-grep assertions against the raw .md file are still
@@ -18,7 +19,7 @@ import pathlib
 import re
 
 from worca.orchestrator.guardian_context import build_guardian_context
-from worca.orchestrator.overlay import resolve_placeholders
+from worca.orchestrator.overlay import OverlayResolver, resolve_agent
 
 
 GUARDIAN_PATH = (
@@ -49,8 +50,18 @@ RUNNER_PATH = (
 
 
 def _render(env: dict) -> str:
+    """Render guardian.md the way the runner does at dispatch time:
+    {{block:...}} expansion first, then conditionals and placeholders.
+    The overrides dir points at a nonexistent path so no project overlay
+    leaks into the assertions."""
     template = GUARDIAN_PATH.read_text()
-    return resolve_placeholders(template, build_guardian_context(env))
+    resolver = OverlayResolver(overrides_dir=str(GUARDIAN_PATH.parent / "_no_overrides"))
+    return resolve_agent(
+        template,
+        build_guardian_context(env),
+        resolver,
+        core_dir=str(GUARDIAN_PATH.parent),
+    )
 
 
 # ---------------------------------------------------------------------------
