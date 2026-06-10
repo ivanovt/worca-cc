@@ -20,6 +20,12 @@ from tests.integration.helpers import _find_latest_status
 
 MOCK_GRAPHIFY_DIR = Path(__file__).parent.parent / "mock_graphify"
 MOCK_CLAUDE_BIN = Path(__file__).parent.parent / "mock_claude" / "mock_claude.py"
+# The pipeline subprocess must import worca from the worktree source tree, not
+# a stale site-packages install — mirrors conftest._base_env. Without this,
+# new agent .md files (copied from src by `worca init`) run against old
+# orchestrator code (version skew that cannot occur in production, where both
+# always come from the same installed package).
+SRC_DIR = Path(__file__).resolve().parents[2] / "src"
 
 pytestmark = [pytest.mark.timeout(180), pytest.mark.allow_worca_writes]
 
@@ -66,6 +72,7 @@ def _run_pipeline_with_graphify(pipeline_env, scenario: dict, prompt: str,
     mock_path = f"{MOCK_GRAPHIFY_DIR}{os.pathsep}{os.environ.get('PATH', '')}"
     env = {
         **os.environ,
+        "PYTHONPATH": str(SRC_DIR),
         "WORCA_CLAUDE_BIN": f"{sys.executable} {MOCK_CLAUDE_BIN}",
         "WORCA_AGENT": "",
         "WORCA_SKIP_BEADS": "1",
