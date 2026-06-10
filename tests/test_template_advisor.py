@@ -109,7 +109,6 @@ class TestRenderCatalog:
         assert "(builtin)" in rendered
         assert "Bugfix" in rendered
         assert "Fix a thing" in rendered
-        assert "fast" in rendered
 
     def test_empty_catalog(self):
         assert _render_catalog([]) == "(no templates available)"

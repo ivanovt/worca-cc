@@ -142,17 +142,18 @@ def _load_user_prompt(project_root: Path, context: dict) -> str:
 
 
 def _render_catalog(templates: list[TemplateSummary]) -> str:
-    """Render the template catalog as a compact Markdown list for the LLM."""
+    """Render the template catalog as a compact Markdown list for the LLM.
+
+    Includes id, tier, name, and description only — tags are intentionally
+    omitted (the advisor matches on name + description; tags would just be
+    a second axis the model has to weigh against the same signal).
+    """
     if not templates:
         return "(no templates available)"
     lines = []
     for t in templates:
-        tags = ", ".join(t.tags) if t.tags else ""
-        tag_suffix = f" — tags: {tags}" if tags else ""
         desc = (t.description or "").strip().replace("\n", " ")
-        lines.append(
-            f"- **{t.id}** ({t.tier}): {t.name}{tag_suffix}\n  {desc}"
-        )
+        lines.append(f"- **{t.id}** ({t.tier}): {t.name}\n  {desc}")
     return "\n".join(lines)
 
 

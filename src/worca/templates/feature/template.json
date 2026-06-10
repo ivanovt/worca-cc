@@ -1,7 +1,7 @@
 {
   "id": "feature",
   "name": "Feature Development",
-  "description": "Full pipeline with plan review and learn stages enabled. Higher retry limits for complex features. All approval gates active.",
+  "description": "Full pipeline for substantial features with a pre-drafted plan link (typically `W-NNN:`-prefixed issues). Plan review + learn stages on, higher retry limits, all approval gates active.",
   "builtin": true,
   "created_at": "2026-03-10T00:00:00Z",
   "tags": [
