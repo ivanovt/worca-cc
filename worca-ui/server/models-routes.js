@@ -22,7 +22,7 @@ import { globalSettingsPath, templatesDir } from './paths.js';
 import { localPathFor } from './settings-merge.js';
 
 const require = createRequire(import.meta.url);
-const denylist = require('./reserved-env-keys.json');
+const denylist = require('./schemas/reserved-env-keys.json');
 const RESERVED_KEYS = new Set(denylist.keys);
 const RESERVED_PREFIXES = denylist.prefixes;
 

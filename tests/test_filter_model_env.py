@@ -99,21 +99,29 @@ class TestReservedConstants:
         assert isinstance(RESERVED_ENV_KEYS, frozenset)
 
     def test_reserved_keys_match_shared_json_file(self):
-        # Guard against drift: env.py and worca-ui/server/reserved-env-keys.json
-        # must list the same denied keys/prefixes. Any divergence is a bug
-        # because the JS server enforces from JSON while the Python runtime
-        # enforces from the frozenset.
-        json_path = Path(__file__).resolve().parent.parent / "worca-ui" / "server" / "reserved-env-keys.json"
+        # Single source of truth: env.py loads src/worca/schemas/
+        # reserved_env_keys.json via importlib.resources, and build-frontend.js
+        # copies that same file to worca-ui/server/schemas/ for the JS server.
+        # This asserts env.py actually mirrors the schema file (a hardcoded
+        # frozenset reintroduced in env.py would drift again).
+        json_path = (
+            Path(__file__).resolve().parent.parent
+            / "src" / "worca" / "schemas" / "reserved_env_keys.json"
+        )
         data = json.loads(json_path.read_text())
-        json_keys = set(data["keys"])
-        only_in_python = RESERVED_ENV_KEYS - json_keys
-        only_in_json = json_keys - RESERVED_ENV_KEYS
-        assert not only_in_python and not only_in_json, (
-            f"reserved-env-keys.json out of sync with RESERVED_ENV_KEYS: "
-            f"only in Python={sorted(only_in_python)}, "
-            f"only in JSON={sorted(only_in_json)}"
-        )
-        assert RESERVED_PREFIXES == tuple(data["prefixes"]), (
-            f"prefixes out of sync: Python={RESERVED_PREFIXES} "
-            f"vs JSON={tuple(data['prefixes'])}"
-        )
+        assert RESERVED_ENV_KEYS == frozenset(data["keys"])
+        assert RESERVED_PREFIXES == tuple(data["prefixes"])
+        # The denylist must always cover the governance-critical entries.
+        assert {"PATH", "CLAUDECODE", "WORCA_AGENT"} <= RESERVED_ENV_KEYS
+        assert "WORCA_" in RESERVED_PREFIXES
+
+    def test_build_script_copies_schema_to_server(self):
+        # The JS server consumes server/schemas/reserved-env-keys.json, which
+        # build-frontend.js copies from the Python schema. Assert the copy
+        # step is wired (the build script names both paths).
+        build_script = (
+            Path(__file__).resolve().parent.parent
+            / "worca-ui" / "scripts" / "build-frontend.js"
+        ).read_text()
+        assert "reserved_env_keys.json" in build_script
+        assert "reserved-env-keys.json" in build_script

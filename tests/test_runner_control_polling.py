@@ -233,6 +233,38 @@ def test_pause_skips_registry_mirror_when_not_worktree(tmp_path):
     assert get_pipeline("run-1", base=registry_dir)["status"] == "running"
 
 
+def test_malformed_control_file_discarded_without_crash(tmp_path):
+    """A malformed control.json is logged + deleted, never crashes the run (arch review 2026-06)."""
+    p = tmp_path / "runs" / "run-1" / "control.json"
+    p.parent.mkdir(parents=True, exist_ok=True)
+    p.write_text("{not valid json", encoding="utf-8")
+    status = {"run_id": "run-1", "pipeline_status": "running"}
+    status_path = str(tmp_path / "status.json")
+
+    # Must not raise — and must not pause/stop the run.
+    _check_control_file("run-1", str(tmp_path), status, status_path, None)
+
+    assert status["pipeline_status"] == "running"
+    assert not p.exists(), "malformed control file should be consumed (deleted)"
+
+
+def test_invalid_action_control_file_discarded_without_crash(tmp_path):
+    """A schema-invalid control file (unknown action) is discarded, not fatal."""
+    p = tmp_path / "runs" / "run-1" / "control.json"
+    p.parent.mkdir(parents=True, exist_ok=True)
+    p.write_text(
+        json.dumps({"action": "selfdestruct", "requested_at": "2026-06-10T00:00:00Z"}),
+        encoding="utf-8",
+    )
+    status = {"run_id": "run-1", "pipeline_status": "running"}
+    status_path = str(tmp_path / "status.json")
+
+    _check_control_file("run-1", str(tmp_path), status, status_path, None)
+
+    assert status["pipeline_status"] == "running"
+    assert not p.exists()
+
+
 def test_pause_registry_mirror_is_best_effort(tmp_path):
     """A missing registry entry must not crash the pause path."""
     write_control("run-1", "pause", base=str(tmp_path))

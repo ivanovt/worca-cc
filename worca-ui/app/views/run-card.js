@@ -1,6 +1,7 @@
 import { html, nothing } from 'lit-html';
 import { unsafeHTML } from 'lit-html/directives/unsafe-html.js';
 import { elapsed, formatDuration, formatTimestamp } from '../utils/duration.js';
+import { formatCost } from '../utils/format-cost.js';
 import {
   Archive,
   iconSvg,
@@ -85,12 +86,6 @@ function _runCost(run) {
     }
   }
   return total;
-}
-
-function _formatCost(usd) {
-  if (usd === 0) return null;
-  if (usd < 0.01) return `$${usd.toFixed(4)}`;
-  return `$${usd.toFixed(2)}`;
 }
 
 /**
@@ -301,7 +296,7 @@ export function runCardView(
         <span class="run-card-meta-item"><span class="meta-label">Started:</span> <span class="meta-value">${formatTimestamp(run.started_at)}</span></span>
         <span class="run-card-meta-item"><span class="meta-label">Finished:</span> <span class="meta-value">${formatTimestamp(endTime)}</span></span>
         <span class="run-card-meta-item"><span class="meta-label">Duration:</span> <span class="meta-value">${duration}</span></span>
-        ${_formatCost(cost) ? html`<span class="run-card-meta-item"><span class="meta-label">Cost:</span> <span class="meta-value">${_formatCost(cost)}</span></span>` : nothing}
+        ${formatCost(cost) ? html`<span class="run-card-meta-item"><span class="meta-label">Cost:</span> <span class="meta-value">${formatCost(cost)}</span></span>` : nothing}
       </div>
       ${
         stages.length > 0

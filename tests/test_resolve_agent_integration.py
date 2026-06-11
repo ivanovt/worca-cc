@@ -21,6 +21,7 @@ import pytest
 from worca.orchestrator.overlay import (
     OverlayResolver,
     resolve_agent,
+    resolve_blocks,
     resolve_placeholders,
 )
 
@@ -41,9 +42,12 @@ def _resolve_agent(agent_name: str, context: dict) -> str:
 
 
 def _resolve_block(block_name: str, context: dict) -> str:
+    # Mirrors the runner's stage-prompt path: resolve_block → nested
+    # resolve_blocks (shared reminder blocks) → resolve_placeholders.
     resolver = _make_resolver()
     raw = resolver.resolve_block(block_name, str(CORE_DIR))
     assert raw is not None, f"block '{block_name}' not found under {CORE_DIR}"
+    raw = resolve_blocks(raw, context, resolver, str(CORE_DIR))
     return resolve_placeholders(raw, context)
 
 

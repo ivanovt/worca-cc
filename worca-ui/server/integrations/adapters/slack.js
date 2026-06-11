@@ -3,9 +3,11 @@
  * @module adapters/slack
  */
 
-import { toSlackMrkdwn } from '../markdown.js';
-
-const SEND_BACKOFF_DELAYS = [1000, 5000, 30000];
+import {
+  renderSegments,
+  SEND_BACKOFF_DELAYS,
+  SLACK_STYLE,
+} from '../render-segments.js';
 
 // ---------------------------------------------------------------------------
 // mrkdwn renderer
@@ -17,32 +19,7 @@ const SEND_BACKOFF_DELAYS = [1000, 5000, 30000];
  * @returns {string}
  */
 export function renderToMrkdwn(msg) {
-  const parts = [];
-  if (msg.title) {
-    parts.push(`*${msg.title}*\n`);
-  }
-  for (const seg of msg.body) {
-    switch (seg.kind) {
-      case 'markdown':
-        parts.push(toSlackMrkdwn(seg.value));
-        break;
-      case 'bold':
-        parts.push(`*${seg.value}*`);
-        break;
-      case 'code':
-        parts.push(`\`${seg.value}\``);
-        break;
-      case 'code_block':
-        parts.push(`\`\`\`\n${seg.value}\n\`\`\``);
-        break;
-      case 'link':
-        parts.push(`<${seg.href ?? ''}|${seg.value}>`);
-        break;
-      default: // 'text'
-        parts.push(seg.value);
-    }
-  }
-  return parts.join('');
+  return renderSegments(msg, SLACK_STYLE);
 }
 
 // ---------------------------------------------------------------------------

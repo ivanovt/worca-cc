@@ -720,3 +720,50 @@ class TestIsAlreadyTerminal:
         status_path = str(tmp_path / "status.json")
         (tmp_path / "status.json").write_text("not json")
         assert runner._is_already_terminal(status_path) is False
+
+
+class TestClaimTerminalTransition:
+    """_claim_terminal_transition is the atomic arbiter for terminal
+    state-write + terminal-event emission (arch review 2026-06). It closes the
+    _is_already_terminal read-then-write TOCTOU window between same-protocol
+    racers via an O_CREAT|O_EXCL marker file."""
+
+    def test_first_claim_succeeds(self, tmp_path):
+        status_path = str(tmp_path / "status.json")
+        save_status({"pipeline_status": "running"}, status_path)
+        assert runner._claim_terminal_transition(status_path) is True
+
+    def test_second_claim_fails(self, tmp_path):
+        """Two racers: only one may write terminal state + emit the event."""
+        status_path = str(tmp_path / "status.json")
+        save_status({"pipeline_status": "running"}, status_path)
+        assert runner._claim_terminal_transition(status_path) is True
+        assert runner._claim_terminal_transition(status_path) is False
+
+    def test_claim_fails_when_disk_already_terminal(self, tmp_path):
+        """Foreign writers (UI reconcile) don't use the marker — the disk
+        check must still catch them."""
+        status_path = str(tmp_path / "status.json")
+        save_status({"pipeline_status": "failed"}, status_path)
+        assert runner._claim_terminal_transition(status_path) is False
+
+    def test_claim_succeeds_when_own_process_wrote_terminal(self, tmp_path):
+        """The control-file stop path writes INTERRUPTED before raising; the
+        except handler must still be able to claim (in-memory status terminal
+        == we own the transition)."""
+        status_path = str(tmp_path / "status.json")
+        save_status({"pipeline_status": "interrupted"}, status_path)
+        in_memory = {"pipeline_status": "interrupted"}
+        assert runner._claim_terminal_transition(status_path, in_memory) is True
+
+    def test_clear_terminal_claim_allows_reclaim(self, tmp_path):
+        """A resumed run must be able to claim again — the marker is cleared
+        at pipeline start."""
+        status_path = str(tmp_path / "status.json")
+        save_status({"pipeline_status": "running"}, status_path)
+        assert runner._claim_terminal_transition(status_path) is True
+        runner._clear_terminal_claim(status_path)
+        assert runner._claim_terminal_transition(status_path) is True
+
+    def test_clear_terminal_claim_noop_when_absent(self, tmp_path):
+        runner._clear_terminal_claim(str(tmp_path / "status.json"))  # must not raise

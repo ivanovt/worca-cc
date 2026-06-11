@@ -182,6 +182,42 @@ class TestCheckControlResponse:
             result = _check_control_response(ctx_with_control, SAMPLE_MILESTONE_EVENT)
         assert result is None
 
+    # --- response shape validation (architecture review 2026-06) ---
+
+    def test_non_dict_control_value_treated_as_continue(self, ctx_with_control):
+        """{"control": "pause"} (string, not object) is malformed — ignore, don't crash."""
+        with patch("worca.events.webhook.deliver_webhook_sync",
+                   return_value={"control": "pause"}):
+            result = _check_control_response(ctx_with_control, SAMPLE_MILESTONE_EVENT)
+        assert result is None
+
+    def test_unknown_action_treated_as_continue(self, ctx_with_control):
+        """Actions outside the known vocabulary are ignored, not propagated."""
+        with patch("worca.events.webhook.deliver_webhook_sync",
+                   return_value={"control": {"action": "selfdestruct"}}):
+            result = _check_control_response(ctx_with_control, SAMPLE_MILESTONE_EVENT)
+        assert result is None
+
+    def test_non_string_action_treated_as_continue(self, ctx_with_control):
+        with patch("worca.events.webhook.deliver_webhook_sync",
+                   return_value={"control": {"action": 42}}):
+            result = _check_control_response(ctx_with_control, SAMPLE_MILESTONE_EVENT)
+        assert result is None
+
+    def test_malformed_first_webhook_does_not_mask_second(self, tmp_path):
+        """A malformed response from webhook 1 must not stop webhook 2 from being consulted."""
+        ctx = _make_ctx(tmp_path, [
+            {"url": "https://ctrl1.example.com", "enabled": True, "secret": "s1", "control": True},
+            {"url": "https://ctrl2.example.com", "enabled": True, "secret": "s2", "control": True},
+        ])
+        responses = [
+            {"control": "garbage"},
+            {"control": {"action": "pause"}},
+        ]
+        with patch("worca.events.webhook.deliver_webhook_sync", side_effect=responses):
+            result = _check_control_response(ctx, SAMPLE_MILESTONE_EVENT)
+        assert result == "pause"
+
     def test_first_non_continue_action_wins(self, tmp_path):
         """When multiple control webhooks, first non-continue action is returned."""
         ctx = _make_ctx(tmp_path, [

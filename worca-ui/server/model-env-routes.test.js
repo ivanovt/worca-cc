@@ -494,10 +494,10 @@ describe('DELETE /api/settings/model-env', () => {
 });
 
 describe('reserved-env-keys.json', () => {
-  it('is the shared source of truth for both Python and JS', async () => {
+  it('is copied from the Python schema source of truth at build time', async () => {
     const { createRequire } = await import('node:module');
     const require = createRequire(import.meta.url);
-    const denylist = require('./reserved-env-keys.json');
+    const denylist = require('./schemas/reserved-env-keys.json');
     expect(denylist.keys).toContain('PATH');
     expect(denylist.keys).toContain('WORCA_AGENT');
     expect(denylist.keys).toContain('CLAUDECODE');

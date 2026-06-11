@@ -48,7 +48,6 @@ The architecture is **strong at the macro level and uneven at the micro level**.
 | **High** | Multi-field status updates aren't transactional — loop counters and stage status saved in separate `save_status()` calls; a crash between them corrupts resume's loop history | `runner.py:~2907-3027` |
 | **High** | `_guard_flag_enabled()` loads settings via raw `.claude/settings.json`, **not** `WORCA_SETTINGS_PATH` — graphify/CRG mutation guards can diverge from the pinned effective settings the dispatch hooks use | `src/worca/hooks/guard.py:266-284` vs `tracking.py:303-334` |
 | **Med** | TOCTOU window in `_is_already_terminal()` — cross-process duplicate terminal events possible | `runner.py:~540-570` |
-| **Med** | Circuit breaker shares one `consecutive_failures` counter across all stages — failures cascade instead of being stage-isolated | `src/worca/orchestrator/error_classifier.py:196-207` |
 | **Med** | Guard string-matching brittleness: `"git commit" in command` substring (blocks `git commit-graph`; misses creative quoting), test-command list misses `vitest`/`jest`/`make test` | `guard.py:134-150` |
 | **Med** | Control-webhook response parsing has no shape/action validation — malformed response silently means "continue" | `src/worca/events/emitter.py:264-268` |
 | **Med** | In-place pipeline spawn resolves on a 2s timer, not actual startup — double-spawn window | `process-manager.js:~654-658` |
@@ -59,6 +58,7 @@ The architecture is **strong at the macro level and uneven at the micro level**.
 
 - **Signal-handler `json.dumps`/`uuid4`/`open()`** (`runner.py:_emit_interrupted_event_signal_safe`): flagged as a critical bug during the sweep, but the code explicitly documents the tradeoff — CPython delivers signals between bytecode ops, the event is also stashed for deferred main-thread dispatch, and all errors are swallowed by design. Residual risk is limited to non-CPython runtimes. **Documented design choice, not a defect.**
 - **"Python HMAC not timing-safe"**: misdirected — `webhook.py:56` only *signs outbound* payloads (signing needs no constant-time compare); verification lives on the JS inbox side, which correctly uses `timingSafeEqual` (`worca-ui/server/integrations/verify.js:12-18`). **No issue.**
+- **Pipeline-global circuit-breaker counter** (`error_classifier.py`): flagged as "failures cascade across stages," but the counter resets on *any* stage success (`record_success`) and the cross-stage escalation is explicitly documented as intentional at the retry site (`runner.py`, "repeated failures anywhere in the pipeline should escalate severity, not reset per stage"). **Documented design choice, not a defect.**
 
 ---
 
@@ -103,10 +103,18 @@ The architecture is **strong at the macro level and uneven at the micro level**.
 
 - **Markdown rendering ×6**: Slack/Discord/Telegram adapters each render `msg.body[].kind`, and `webhook_out.js:14-74` re-implements all three again. Plus 3 independent backoff arrays.
 - **Card views**: ~150-170 extractable lines across run/fleet/workspace cards — duplicated `_formatCost()`, 4 separate status→variant maps with no single source.
-- **Agent .md templates**: ~30-40% shared boilerplate (Role/Process/Guide-precedence/Fix-mode sections) copy-pasted across the 18 files in `src/worca/agents/core/`.
+- **Agent .md templates**: shared sections copy-pasted across the ~21 files in `src/worca/agents/core/` (correction: the files are 88–186 *lines* each, not the thousands originally reported — that figure was byte counts). The concrete verbatim duplication: the graphify orientation section (×9 agent files), the graphify reminder note (×9 stage blocks), and the CRG reminder note (×9 stage blocks). A `{{block:name}}` include mechanism already exists (`overlay.py`) but had zero core usages.
 - **83+ raw `subprocess.run` sites** with inconsistent capture/strip/raise conventions.
 
 ---
+
+## Remediation status (2026-06-10)
+
+Addressed on branch `fix/architecture-review-2026-06`:
+
+- **All 10 severity-table findings**: prompt_context fail-loud; transactional gate sequences via extracted helpers; `guard.py` pinned to `WORCA_SETTINGS_PATH`; terminal-transition TOCTOU closed with an atomic `O_CREAT|O_EXCL` claim marker; boundary-aware `git commit` / test-runner detection; control-webhook response validation; resume double-spawn guard (PID liveness + in-flight set); webhook delivery audit trail (`webhook-deliveries.jsonl`); `control.json` parse errors discarded instead of fatal.
+- **Sync/duplication**: reserved-env-keys single-sourced (`src/worca/schemas/reserved_env_keys.json` → Python via importlib.resources, JS via build copy); app Tier-1 event list codegen'd from the renderer registry (caught a real drift: `pipeline.run.cancelled` had no renderer); event-type↔renderer parity test (`tests/test_event_types_sync.py`); shared `formatCost`; shared chat-adapter segment renderer (`render-segments.js`, 6 copies → 1); agent .md graphify/CRG sections single-sourced via `{{block:...}}` with a byte-identical render proof (and a nested-block resolution fix in the runner's stage-prompt path that the dedup surfaced).
+- **runner.py**: 15 copy-pasted emit→control-gate blocks replaced by `_emit_stage_completed_and_gate` / `_emit_milestone_and_gate` / `_emit_loop_triggered_and_gate`. The error handling and iteration startup turned out to already be centralized (the audit overstated those). The remaining recommendation — a full stage-executor decomposition of the main loop — is a W-NNN-scale refactor and was deliberately **not** attempted here.
 
 ## Top 5 Recommendations (by leverage)
 
@@ -114,4 +122,4 @@ The architecture is **strong at the macro level and uneven at the micro level**.
 2. **Extend the `status-constants.js` codegen pattern** to event-type names and reserved-env-keys (single source of truth). It's already proven in the build; the high-risk clusters are exactly the ones without it.
 3. **Pin `guard.py` to `WORCA_SETTINGS_PATH`** via `tracking.py:_settings_path()` — closes the only real governance enforcement gap found, and aligns with the known raw-settings `--tools` resolution issue.
 4. **Fail loudly on corrupt `prompt_context.json`** (`prompt_builder.py:142-158`) and add `JSONDecodeError` handling to `control.py:67-71` — the two cheapest robustness wins.
-5. **Per-stage circuit-breaker counters** (`error_classifier.py:196-207`) — the shared global counter makes unrelated failures cascade into halts.
+5. **Validate control-webhook responses and audit webhook delivery** — malformed control responses silently mean "continue", and delivery failures leave no per-run trail.

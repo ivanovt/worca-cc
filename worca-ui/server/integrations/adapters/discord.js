@@ -3,8 +3,13 @@
  * @module adapters/discord
  */
 
+import {
+  DISCORD_STYLE,
+  renderSegments,
+  SEND_BACKOFF_DELAYS,
+} from '../render-segments.js';
+
 const DISCORD_API = 'https://discord.com/api/v10';
-const SEND_BACKOFF_DELAYS = [1000, 5000, 30000];
 
 // ---------------------------------------------------------------------------
 // Markdown renderer
@@ -16,32 +21,7 @@ const SEND_BACKOFF_DELAYS = [1000, 5000, 30000];
  * @returns {string}
  */
 export function renderToMarkdown(msg) {
-  const parts = [];
-  if (msg.title) {
-    parts.push(`**${msg.title}**\n`);
-  }
-  for (const seg of msg.body) {
-    switch (seg.kind) {
-      case 'markdown':
-        parts.push(seg.value);
-        break;
-      case 'bold':
-        parts.push(`**${seg.value}**`);
-        break;
-      case 'code':
-        parts.push(`\`${seg.value}\``);
-        break;
-      case 'code_block':
-        parts.push(`\`\`\`\n${seg.value}\n\`\`\``);
-        break;
-      case 'link':
-        parts.push(`[${seg.value}](${seg.href ?? ''})`);
-        break;
-      default: // 'text'
-        parts.push(seg.value);
-    }
-  }
-  return parts.join('');
+  return renderSegments(msg, DISCORD_STYLE);
 }
 
 // ---------------------------------------------------------------------------

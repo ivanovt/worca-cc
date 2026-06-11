@@ -1278,3 +1278,125 @@ class TestDevNullRedirection:
             assert code == 2
         finally:
             del os.environ["WORCA_AGENT"]
+
+
+# --- git-commit detection boundaries (architecture review 2026-06) ---
+
+
+class TestGitCommitBoundaries:
+    """`git commit` detection must be token-boundary aware — read-only
+    subcommands like commit-graph/commit-tree are not commits."""
+
+    def _as(self, agent, command):
+        os.environ["WORCA_AGENT"] = agent
+        try:
+            return check_guard("Bash", {"command": command})
+        finally:
+            del os.environ["WORCA_AGENT"]
+
+    def test_blocks_git_commit_for_non_guardian(self):
+        code, reason = self._as("implementer", 'git commit -m "msg"')
+        assert code == 2
+        assert "guardian" in reason
+
+    def test_blocks_git_commit_extra_whitespace(self):
+        code, _ = self._as("implementer", 'git   commit -m "msg"')
+        assert code == 2
+
+    def test_allows_git_commit_graph(self):
+        code, _ = self._as("implementer", "git commit-graph write --reachable")
+        assert code == 0
+
+    def test_allows_git_commit_tree(self):
+        code, _ = self._as("implementer", "git commit-tree HEAD^{tree} -m x")
+        assert code == 0
+
+    def test_allows_commitment_word(self):
+        code, _ = self._as("implementer", 'echo "the git commitment model"')
+        assert code == 0
+
+    def test_guardian_may_commit(self):
+        code, _ = self._as("pr-guardian-iter-1", 'git commit -m "msg"')
+        assert code == 0
+
+
+# --- test-command detection coverage (architecture review 2026-06) ---
+
+
+class TestTestCommandCoverage:
+    """Planner/coordinator/plan_reviewer/reviewer may not run tests — the
+    runner list must cover the runners this repo actually uses."""
+
+    def _as_reviewer(self, command):
+        os.environ["WORCA_AGENT"] = "review-reviewer-iter-1"
+        try:
+            return check_guard("Bash", {"command": command})
+        finally:
+            del os.environ["WORCA_AGENT"]
+
+    def test_blocks_vitest(self):
+        code, _ = self._as_reviewer("npx vitest run worca-ui/server/")
+        assert code == 2
+
+    def test_blocks_jest(self):
+        code, _ = self._as_reviewer("npx jest --ci")
+        assert code == 2
+
+    def test_blocks_make_test(self):
+        code, _ = self._as_reviewer("make test")
+        assert code == 2
+
+    def test_blocks_playwright_test(self):
+        code, _ = self._as_reviewer("npx playwright test --workers=1")
+        assert code == 2
+
+    def test_allows_digest_word(self):
+        """`jest` must not match inside unrelated words."""
+        code, _ = self._as_reviewer("git log --format='%H' | sha256sum # digest")
+        assert code == 0
+
+    def test_allows_make_build(self):
+        code, _ = self._as_reviewer("make build")
+        assert code == 0
+
+
+# --- guard flag pinning to WORCA_SETTINGS_PATH (architecture review 2026-06) ---
+
+
+class TestGuardFlagSettingsPinning:
+    """_guard_flag_enabled must honor WORCA_SETTINGS_PATH (the runner-pinned
+    effective settings) like the dispatch hooks do — not only the raw on-disk
+    .claude/settings.json."""
+
+    def test_pinned_settings_disable_guard(self, tmp_path, monkeypatch):
+        import json as _json
+        from worca.hooks.guard import _guard_flag_enabled
+
+        pinned = tmp_path / "effective-settings.json"
+        pinned.write_text(_json.dumps({
+            "worca": {"governance": {"guards": {"block_graphify_mutation": False}}}
+        }), encoding="utf-8")
+        monkeypatch.setenv("WORCA_SETTINGS_PATH", str(pinned))
+
+        assert _guard_flag_enabled("block_graphify_mutation") is False
+
+    def test_pinned_settings_enable_guard(self, tmp_path, monkeypatch):
+        import json as _json
+        from worca.hooks.guard import _guard_flag_enabled
+
+        pinned = tmp_path / "effective-settings.json"
+        pinned.write_text(_json.dumps({
+            "worca": {"governance": {"guards": {"block_graphify_mutation": True}}}
+        }), encoding="utf-8")
+        monkeypatch.setenv("WORCA_SETTINGS_PATH", str(pinned))
+
+        assert _guard_flag_enabled("block_graphify_mutation") is True
+
+    def test_default_true_when_pinned_file_lacks_flag(self, tmp_path, monkeypatch):
+        from worca.hooks.guard import _guard_flag_enabled
+
+        pinned = tmp_path / "effective-settings.json"
+        pinned.write_text("{}", encoding="utf-8")
+        monkeypatch.setenv("WORCA_SETTINGS_PATH", str(pinned))
+
+        assert _guard_flag_enabled("block_graphify_mutation") is True

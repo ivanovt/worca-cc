@@ -1,7 +1,7 @@
 import { html, nothing } from 'lit-html';
 import { unsafeHTML } from 'lit-html/directives/unsafe-html.js';
 import { DISPATCH_DEFAULTS } from '../../server/dispatch-defaults.js';
-import reservedEnvKeysData from '../../server/reserved-env-keys.json';
+import reservedEnvKeysData from '../../server/schemas/reserved-env-keys.json';
 import {
   confirmDialogTemplate,
   showConfirm,

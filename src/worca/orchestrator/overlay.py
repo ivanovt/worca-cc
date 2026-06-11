@@ -330,7 +330,10 @@ _PLACEHOLDER_RE = re.compile(
 )
 
 # Matches {{block:name}} on its own line (block references must be line-isolated).
-_BLOCK_RE = re.compile(r"^\{\{block:(\S+)\}\}\s*$", re.MULTILINE)
+# Only spaces/tabs may follow on the line — \s* would also swallow following
+# blank lines, silently deleting the separator between a block and the next
+# section (caught by the byte-identical render check in the 2026-06 dedup).
+_BLOCK_RE = re.compile(r"^\{\{block:(\S+)\}\}[ \t]*$", re.MULTILINE)
 
 
 def resolve_placeholders(content: str, context: dict) -> str:

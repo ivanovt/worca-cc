@@ -144,6 +144,12 @@ class PromptBuilder:
 
         Merges loaded keys into self._context (loaded values override existing).
         No-op if the file doesn't exist or no path is configured.
+
+        Raises:
+            ValueError: If the file exists but is not valid JSON. A corrupt
+                context file must fail the resume loudly — silently continuing
+                with missing inter-stage context produces wrong agent prompts
+                downstream (e.g. an implementer retry without test_failures).
         """
         path = context_path or self._context_path
         if not path:
@@ -153,9 +159,13 @@ class PromptBuilder:
         try:
             with open(path, encoding="utf-8") as f:
                 data = json.load(f)
-            self._context.update(data)
-        except (OSError, json.JSONDecodeError):
-            pass
+        except json.JSONDecodeError as e:
+            raise ValueError(
+                f"prompt_context file {path} is corrupt (invalid JSON): {e}. "
+                "Refusing to resume with partial inter-stage context — "
+                "fix or delete the file and resume again."
+            ) from e
+        self._context.update(data)
 
     def build_context(self, stage: str, iteration: int = 0) -> dict:
         """Assemble the context dict for block/placeholder resolution.

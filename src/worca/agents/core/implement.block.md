@@ -51,14 +51,8 @@ advisory — lowest authority after guide, plan, graph, and description.
 {{accumulated_design_notes}}
 
 {{/if}}
-{{#if has_graphify}}
-_A code knowledge graph is preloaded — **orient with `graphify query "<question>"` before searching or reading files** (see the Knowledge graph section of your role)._
-
-{{/if}}
-{{#if has_code_review_graph}}
-_A code-review-graph MCP server is attached — **use its tools to orient (structure, context, impact) before Glob/Grep or file reads** (see the Code graph section of your role)._
-
-{{/if}}
+{{block:graphify-reminder}}
+{{block:crg-reminder}}
 {{else}}
 Implement the code changes for the assigned task. Follow TDD: write a failing test first, then implement. When the assigned bead is complete, run `bd close <id>` and STOP — do not attempt `git commit` / `git push` / `git stash`. The guardian handles all git state changes.
 
@@ -92,12 +86,6 @@ advisory — lowest authority after guide, plan, graph, and description.
 {{accumulated_design_notes}}
 
 {{/if}}
-{{#if has_graphify}}
-_A code knowledge graph is preloaded — **orient with `graphify query "<question>"` before searching or reading files** (see the Knowledge graph section of your role)._
-
-{{/if}}
-{{#if has_code_review_graph}}
-_A code-review-graph MCP server is attached — **use its tools to orient (structure, context, impact) before Glob/Grep or file reads** (see the Code graph section of your role)._
-
-{{/if}}
+{{block:graphify-reminder}}
+{{block:crg-reminder}}
 {{/if}}

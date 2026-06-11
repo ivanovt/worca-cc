@@ -23,6 +23,7 @@ import json
 import sys
 import threading
 import time
+from datetime import datetime, timezone
 from fnmatch import fnmatch
 from typing import Optional
 from urllib import request
@@ -34,6 +35,46 @@ from urllib.error import URLError
 # ---------------------------------------------------------------------------
 _rate_state: dict[tuple[str, str], float] = {}
 _rate_lock = threading.Lock()
+
+# ---------------------------------------------------------------------------
+# Delivery audit trail (webhook-deliveries.jsonl, sibling of events.jsonl).
+# stderr-only logging left no per-run record of whether a webhook was
+# attempted or succeeded. The audit log is a plain append-only JSONL file —
+# deliberately NOT an event (events dispatch to webhooks; auditing delivery
+# via the same channel would recurse). Set per run by EventContext.
+# ---------------------------------------------------------------------------
+_audit_path: Optional[str] = None
+_audit_lock = threading.Lock()
+
+
+def set_delivery_audit_path(path: Optional[str]) -> None:
+    """Set (or clear, with None) the per-run delivery audit log path."""
+    global _audit_path
+    _audit_path = path
+
+
+def _record_delivery(
+    event: dict, url: str, outcome: str, detail: str = "", attempts: int = 1
+) -> None:
+    """Append a delivery outcome record to the audit log. Best-effort."""
+    if not _audit_path:
+        return
+    rec = {
+        "timestamp": datetime.now(timezone.utc).isoformat(),
+        "event_type": event.get("event_type", ""),
+        "event_id": event.get("event_id", ""),
+        "url": url,
+        "outcome": outcome,  # "delivered" | "failed"
+        "attempts": attempts,
+    }
+    if detail:
+        rec["detail"] = detail
+    try:
+        line = json.dumps(rec, ensure_ascii=False)
+        with _audit_lock, open(_audit_path, "a", encoding="utf-8") as f:
+            f.write(line + "\n")
+    except Exception:
+        pass  # the audit log must never affect delivery or the pipeline
 
 
 # ---------------------------------------------------------------------------
@@ -114,6 +155,7 @@ def _do_post(event: dict, webhook_cfg: dict) -> Optional[dict]:
                 status = resp.status
                 raw = resp.read()
                 if 200 <= status < 300:
+                    _record_delivery(event, url, "delivered", attempts=attempt + 1)
                     try:
                         return json.loads(raw)
                     except Exception:
@@ -127,6 +169,11 @@ def _do_post(event: dict, webhook_cfg: dict) -> Optional[dict]:
                         f"{event_type} → {url}",
                         file=sys.stderr,
                     )
+                    _record_delivery(
+                        event, url, "failed",
+                        detail=f"non-retryable HTTP {status}",
+                        attempts=attempt + 1,
+                    )
                     return None
         except _RetryableError as exc:
             if attempt >= max_retries:
@@ -134,6 +181,11 @@ def _do_post(event: dict, webhook_cfg: dict) -> Optional[dict]:
                     f"[worca.webhook] Giving up after {attempt} retries for "
                     f"{event_type} → {url}: {exc}",
                     file=sys.stderr,
+                )
+                _record_delivery(
+                    event, url, "failed",
+                    detail=f"retries exhausted: {exc}",
+                    attempts=attempt + 1,
                 )
                 return None
             delay = 2 ** attempt  # 1, 2, 4, 8, …
@@ -148,6 +200,11 @@ def _do_post(event: dict, webhook_cfg: dict) -> Optional[dict]:
                     f"{event_type} → {url}: {exc}",
                     file=sys.stderr,
                 )
+                _record_delivery(
+                    event, url, "failed",
+                    detail=f"network error: {exc}",
+                    attempts=attempt + 1,
+                )
                 return None
             delay = 2 ** attempt
             attempt += 1
@@ -157,6 +214,11 @@ def _do_post(event: dict, webhook_cfg: dict) -> Optional[dict]:
             print(
                 f"[worca.webhook] Unexpected error delivering {event_type} → {url}: {exc}",
                 file=sys.stderr,
+            )
+            _record_delivery(
+                event, url, "failed",
+                detail=f"unexpected error: {exc}",
+                attempts=attempt + 1,
             )
             return None
 

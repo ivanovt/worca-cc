@@ -59,6 +59,7 @@ coverage.json
 coverage-out/
 htmlcov/
 worca-ui/app/utils/status-constants.js
+worca-ui/app/utils/event-constants.js
 .playwright-mcp/
 watch-page-live.png
 

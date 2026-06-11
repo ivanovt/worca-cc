@@ -91,6 +91,20 @@ class EventContext:
         settings = _load_settings(self.settings_path)
         worca_cfg = settings.get("worca", {})
 
+        # Wire the webhook delivery audit log (webhook-deliveries.jsonl next
+        # to events.jsonl) so operators can see attempted/failed deliveries.
+        if self.events_path:
+            try:
+                import os
+                from worca.events.webhook import set_delivery_audit_path
+                set_delivery_audit_path(
+                    os.path.join(
+                        os.path.dirname(self.events_path), "webhook-deliveries.jsonl"
+                    )
+                )
+            except Exception:
+                pass  # audit wiring is best-effort
+
         # If `enabled` was not explicitly set to False by the caller,
         # check the settings file for worca.events.enabled.
         # Explicit False from caller is preserved (disabled_ctx fixture).
@@ -247,12 +261,24 @@ def dispatch_event(ctx: "EventContext", event: dict, sync: bool = False) -> None
 # ---------------------------------------------------------------------------
 
 
+# The full control-action vocabulary consumed by the runner: stage/milestone
+# gates act on pause/abort, the pause loop on resume/abort, and approval gates
+# (plan_approval / pr_approval) on approve/reject. Anything else is malformed.
+_VALID_CONTROL_ACTIONS = frozenset(
+    {"continue", "pause", "abort", "resume", "approve", "reject"}
+)
+
+
 def _check_control_response(ctx: EventContext, event: dict) -> Optional[str]:
     """Deliver event to all control webhooks synchronously and return action if any.
 
     Iterates over ctx.control_webhooks, calling deliver_webhook_sync() for each.
     Returns the first non-"continue" action string found, or None if all are
     "continue" / no control webhooks are configured.
+
+    Responses are validated: ``control`` must be an object and ``action`` one
+    of _VALID_CONTROL_ACTIONS — a malformed response is logged and treated as
+    "continue" (and does not stop later webhooks from being consulted).
 
     Never raises — all errors are logged to stderr.
     """
@@ -262,10 +288,25 @@ def _check_control_response(ctx: EventContext, event: dict) -> Optional[str]:
         from worca.events.webhook import deliver_webhook_sync
         for wh in ctx.control_webhooks:
             response = deliver_webhook_sync(event, wh)
-            if response and "control" in response:
-                action = response["control"].get("action", "continue")
-                if action and action != "continue":
-                    return action
+            if not response or "control" not in response:
+                continue
+            control = response["control"]
+            if not isinstance(control, dict):
+                print(
+                    f"[worca.events] Ignoring malformed control response "
+                    f"(control is not an object): {control!r}",
+                    file=sys.stderr,
+                )
+                continue
+            action = control.get("action", "continue")
+            if not isinstance(action, str) or action not in _VALID_CONTROL_ACTIONS:
+                print(
+                    f"[worca.events] Ignoring unknown control action: {action!r}",
+                    file=sys.stderr,
+                )
+                continue
+            if action != "continue":
+                return action
     except Exception as exc:
         print(f"[worca.events] Control response error: {exc}", file=sys.stderr)
     return None
