@@ -86,6 +86,14 @@ class TestCreateParser:
         from worca.scripts.run_worktree import main
         assert main(["--plan", "p.md"]) == 2
 
+    def test_spec_file_not_found(self):
+        from worca.scripts.run_worktree import main
+        assert main(["--spec", "/nonexistent/spec.md"]) == 2
+
+    def test_plan_file_not_found(self):
+        from worca.scripts.run_worktree import main
+        assert main(["--plan", "/nonexistent/plan.md", "--prompt", "x"]) == 2
+
 
 class TestBuildPipelineCmd:
     """Direct tests for _build_pipeline_cmd — pure-function, no Popen mock."""

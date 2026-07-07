@@ -300,16 +300,24 @@ def main(argv=None) -> int:
         print("error: --source and --spec are mutually exclusive", file=sys.stderr)
         return 2
 
+    if args.plan and not os.path.isfile(args.plan):
+        print(f"error: plan file not found: {args.plan}", file=sys.stderr)
+        return 2
+
     # Normalize work request to get a title for the slug and registry entry
-    if args.source:
-        plan_template = load_settings(args.settings).get("worca", {}).get(
-            "plan_path_template"
-        )
-        wr = normalize("source", args.source, plan_path_template=plan_template)
-    elif args.spec:
-        wr = normalize("spec", args.spec)
-    else:
-        wr = normalize("prompt", args.prompt)
+    try:
+        if args.source:
+            plan_template = load_settings(args.settings).get("worca", {}).get(
+                "plan_path_template"
+            )
+            wr = normalize("source", args.source, plan_path_template=plan_template)
+        elif args.spec:
+            wr = normalize("spec", args.spec)
+        else:
+            wr = normalize("prompt", args.prompt)
+    except FileNotFoundError as exc:
+        print(f"error: {exc}", file=sys.stderr)
+        return 2
 
     # Reject --branch for github_pr source: the head branch is fixed by the PR
     # (L2 — drift creates duplicate PRs). Precedent: fleet rejects --branch too.
