@@ -11,6 +11,7 @@ import {
   writeFileSync,
 } from 'node:fs';
 import { readdir } from 'node:fs/promises';
+import { homedir } from 'node:os';
 import { basename, isAbsolute, join } from 'node:path';
 import { checkWorcaInstalled, readProjectWorcaVersion } from './worca-setup.js';
 
@@ -125,11 +126,14 @@ export function removeProject(prefsDir, name) {
  */
 export function synthesizeDefaultProject(projectRoot) {
   const name = basename(projectRoot);
+  const slug = slugify(name);
   return {
     name,
     path: projectRoot,
     worcaDir: join(projectRoot, '.worca'),
     settingsPath: join(projectRoot, '.claude', 'settings.json'),
+    worcaConfigPath: join(homedir(), '.worca', 'projects', slug, 'config.json'),
+    worcaPkgVersion: null,
   };
 }
 
