@@ -7,6 +7,7 @@ import {
   mkdirSync,
   readdirSync,
   readFileSync,
+  rmSync,
   unlinkSync,
   writeFileSync,
 } from 'node:fs';
@@ -109,7 +110,7 @@ export function writeProject(prefsDir, entry) {
 }
 
 /**
- * Remove a project entry. No-op if missing.
+ * Remove a project entry and its config directory. No-op if missing.
  */
 export function removeProject(prefsDir, name) {
   const filePath = join(prefsDir, 'projects.d', `${name}.json`);
@@ -117,6 +118,12 @@ export function removeProject(prefsDir, name) {
     unlinkSync(filePath);
   } catch {
     // no-op if missing
+  }
+  const configDir = join(prefsDir, 'projects', name);
+  try {
+    rmSync(configDir, { recursive: true, force: true });
+  } catch {
+    // best-effort
   }
 }
 

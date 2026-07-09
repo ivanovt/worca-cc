@@ -1446,6 +1446,15 @@ def run_init(
         print(f"Project config: created {config_created}")
         print("Settings: stripped worca.* keys (hooks + permissions remain)")
 
+    # --- Register / update project in ~/.worca/projects.d/ ---
+    # Runs on both fresh init and upgrade so the project is immediately
+    # visible in the UI without a separate "create project" step.
+    try:
+        from worca.utils.project_registry import update_registry_entry  # noqa: PLC0415
+        update_registry_entry(str(git_root))
+    except Exception:
+        pass
+
     # --- .gitignore ---
     gitignore_changes = _ensure_gitignore(git_root)
     if gitignore_changes:
@@ -1458,14 +1467,6 @@ def run_init(
         print("Initialized beads (.beads/)")
     elif upgrade and _upgrade_beads(git_root):
         print("Beads: updated repo fingerprint")
-
-    # --- Update project registry with new pkg version before GC ---
-    if upgrade:
-        try:
-            from worca.utils.project_registry import update_registry_entry  # noqa: PLC0415
-            update_registry_entry(str(git_root))
-        except Exception:
-            pass
 
     # --- Auto-GC orphan pkg versions after upgrade ---
     if upgrade:
