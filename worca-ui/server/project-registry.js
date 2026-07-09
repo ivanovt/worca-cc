@@ -154,7 +154,7 @@ const SCAN_MAX_RESULTS = 200;
  * @param {string} dirPath - Absolute path to the parent directory
  * @returns {Promise<{ name: string, path: string }[]>}
  */
-export async function scanDirectory(dirPath) {
+export async function scanDirectory(dirPath, prefsDir) {
   const entries = await readdir(dirPath, { withFileTypes: true });
   const results = [];
   for (const entry of entries) {
@@ -162,7 +162,11 @@ export async function scanDirectory(dirPath) {
     if (entry.name.startsWith('.') || entry.name === 'node_modules') continue;
     const childPath = join(dirPath, entry.name);
     if (existsSync(join(childPath, '.git'))) {
-      const installed = checkWorcaInstalled(childPath);
+      const slug = slugify(entry.name);
+      const worcaConfigPath = prefsDir
+        ? join(prefsDir, 'projects', slug, 'config.json')
+        : undefined;
+      const installed = checkWorcaInstalled(childPath, worcaConfigPath);
       const worcaVersion = installed
         ? readProjectWorcaVersion(childPath)
         : null;
