@@ -521,6 +521,7 @@ export function createProjectScopedRoutes({
       const payload = await buildProjectPreflight({
         projectRoot,
         settingsPath,
+        worcaConfigPath: req.project.worcaConfigPath,
         graphifyStatus: req.app.locals.graphifyStatus || null,
         crgStatus: req.app.locals.crgStatus || null,
       });
