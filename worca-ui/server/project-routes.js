@@ -150,6 +150,8 @@ export function projectResolver({ prefsDir, projectRoot }) {
       path: project.path,
       worcaDir,
       settingsPath: resolvedSettingsPath,
+      worcaConfigPath: project.worcaConfigPath || null,
+      worcaPkgVersion: project.worcaPkgVersion || null,
       projectRoot: projRoot,
       pm: new ProcessManager({
         worcaDir,
@@ -206,7 +208,7 @@ export function createProjectRoutes({
     // exists on disk (a deleted project can't be configured or run).
     const enriched = projects.map((p) => ({
       ...p,
-      worcaVersion: readProjectWorcaVersion(p.path),
+      worcaVersion: readProjectWorcaVersion(p.path, p.worcaPkgVersion),
       exists: existsSync(p.path),
     }));
     res.json({ ok: true, projects: enriched });
@@ -1785,7 +1787,7 @@ export function createProjectScopedRoutes({
   // strictly behind the active (dev-path or globally-installed) worca-cc.
   router.get('/worca-status', async (req, res) => {
     const { projectRoot } = req.project;
-    const installed = checkWorcaInstalled(projectRoot);
+    const installed = checkWorcaInstalled(projectRoot, req.project.worcaConfigPath);
     if (!installed) {
       return res.json({
         ok: true,
@@ -1794,7 +1796,7 @@ export function createProjectScopedRoutes({
         outdated: false,
       });
     }
-    const version = readProjectWorcaVersion(projectRoot);
+    const version = readProjectWorcaVersion(projectRoot, req.project.worcaPkgVersion);
     let outdated = false;
     if (version != null) {
       try {

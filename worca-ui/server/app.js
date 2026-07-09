@@ -690,7 +690,7 @@ export function createApp(options = {}) {
         .json({ ok: false, error: `directory does not exist: ${dirPath}` });
     }
     try {
-      const subfolders = await scanDirectory(dirPath);
+      const subfolders = await scanDirectory(dirPath, prefsDir);
       res.json({ ok: true, subfolders });
     } catch (err) {
       res.status(500).json({ ok: false, error: err.message });
