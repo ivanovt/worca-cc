@@ -114,7 +114,7 @@ class TestEnsureGitignore:
 
     def test_no_duplicates(self, tmp_path):
         gitignore = tmp_path / ".gitignore"
-        gitignore.write_text(".worca/\nlogs/\n.claude/settings.local.json\n")
+        gitignore.write_text(".worca/\nlogs/\n.claude/settings.local.json\n.beads/\n")
         changes = _ensure_gitignore(tmp_path)
         assert changes == []
 

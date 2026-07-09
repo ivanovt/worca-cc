@@ -1091,7 +1091,7 @@ def _ensure_gitignore(git_root: Path) -> list[str]:
     (``$WORCA_CACHE/ast/<repo-id>/<commit-sha>/``), never in the repo tree.
     """
     gitignore = git_root / ".gitignore"
-    entries_needed = [".worca/", "logs/", ".claude/settings.local.json"]
+    entries_needed = [".worca/", "logs/", ".claude/settings.local.json", ".beads/"]
     changes = []
 
     existing = ""
