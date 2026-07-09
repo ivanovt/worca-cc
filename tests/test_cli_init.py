@@ -421,7 +421,7 @@ class TestRunInit:
         assert (tmp_path / ".claude" / "settings.json").exists()
 
     def test_init_refuses_without_upgrade(self, tmp_path, monkeypatch):
-        """worca init fails if pkg/worca/ already exists and --upgrade not passed."""
+        """worca init fails if pkg/worca/ and project config already exist and --upgrade not passed."""
         monkeypatch.chdir(tmp_path)
         monkeypatch.setenv("WORCA_HOME", str(tmp_path / "wh"))
         (tmp_path / ".git").mkdir()
@@ -430,6 +430,13 @@ class TestRunInit:
         from worca.utils.paths import pkg_dir
         pkg_worca = Path(pkg_dir()) / "worca"
         pkg_worca.mkdir(parents=True)
+
+        # Pre-create the project config to simulate a fully-initialized project
+        from worca.utils.project_registry import slugify
+        slug = slugify(tmp_path.name)
+        config_dir = tmp_path / "wh" / "projects" / slug
+        config_dir.mkdir(parents=True)
+        (config_dir / "config.json").write_text("{}")
 
         src = tmp_path / "worca-src" / "src" / "worca"
         src.mkdir(parents=True)

@@ -1294,9 +1294,14 @@ def run_init(
     # Ensure .claude/ exists
     (git_root / ".claude").mkdir(exist_ok=True)
 
-    if not upgrade and not force and target.exists():
+    from worca.utils.paths import project_config_dir as _project_config_dir  # noqa: PLC0415
+    from worca.utils.project_registry import slugify as _slugify  # noqa: PLC0415
+    _project_slug = _slugify(git_root.name)
+    _project_config = Path(_project_config_dir(_project_slug)) / "config.json"
+
+    if not upgrade and not force and target.exists() and _project_config.exists():
         print(
-            "Package already installed. Use --upgrade to update or --force to overwrite.",
+            "Project already initialized. Use --upgrade to update or --force to overwrite.",
             file=sys.stderr,
         )
         raise SystemExit(1)
@@ -1343,9 +1348,11 @@ def run_init(
     pkg_version_dir.mkdir(parents=True, exist_ok=True)
     if (upgrade or force) and target.exists():
         shutil.rmtree(target)
+    pkg_copied = not target.exists()
     _copy_worca_source(worca_source, target)
     _write_provenance_manifest(worca_source, pkg_version_dir, git_root, settings_path)
-    print(f"Copied worca to {target}")
+    if pkg_copied:
+        print(f"Copied worca to {target}")
 
     # --- Install worca-owned skills into .claude/skills/ ---
     skill_changes = _install_skills(worca_source, git_root)
